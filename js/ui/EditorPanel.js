@@ -7,6 +7,7 @@
 
 import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
+import { DEFAULT_GOAL_ZONE_ID, stampGoalZoneIds } from '../goals/GoalChecker.js';
 import { dragDropManager } from './DragDropManager.js';
 import { setMode, AppMode } from '../main.js';
 
@@ -179,6 +180,12 @@ class EditorPanel {
             }
         }
 
+        // Editor-save parity with the goal checker (issue #11): buckets
+        // saved without a named id get the hard-coded goal zone id, so a
+        // reloaded custom level's bucket matches goal.zoneId like official
+        // level JSON does.
+        stampGoalZoneIds(fixedObjects);
+
         const levelData = {
             id: `custom-${Date.now()}`,
             name: 'Custom Level',
@@ -187,7 +194,7 @@ class EditorPanel {
             goal: {
                 type: this._goalSelect ? this._goalSelect.value : 'object_in_zone',
                 targetType: 'ball',
-                zoneId: 'bucket-goal',
+                zoneId: DEFAULT_GOAL_ZONE_ID,
             },
             fixedObjects,
             availableParts: this._inferAvailableParts(),

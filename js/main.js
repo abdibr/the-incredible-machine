@@ -14,6 +14,7 @@ import { toolbox } from './ui/Toolbox.js';
 import { playControls } from './ui/PlayControls.js';
 import { levelManager } from './levels/LevelManager.js';
 import { goalOverlay } from './ui/GoalOverlay.js';
+import { goalChecker } from './goals/GoalChecker.js';
 import { levelSelect } from './ui/LevelSelect.js';
 import { editorPanel } from './ui/EditorPanel.js';
 import { dragDropManager } from './ui/DragDropManager.js';
@@ -136,13 +137,18 @@ function init() {
     // 5. Goal Overlay
     goalOverlay.init();
 
-    // 6. Level Select
+    // 6. Goal Checker — listens for bucket:caught / loop:frame and emits
+    //    goal:reached / goal:failed (GoalOverlay + LevelManager display
+    //    the overlay and mark progress; main.js answers overlay:next-level)
+    goalChecker.init({ physicsEngine: state.physicsEngine });
+
+    // 7. Level Select
     levelSelect.init();
 
-    // 7. Editor Panel
+    // 8. Editor Panel
     editorPanel.init();
 
-    // 8. Drag-and-Drop (after Renderer + Toolbox)
+    // 9. Drag-and-Drop (after Renderer + Toolbox)
     dragDropManager.init(state.placedObjects);
 
     // ── Wire up mode transition events ──
