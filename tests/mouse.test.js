@@ -246,3 +246,52 @@ describe('Mouse pushing (end-to-end, no oscillation)', () => {
         engine.dispose();
     });
 });
+
+describe('Mouse determinism across play/reset cycles', () => {
+    let engine;
+
+    beforeEach(() => {
+        engine = new PhysicsEngine(800, 600);
+    });
+
+    function record(engineObj, mouse, n) {
+        const out = [];
+        for (let i = 0; i < n; i++) {
+            engineObj.step(DT);
+            out.push({
+                x: mouse.bodies[0].position.x,
+                y: mouse.bodies[0].position.y,
+                dir: mouse.serialize().options.direction,
+            });
+        }
+        return out;
+    }
+
+    it('replays identically after resets (bodies and walking direction, 3 cycles)', () => {
+        const wall = new Ramp(400, 540, { width: 120, angle: Math.PI / 2 });
+        engine.addObject(wall);
+        const mouse = new Mouse(450, FLOOR_Y - 6, { direction: -1 }); // walks left into wall
+        engine.addObject(mouse);
+
+        // Play cycle 1: snapshot on play, run, drift on, then reset.
+        engine.takeSnapshot();
+        const cycleA = record(engine, mouse, 240);
+        record(engine, mouse, 60);
+        engine.restoreSnapshot(); // GameLoop.reset()
+        engine.clearSnapshot();
+
+        // Cycles 2–4: replay from the restored state each time and compare
+        // step-for-step to the first run (positions + direction, bit-exact).
+        let reference = cycleA;
+        for (let cycle = 2; cycle <= 4; cycle++) {
+            engine.takeSnapshot(); // GameLoop.play() snapshots from restored state
+            const next = record(engine, mouse, 240);
+            expect(next).toEqual(reference);
+            record(engine, mouse, 60); // drift on, then reset
+            engine.restoreSnapshot();
+            engine.clearSnapshot();
+            reference = next;
+        }
+        engine.dispose();
+    });
+});

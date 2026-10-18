@@ -301,6 +301,19 @@ export default class Mouse extends BaseObject {
         };
     }
 
+    /**
+     * Re-apply serialized behavioral state after a snapshot restore so that
+     * play/reset cycles replay deterministically.
+     * @param {object} data - serialized data (same shape as serialize() output)
+     */
+    restoreState(data) {
+        const direction = data?.options?.direction;
+        if (direction === 1 || direction === -1) {
+            this._direction = direction;
+        }
+        this._reversalCooldown = 0; // cooldown is transient; cycles start clean
+    }
+
     static deserialize(data) {
         return new Mouse(data.x, data.y, {
             angle: data.angle,
