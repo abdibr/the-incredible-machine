@@ -31,15 +31,19 @@ export const DEFAULT_GOAL_ZONE_ID = 'bucket-goal';
 /**
  * Stamp the goal zone id onto serialized fixed buckets that have no
  * named id yet (EditorPanel save parity: keeps an existing id, never
- * touches non-bucket objects).
+ * touches non-bucket objects, and stamps only the FIRST unnamed bucket —
+ * decoy buckets stay unnamed, so a multi-bucket machine cannot be won
+ * through the wrong one).
  * @param {Array<object>} fixedObjects - fresh serialize() results from _saveLevel
  * @param {string} [zoneId]
- * @returns {Array<object>} the same array, ids stamped
+ * @returns {Array<object>} the same array, the goal bucket id stamped
  */
 export function stampGoalZoneIds(fixedObjects, zoneId = DEFAULT_GOAL_ZONE_ID) {
+    let stamped = false;
     for (const data of fixedObjects) {
-        if (data?.type === 'bucket' && !data.id) {
+        if (!stamped && data?.type === 'bucket' && !data.id) {
             data.id = zoneId;
+            stamped = true; // only the first unnamed bucket carries the goal zone
         }
     }
     return fixedObjects;

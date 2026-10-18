@@ -367,6 +367,18 @@ describe('Editor-saved level parity (issue #11)', () => {
         expect('id' in stampedBall).toBe(false);
     });
 
+    it('stamps only the FIRST unnamed bucket when several unnamed buckets are saved', () => {
+        const first = objectRegistry.create('bucket', 700, 480, { isFixed: true }).serialize();
+        const second = objectRegistry.create('bucket', 300, 480, { isFixed: true }).serialize();
+        expect('id' in first).toBe(false);
+        expect('id' in second).toBe(false);
+
+        const stamped = stampGoalZoneIds([first, second]);
+
+        expect(stamped[0].id).toBe(DEFAULT_GOAL_ZONE_ID); // the goal zone bucket
+        expect('id' in stamped[1]).toBe(false); // decoy buckets stay unnamed
+    });
+
     it('a reloaded editor-saved level with the hard-coded zone id is winnable the same way', () => {
         const reached = vi.fn();
         const failed = vi.fn();
