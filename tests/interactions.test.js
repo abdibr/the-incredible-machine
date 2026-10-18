@@ -18,6 +18,11 @@ import Mouse from '../js/objects/Mouse.js';
 import Spring from '../js/objects/Spring.js';
 import Trampoline from '../js/objects/Trampoline.js';
 import Ball from '../js/objects/Ball.js';
+import Ramp from '../js/objects/Ramp.js';
+import Conveyor from '../js/objects/Conveyor.js';
+import Fan from '../js/objects/Fan.js';
+import Domino from '../js/objects/Domino.js';
+import Pulley from '../js/objects/Pulley.js';
 import PhysicsEngine from '../js/engine/PhysicsEngine.js';
 import { InteractionMatrix } from '../js/interactions/InteractionMatrix.js';
 import { DEFAULT_INTERACTION_ROWS } from '../js/interactions/rules.js';
@@ -359,6 +364,73 @@ describe('Boundary integration', () => {
             expect(rope.isSevered).toBe(true);
         } finally {
             engine.dispose();
+        }
+    });
+});
+
+describe('Row boundary-null', () => {
+    it('boundary walls are null participants', () => {
+        // The docOnly row itself can never dispatch...
+        expect(matrix.resolve({ type: 'boundary-wall' }, { type: 'ball' }, { bodyA: {}, bodyB: {} }))
+            .toEqual([]);
+
+        // ...and the real guarantee is stronger still: walls are not mapped to
+        // objects, so a wall collisionStart pair never reaches resolve() at all
+        // (PhysicsEngine skips dispatch when an owner lookup returns null). A
+        // wildcard spy row must stay silent while a ball actually hits the floor.
+        const engine = new PhysicsEngine(800, 600);
+        try {
+            const fired = [];
+            engine.interactions.define({
+                id: 'spy-any-pair', summary: '', actor: {}, target: {},
+                handler: () => fired.push(true),
+            });
+
+            let wallPairs = 0;
+            const onCollisionStart = (event) => {
+                for (const pair of event.pairs) {
+                    if (pair.bodyA.label?.startsWith('wall-') || pair.bodyB.label?.startsWith('wall-')) {
+                        wallPairs++;
+                    }
+                }
+            };
+            Matter.Events.on(engine.engine, 'collisionStart', onCollisionStart);
+
+            try {
+                const ball = new Ball(400, 560, { variant: 'bowling' });
+                engine.addObject(ball);
+                for (let i = 0; i < 30 && wallPairs === 0; i++) engine.step(1000 / 60);
+
+                // Positive control: the ball really did contact a boundary wall...
+                expect(wallPairs).toBeGreaterThan(0);
+                // ...and not one row fired for those wall pairs.
+                expect(fired).toEqual([]);
+            } finally {
+                Matter.Events.off(engine.engine, 'collisionStart', onCollisionStart);
+            }
+        } finally {
+            engine.dispose();
+        }
+    });
+});
+
+describe('Row silent-objects-null', () => {
+    it('silent classes have no reaction rows', () => {
+        const silent = [
+            new Ball(100, 100, { variant: 'tennis' }),
+            new Ramp(200, 100),
+            new Conveyor(300, 100),
+            new Fan(400, 100),
+            new Domino(500, 100),
+            new Pulley(600, 100),
+            new Candle(700, 100),
+        ];
+        for (const obj of silent) {
+            // Either orientation, any counterpart: no row ever fires for them.
+            expect(matrix.resolve(obj, { type: 'unrelated' }, { bodyA: obj.bodies[0], bodyB: {} }))
+                .toEqual([]);
+            expect(matrix.resolve({ type: 'unrelated' }, obj, { bodyA: {}, bodyB: obj.bodies[0] }))
+                .toEqual([]);
         }
     });
 });

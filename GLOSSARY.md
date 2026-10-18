@@ -8,7 +8,7 @@ Single-context domain vocabulary. Architecture decisions live in `docs/adr/`; th
 - **Body** — a Matter.js rigid body owned by an object; an object may own several (e.g. Scissors: two blade sensors + two solid handles).
 - **Body label** — the Matter body's string `label` (e.g. `'candle-flame'`, `'scissors-blade'`, `'bucket-sensor'`). Labels are unique per object family and are the fine-grained discriminator between an object's bodies.
 - **Sensor body** — a Matter body with `isSensor: true`: reports collisions, exerts no physical force (candle flame, scissors blades, bucket catch zone).
-- **Boundary walls** — the four static playfield walls (`wall-floor/left/right/ceiling`) created inside `PhysicsEngine`. They are *not mapped to objects*, so they never enter interaction dispatch — documented null-participants.
+- **Boundary walls** — the four static playfield walls (`wall-floor/left/right/ceiling`) created inside `PhysicsEngine`. They are *not mapped to objects*, so they never enter interaction dispatch — documented null-participants (ADR 0001 decision 6). Objects cannot react to wall contacts; the deliberate wall consumers outside the matrix are Mouse's static-body probes and `GoalChecker`'s off-world (tunneling → `goal:failed`) check.
 - **Custom id** — a named id from level JSON (`"id": "bucket-goal"`), separate from the auto-increment instance `id` used for snapshots/dedup.
 
 ## Interaction matrix
