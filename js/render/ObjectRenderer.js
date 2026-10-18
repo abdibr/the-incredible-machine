@@ -1,5 +1,5 @@
-﻿/**
- * ObjectRenderer ΓÇö Delegates per-object Canvas drawing
+/**
+ * ObjectRenderer — Delegates per-object Canvas drawing
  *
  * This module orchestrates rendering of all game objects.
  * Each object's `draw(ctx)` method handles its own rendering,

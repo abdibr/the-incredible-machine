@@ -1,5 +1,5 @@
-﻿/**
- * GameLoop ΓÇö Play/pause/reset state machine
+/**
+ * GameLoop — Play/pause/reset state machine
  *
  * Controls simulation lifecycle with requestAnimationFrame,
  * speed scaling, capped delta-time, and snapshot management.
@@ -48,7 +48,7 @@ export class GameLoop {
         this._frame = this._frame.bind(this);
     }
 
-    // ΓöÇΓöÇ State Queries ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── State Queries ─────────────────────────────
 
     /** @returns {string} */
     get state() { return this._state; }
@@ -68,7 +68,7 @@ export class GameLoop {
     /** @returns {number} */
     get speed() { return this._speed; }
 
-    // ΓöÇΓöÇ Controls ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Controls ──────────────────────────────────
 
     /** Start or resume the simulation. */
     play() {
@@ -121,18 +121,18 @@ export class GameLoop {
         eventBus.emit('loop:reset');
     }
 
-    /** Toggle between 1├ù and 2├ù speed. */
+    /** Toggle between 1× and 2× speed. */
     cycleSpeed() {
         this._speed = this._speed === 1 ? 2 : 1;
         this.physics.setTimeScale(this._speed);
         eventBus.emit('loop:speed', { speed: this._speed });
     }
 
-    // ΓöÇΓöÇ Frame Loop ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Frame Loop ────────────────────────────────
 
     /**
      * @private
-     * @param {number} timestamp ΓÇö rAF timestamp in ms
+     * @param {number} timestamp — rAF timestamp in ms
      */
     _frame(timestamp) {
         if (this._state !== LoopState.RUNNING) return;
@@ -163,7 +163,7 @@ export class GameLoop {
         this._rafId = requestAnimationFrame(this._frame);
     }
 
-    // ΓöÇΓöÇ Cleanup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Cleanup ───────────────────────────────────
 
     /** Stop the loop and release resources. */
     dispose() {
