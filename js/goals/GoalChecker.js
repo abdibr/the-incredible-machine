@@ -61,6 +61,38 @@ export class GoalChecker {
         eventBus.on('bucket:caught', ({ bucket, object }) => {
             this._onCaught(bucket, object);
         });
+
+        // Per-step fail check (GameLoop emits loop:frame once per physics step)
+        eventBus.on('loop:frame', () => {
+            this._checkOffWorld();
+        });
+    }
+
+    /**
+     * Fail condition: a target object's body pushed off-world below the
+     * canvas (e.g. tunneled through the boundary walls) ends the attempt
+     * with `goal:failed`.
+     * @private
+     */
+    _checkOffWorld() {
+        const goal = this._goal;
+        if (!goal || this._decided || !this._physics) return;
+
+        const physics = this._physics;
+        for (const obj of physics.getObjects()) {
+            if (goal.targetType !== obj.type) continue;
+
+            for (const body of obj.bodies) {
+                if (body?.position && body.position.y > physics.height) {
+                    this._decided = 'failed';
+                    eventBus.emit('goal:failed', {
+                        levelId: this._levelId,
+                        reason: 'The target fell off the playfield.',
+                    });
+                    return;
+                }
+            }
+        }
     }
 
     /** @private */
