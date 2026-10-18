@@ -79,6 +79,46 @@ describe('PhysicsEngine', () => {
         engine.dispose();
     });
 
+    it('restores behavioral state by body id, not index, on an equal-count remove+add', async () => {
+        const engine = new PhysicsEngine(800, 600);
+        const { default: Mouse } = await import('../js/objects/Mouse.js');
+        const { eventBus } = await import('../js/EventBus.js');
+
+        const a = new Mouse(200, 150, { direction: 1 });
+        const b = new Mouse(400, 150, { direction: -1 });
+        engine.addObject(a);
+        engine.addObject(b);
+        engine.takeSnapshot();
+        const bBodyId = b.bodies[0].id; // capture before removal (dispose() nulls bodies)
+
+        // Equal-count remove+add: b leaves, c joins. List-position zipping
+        // would hand b's snapshot state to c; body-id matching must not.
+        engine.removeObject(b);
+        const c = new Mouse(600, 150, { direction: -1 });
+        engine.addObject(c);
+
+        const mismatches = [];
+        const unsubscribe = eventBus.on('physics:snapshot-mismatch', (payload) => mismatches.push(payload));
+        const restoreSpyA = vi.spyOn(a, 'restoreState');
+        const restoreSpyC = vi.spyOn(c, 'restoreState');
+
+        engine.restoreSnapshot();
+
+        // a's body ids are in the snapshot: its behavioral state restores.
+        expect(restoreSpyA).toHaveBeenCalledTimes(1);
+        // c is unknown to the snapshot: nothing is applied to it.
+        expect(restoreSpyC).toHaveBeenCalledTimes(0);
+        // The unknown body pair is still flagged loudly (drift stays loud).
+        expect(mismatches.length).toBe(1);
+        expect(mismatches[0].unmatchedLiveBodyIds).toEqual([c.bodies[0].id]);
+        expect(mismatches[0].unmatchedSnapshotBodyIds).toEqual([bBodyId]);
+
+        unsubscribe();
+        restoreSpyA.mockRestore();
+        restoreSpyC.mockRestore();
+        engine.dispose();
+    });
+
     it('flags a snapshot/world mismatch loudly and re-baselines it after a deletion', async () => {
         const engine = new PhysicsEngine(800, 600);
         const { default: Ball } = await import('../js/objects/Ball.js');
