@@ -38,8 +38,8 @@ function buildFixedObjects(levelData, registry) {
         const obj = registry.create(objData.type, objData.x, objData.y, {
             angle: objData.angle || 0,
             isFixed: true,
+            customId: objData.id, // named id from level JSON (goal zone refs)
         });
-        if (objData.id) obj._goalId = objData.id;
         fixed.push(obj);
     }
     return fixed;
@@ -83,6 +83,26 @@ afterEach(() => {
 });
 
 // ── restorePlacedFromSnapshot ─────────────────────────────────────
+
+// ── buildFixedObjects (customId seam) ─────────────────────────────
+
+describe('levelReset.buildFixedObjects', () => {
+    it('passes named ids through the production registry.create seam (no dead _goalId)', () => {
+        const physics = new PhysicsEngine(800, 600);
+        const placed = buildFixedObjects(LEVEL_DATA, objectRegistry);
+
+        // Production parity with main.js _setupLevel: fixed level objects
+        // are built with registry.create(..., { customId: objData.id })
+        // because GoalChecker matches bucket.customId against goal.zoneId.
+        expect(placed[0].customId).toBe('bucket-goal');
+        // The dead hand-set property is gone.
+        expect('_goalId' in placed[0]).toBe(false);
+        // Unnamed level objects stay unnamed (no phantom ids).
+        expect(placed[1].customId).toBeNull();
+
+        physics.dispose();
+    });
+});
 
 describe('levelReset.restorePlacedFromSnapshot', () => {
     it('restores player-placed objects at their edit positions after play', () => {
