@@ -10,7 +10,7 @@
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
 
-const { Bodies, Body, Sleeping } = Matter;
+const { Bodies, Body } = Matter;
 
 const GEAR_RADIUS = 28;
 const GEAR_TEETH = 10;
@@ -76,13 +76,14 @@ export default class Gear extends BaseObject {
      */
     _applyToothTraction(engine) {
         const omega = this._angularSpeed;
-        if (omega === 0 || !engine || !engine.world) return;
+        if (omega === 0 || !engine?.queryTouching) return;
 
         const center = this._body.position;
         const toothSpeed = omega * this._radius;
 
-        for (const body of Matter.Composite.allBodies(engine.world)) {
-            if (body.isStatic) continue;
+        // Contacts via the engine's pair-grade discovery seam (ADR 0002):
+        // dynamic bodies touching the gear, self/statics/walls pre-filtered.
+        for (const body of engine.queryTouching(this)) {
 
             const collision = Matter.Collision.collides(this._body, body);
             if (!collision || !collision.collided) continue;
@@ -102,7 +103,7 @@ export default class Gear extends BaseObject {
             const dv = toothSpeed - (body.velocity.x * ux + body.velocity.y * uy);
             if (Math.abs(dv) < 0.01) continue; // already riding; allow it to sleep
 
-            Sleeping.set(body, false);
+            engine.wakeBodies([body]); // wake-on-act (ADR 0002): sleeping bodies skip setVelocity
             Body.setVelocity(body, {
                 x: body.velocity.x + ux * dv,
                 y: body.velocity.y + uy * dv,

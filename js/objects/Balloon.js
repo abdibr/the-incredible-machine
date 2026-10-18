@@ -67,7 +67,10 @@ export default class Balloon extends BaseObject {
 
         this._bobPhase += 0.03;
 
-        // Buoyancy — upward force
+        // Buoyancy — upward force. A sleeping body skips force integration in
+        // Matter, so waking the balloon is part of acting on it (ADR 0002):
+        // otherwise a sleeping balloon never floats.
+        engine.wakeBodies([this._body]);
         Body.applyForce(this._body, this._body.position, {
             x: Math.sin(this._bobPhase) * 0.00005,
             y: BUOYANCY_FORCE * this._body.mass * 20,

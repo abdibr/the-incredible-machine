@@ -8,7 +8,7 @@
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
 
-const { Bodies, Body, Composite } = Matter;
+const { Bodies, Body } = Matter;
 
 const MOUSE_WIDTH = 20;
 const MOUSE_HEIGHT = 12;
@@ -70,10 +70,11 @@ export default class Mouse extends BaseObject {
         const pos = this._body.position;
         const feetY = pos.y + MOUSE_HEIGHT / 2 + 2;
 
-        const allBodies = Composite.allBodies(engine.world);
-        const testBodies = Matter.Query.point(allBodies, { x: pos.x, y: feetY });
-
-        return testBodies.some(b => b !== this._body && b.isStatic);
+        // Static-surface probe through the engine's query seam (ADR 0002):
+        // point-in-geometry; statics AND boundary walls included (the floor
+        // is ground), the mouse's own body never matches.
+        return engine.queryPoint({ x: pos.x, y: feetY }, { excludeOwner: this })
+            .some(b => b.isStatic);
     }
 
     onBeforeUpdate(engine) {
@@ -97,10 +98,12 @@ export default class Mouse extends BaseObject {
         const aheadX = pos.x + this._direction * (MOUSE_WIDTH / 2 + 5);
         const aheadY = pos.y;
 
-        // Check wall collision
-        const allBodies = Composite.allBodies(engine.world);
-        const wallCheck = Matter.Query.point(allBodies, { x: aheadX, y: aheadY });
-        const hitWall = wallCheck.some(b => b !== this._body && b.isStatic);
+        // Walls and ledges answer "static surface here?" via the engine's
+        // query seam (ADR 0002): point-in-geometry, statics AND boundary
+        // walls included (both are walkable/reversing signals), the mouse's
+        // own body excluded.
+        const hitWall = engine.queryPoint({ x: aheadX, y: aheadY }, { excludeOwner: this })
+            .some(b => b.isStatic);
 
         if (hitWall) { // wall ahead → turn around
             this._reverse();
@@ -108,8 +111,8 @@ export default class Mouse extends BaseObject {
 
         // Check for edge (no ground ahead)
         const edgeCheckY = pos.y + MOUSE_HEIGHT / 2 + 5;
-        const groundAhead = Matter.Query.point(allBodies, { x: aheadX, y: edgeCheckY });
-        const hasGround = groundAhead.some(b => b !== this._body && b.isStatic);
+        const hasGround = engine.queryPoint({ x: aheadX, y: edgeCheckY }, { excludeOwner: this })
+            .some(b => b.isStatic);
 
         if (!hasGround) { // ledge ahead → turn around
             this._reverseFromEdge();

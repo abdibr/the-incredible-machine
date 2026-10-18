@@ -322,13 +322,21 @@ describe('Row spring-trigger', () => {
         const platform = bodyWithLabel(spring, 'spring-platform');
         matrix.resolve(spring, { type: 'ball' }, { bodyA: platform, bodyB: { isStatic: false } });
 
-        const emptyWorld = Matter.Composite.create();
-        // ~13 frames complete the 0.08/step compression release → 30-frame cooldown
-        for (let i = 0; i < 14; i++) spring.onBeforeUpdate({ world: emptyWorld });
-        expect(spring.isLaunchTrigger({ type: 'ball' }, { bodyA: platform, bodyB: { isStatic: false } })).toBe(false);
+        // The launch discovers riders through the engine seam (ADR 0002), so the
+        // full cycle needs a real PhysicsEngine; no rider contact is required —
+        // the state machine under test runs identically on an empty world.
+        const engine = new PhysicsEngine(800, 600);
+        try {
+            engine.addObject(spring);
+            // ~13 frames complete the 0.08/step compression release → 30-frame cooldown
+            for (let i = 0; i < 14; i++) spring.onBeforeUpdate(engine);
+            expect(spring.isLaunchTrigger({ type: 'ball' }, { bodyA: platform, bodyB: { isStatic: false } })).toBe(false);
 
-        for (let i = 0; i < 30; i++) spring.onBeforeUpdate({ world: emptyWorld });
-        expect(spring.isLaunchTrigger({ type: 'ball' }, { bodyA: platform, bodyB: { isStatic: false } })).toBe(true);
+            for (let i = 0; i < 30; i++) spring.onBeforeUpdate(engine);
+            expect(spring.isLaunchTrigger({ type: 'ball' }, { bodyA: platform, bodyB: { isStatic: false } })).toBe(true);
+        } finally {
+            engine.dispose();
+        }
     });
 });
 

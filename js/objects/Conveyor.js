@@ -70,21 +70,19 @@ export default class Conveyor extends BaseObject {
      * Called each physics step.
      */
     onBeforeUpdate(engine) {
-        // Get all bodies in the world
-        const allBodies = Matter.Composite.allBodies(engine.world);
+        // Riders touching the belt, via the engine's pair-grade discovery
+        // seam (ADR 0002): dynamic, non-wall bodies only; the belt itself
+        // excluded.
+        for (const body of engine.queryTouching(this)) {
+            // Sleeping riders skip force integration — waking is part of
+            // acting on them.
+            engine.wakeBodies([body]);
 
-        for (const body of allBodies) {
-            if (body.isStatic || body === this._body) continue;
-
-            // Check collision between this conveyor and the body
-            const collision = Matter.Collision.collides(this._body, body);
-            if (collision && collision.collided) {
-                // Apply surface velocity along the belt direction
-                const angle = this._body.angle;
-                const forceX = Math.cos(angle) * this._beltSpeed * 0.0004 * body.mass;
-                const forceY = Math.sin(angle) * this._beltSpeed * 0.0004 * body.mass;
-                Body.applyForce(body, body.position, { x: forceX, y: forceY });
-            }
+            // Apply surface velocity along the belt direction
+            const angle = this._body.angle;
+            const forceX = Math.cos(angle) * this._beltSpeed * 0.0004 * body.mass;
+            const forceY = Math.sin(angle) * this._beltSpeed * 0.0004 * body.mass;
+            Body.applyForce(body, body.position, { x: forceX, y: forceY });
         }
 
         // Animate belt

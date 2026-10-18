@@ -8,7 +8,7 @@
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
 
-const { Bodies, Body, Composite } = Matter;
+const { Bodies, Body } = Matter;
 
 const SPRING_WIDTH = 30;
 const SPRING_HEIGHT = 40;
@@ -107,17 +107,17 @@ export default class Spring extends BaseObject {
                 const launchDirX = -Math.sin(angle);
                 const launchDirY = -Math.cos(angle);
 
-                const allBodies = Composite.allBodies(engine.world);
-                for (const body of allBodies) {
-                    if (body.isStatic || body === this._base || body === this._platform) continue;
-
-                    const collision = Matter.Collision.collides(this._platform, body);
-                    if (collision && collision.collided) {
-                        Body.applyForce(body, body.position, {
-                            x: launchDirX * this._launchForce,
-                            y: launchDirY * this._launchForce,
-                        });
-                    }
+                // Platform-only contacts via the engine's discovery seam
+                // (ADR 0002): sourceBodies excludes base contacts; statics
+                // and the spring's own bodies are pre-filtered.
+                for (const body of engine.queryTouching(this, { sourceBodies: [this._platform] })) {
+                    // A sleeping rider would skip force integration — waking
+                    // is part of launching it (ADR 0002).
+                    engine.wakeBodies([body]);
+                    Body.applyForce(body, body.position, {
+                        x: launchDirX * this._launchForce,
+                        y: launchDirY * this._launchForce,
+                    });
                 }
             }
         }
