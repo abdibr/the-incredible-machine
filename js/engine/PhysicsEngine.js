@@ -51,6 +51,9 @@ export class PhysicsEngine {
 
         // Consume severing so a severed rope is physically detached
         this._setupSeveredEvents();
+
+        // Object removal events (popped balloons, etc.)
+        this._setupRemovalEvents();
     }
 
     // ── Object Lifecycle ──────────────────────────
@@ -283,10 +286,25 @@ export class PhysicsEngine {
         }
     }
 
+    /** @private */
+    _setupRemovalEvents() {
+        // Popped balloons must leave the physics world immediately: the body
+        // is invisible (draw no-ops) but would keep colliding and buoyantly
+        // acting on other objects forever (work plan section 1.4).
+        this._onBalloonPopped = ({ body }) => {
+            if (!body || !this._bodyToObject.has(body.id)) return;
+            Composite.remove(this.world, body);
+            this._bodyToObject.delete(body.id);
+        };
+
+        eventBus.on('balloon:popped', this._onBalloonPopped);
+    }
+
     // ── Cleanup ───────────────────────────────────
 
     /** Tear down the engine completely. */
     dispose() {
+        eventBus.off('balloon:popped', this._onBalloonPopped);
         Events.off(this.engine);
         eventBus.off('rope:severed', this._onRopeSevered);
         this.clear();
