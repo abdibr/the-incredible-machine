@@ -142,13 +142,20 @@ export default class Mouse extends BaseObject {
         this._edgeProbeCooldown = EDGE_PROBE_COOLDOWN_FRAMES;
     }
 
-    onCollision(other, pair) {
-        // Reverse only on significant, front-facing, head-on contacts —
-        // debounced so pushed bodies can't cause rapid oscillation.
-        if (!pair || !this._body || other.type === 'mouse') return;
+    /**
+     * Decision seam for the interaction matrix: is this contact a
+     * significant, front-facing, head-on hit that should reverse the walk?
+     * Pure decision — no state changes.
+     *
+     * @param {BaseObject} other
+     * @param {Matter.Pair} pair
+     * @returns {boolean}
+     */
+    isRelevantContact(other, pair) {
+        if (!pair || !this._body || other.type === 'mouse') return false;
 
         const otherBody = pair.bodyA === this._body ? pair.bodyB : pair.bodyA;
-        if (!otherBody) return;
+        if (!otherBody) return false;
 
         const dx = otherBody.position.x - this._body.position.x;
         const dy = otherBody.position.y - this._body.position.y;
@@ -160,7 +167,7 @@ export default class Mouse extends BaseObject {
 
         // Front-facing: the obstacle must be on the side we are walking
         // toward. Contacts from behind occur right after pushing something.
-        if (dx * this._direction <= 0) return;
+        if (dx * this._direction <= 0) return false;
 
         // Orient the contact normal from the obstacle toward us, independent
         // of Matter's bodyA/bodyB ordering.
@@ -169,14 +176,17 @@ export default class Mouse extends BaseObject {
 
         // Only head-on contacts count as walls; floor and ceiling contacts
         // (normal ≈ vertical) do not.
-        if (towardMeX * this._direction >= -FRONT_FACING_DOT) return;
+        if (towardMeX * this._direction >= -FRONT_FACING_DOT) return false;
 
         // Relative velocity: treat the body as a wall only when we are
         // driving into it. A body already moving with us is a push, keeping
         // pushing of light dynamic objects deterministic.
         const relApproach = (this._body.velocity.x - otherBody.velocity.x) * this._direction;
-        if (relApproach <= MIN_REL_APPROACH * this._speed) return;
+        return relApproach > MIN_REL_APPROACH * this._speed;
+    }
 
+    /** Behavior seam: run the debounced walk-direction reversal. */
+    reverseFromContact() {
         this._reverse();
     }
 

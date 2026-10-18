@@ -179,15 +179,10 @@ export default class BaseObject {
         // Default: no-op
     }
 
-    /**
-     * Called when this object collides with another.
-     * Override to handle collision responses.
-     * @param {BaseObject} other - The other game object
-     * @param {Matter.Pair} pair - The collision pair from Matter.js
-     */
-    onCollision(other, pair) {
-        // Default: no-op
-    }
+    // Note: there is deliberately NO onCollision hook here. Contact
+    // reactions are declared in js/interactions/rules.js (the interaction
+    // matrix) and routed by PhysicsEngine to the owning object's behavior
+    // methods — see docs/interactions.md and docs/adr/0001-interaction-matrix.md.
 
     // ── Rendering ─────────────────────────────────
 

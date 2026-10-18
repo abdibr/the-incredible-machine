@@ -7,6 +7,8 @@
 
 import Matter from 'matter-js';
 import { eventBus } from '../EventBus.js';
+import { InteractionMatrix } from '../interactions/InteractionMatrix.js';
+import { DEFAULT_INTERACTION_ROWS } from '../interactions/rules.js';
 
 const { Engine, World, Bodies, Body, Composite, Events, Query, Sleeping, Pairs } = Matter;
 
@@ -43,6 +45,10 @@ export class PhysicsEngine {
         /** @type {object|null} Serialized snapshot for reset */
         this._snapshot = null;
 
+        // The single registry of object-to-object reactions (see
+        // js/interactions/rules.js); collisionStart pairs route through it.
+        this._interactions = new InteractionMatrix(DEFAULT_INTERACTION_ROWS);
+
         // Add boundary walls
         this._addBoundaries();
 
@@ -77,6 +83,11 @@ export class PhysicsEngine {
                 Composite.add(this.world, constraint);
             }
         }
+    }
+
+    /** @returns {InteractionMatrix} the interaction table backing collision dispatch */
+    get interactions() {
+        return this._interactions;
     }
 
     /**
@@ -354,10 +365,12 @@ export class PhysicsEngine {
                 const objB = this._bodyToObject.get(pair.bodyB.id);
 
                 if (objA && objB) {
-                    if (objA.onCollision) objA.onCollision(objB, pair);
-                    if (objB.onCollision) objB.onCollision(objA, pair);
-                    // (`physics:collision` was pruned — no production
-                    // listener; objects receive contacts via onCollision.)
+                    // Reaction routing lives in the interaction matrix
+                    // (js/interactions/rules.js); the engine only feeds
+                    // pairs in. Boundary walls are not mapped to objects,
+                    // so they never reach it. (`physics:collision` was
+                    // pruned — no production listener.)
+                    this._interactions.resolve(objA, objB, pair);
                 }
             }
         });

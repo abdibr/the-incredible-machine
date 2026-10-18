@@ -110,11 +110,25 @@ export default class Gear extends BaseObject {
         }
     }
 
-    onCollision(other, pair) {
-        // When touching another gear, reverse their direction
-        if (other.type === 'gear') {
-            other._angularSpeed = -Math.sign(other._angularSpeed) * Math.abs(this._angularSpeed);
-        }
+    /**
+     * Mesh seam: drive an adjacent gear to counter-rotate at this gear's
+     * speed. The gear ✕ gear interaction row fires meshWith() in both
+     * directions for a touching pair (js/interactions/rules.js), which
+     * reproduces the old mutual double-dispatch outcome without reaching
+     * into the other gear's private state.
+     * @param {Gear} other - the adjacent gear
+     */
+    meshWith(other) {
+        other.applyGearDrive(this._angularSpeed);
+    }
+
+    /**
+     * Receive a meshing drive from the other gear: reverse direction and
+     * adopt the driving gear's speed magnitude.
+     * @param {number} speed - the driving gear's angular speed
+     */
+    applyGearDrive(speed) {
+        this._angularSpeed = -Math.sign(this._angularSpeed) * Math.abs(speed);
     }
 
     draw(ctx) {

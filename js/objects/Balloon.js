@@ -74,15 +74,6 @@ export default class Balloon extends BaseObject {
         });
     }
 
-    onCollision(other, pair) {
-        if (this._popped) return;
-
-        // Pop on contact with scissors or candle
-        if (other.type === 'scissors' || other.type === 'candle') {
-            this.pop();
-        }
-    }
-
     pop() {
         if (this._popped) return;
         this._popped = true;

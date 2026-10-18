@@ -113,24 +113,6 @@ export default class Rope extends BaseObject {
         }
     }
 
-    onCollision(other, pair) {
-        // Candle flame severs on any contact (cf. Balloon.pop). Scissors
-        // only cut with their blades, and only once the snap has shut
-        // them — open blades let a rope rest between them untouched.
-        if (this._severed) return;
-        if (other.type === 'candle') {
-            this.sever();
-            return;
-        }
-        if (
-            other.type === 'scissors' &&
-            other.isClosed &&
-            (pair?.bodyA?.label === 'scissors-blade' || pair?.bodyB?.label === 'scissors-blade')
-        ) {
-            this.sever();
-        }
-    }
-
     /** Sever the rope (e.g., by candle flame or closed scissors blades). */
     sever() {
         if (this._severed) return;

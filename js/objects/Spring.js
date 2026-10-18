@@ -69,15 +69,23 @@ export default class Spring extends BaseObject {
         Body.setAngle(this._platform, angle);
     }
 
-    onCollision(other, pair) {
-        if (this._cooldown > 0) return;
-
-        // Check if something hit the platform
+    /**
+     * Decision seam for the interaction matrix: did something land on the
+     * spring platform while the spring is armed (off cooldown, untriggered)?
+     * @param {BaseObject} _other
+     * @param {Matter.Pair} pair
+     * @returns {boolean}
+     */
+    isLaunchTrigger(_other, pair) {
+        if (this._cooldown > 0) return false;
         const hitPlatform = pair.bodyA === this._platform || pair.bodyB === this._platform;
-        if (hitPlatform && !this._triggered) {
-            this._triggered = true;
-            this._compression = 1;
-        }
+        return hitPlatform && !this._triggered;
+    }
+
+    /** Behavior seam: compress and arm the launch (release happens in onBeforeUpdate). */
+    armLaunch() {
+        this._triggered = true;
+        this._compression = 1;
     }
 
     onBeforeUpdate(engine) {

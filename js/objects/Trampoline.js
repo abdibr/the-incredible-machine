@@ -63,8 +63,8 @@ export default class Trampoline extends BaseObject {
         Body.setAngle(this._body, angle);
     }
 
-    onCollision(other, pair) {
-        // Trigger stretch animation on impact
+    /** Behavior seam for the interaction matrix: play the stretch animation. */
+    stretch() {
         this._stretch = 1;
     }
 
