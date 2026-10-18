@@ -208,6 +208,21 @@ export default class Spring extends BaseObject {
         });
     }
 
+    /**
+     * Snapshot-restore seam (BaseObject lifecycle contract, ADR 0003):
+     * trigger/compression/cooldown are behavioral transients — a
+     * same-instance physics restore must restart the spring armed-fresh,
+     * not mid-animation with a half-ticked cooldown. Snapshots are taken
+     * at play start (GameLoop.play → takeSnapshot), when the spring is
+     * untriggered with no cooldown — cycles start clean.
+     * @param {object} _data - serialized snapshot entry (pose-only for Spring)
+     */
+    restoreState(_data) {
+        this._triggered = false;
+        this._compression = 0;
+        this._cooldown = 0;
+    }
+
     dispose() {
         this._base = null;
         this._platform = null;

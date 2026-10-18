@@ -132,6 +132,23 @@ export default class Gear extends BaseObject {
         this._angularSpeed = -Math.sign(this._angularSpeed) * Math.abs(speed);
     }
 
+    /**
+     * Snapshot-restore seam (BaseObject lifecycle contract, ADR 0003):
+     * gear ✕ gear meshing mutates `_angularSpeed` mid-play
+     * (`applyGearDrive`), but snapshots are taken at play start
+     * (GameLoop.play → takeSnapshot) — the replayed attempt must restart
+     * from the snapshot-time drive, so undo any meshing reversal that
+     * survived the pose restore. serialize() rides `angularSpeed` as the
+     * snapshot-faithful payload (deserialize's exact fallback applies).
+     * @param {object} data - serialized snapshot entry (serialize() shape)
+     */
+    restoreState(data) {
+        const speed = data?.options?.angularSpeed;
+        this._angularSpeed = (typeof speed === 'number' && Number.isFinite(speed))
+            ? speed
+            : (this._options.angularSpeed ?? 0.03);
+    }
+
     draw(ctx) {
         const pos = this._body.position;
         const angle = this._body.angle;

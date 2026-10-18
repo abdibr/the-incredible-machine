@@ -77,6 +77,17 @@ export default class Trampoline extends BaseObject {
         }
     }
 
+    /**
+     * Snapshot-restore seam (BaseObject lifecycle contract, ADR 0003):
+     * `_stretch` is behavioral animation state — snapshots are taken at
+     * play start (GameLoop.play → takeSnapshot), when it is 0, so the
+     * replayed attempt starts with a flat fabric.
+     * @param {object} _data - serialized snapshot entry (pose-only payload)
+     */
+    restoreState(_data) {
+        this._stretch = 0;
+    }
+
     draw(ctx) {
         const pos = this._body.position;
         const angle = this._body.angle;

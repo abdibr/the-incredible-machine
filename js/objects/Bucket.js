@@ -242,6 +242,18 @@ export default class Bucket extends BaseObject {
         });
     }
 
+    /**
+     * Snapshot-restore seam (BaseObject lifecycle contract, ADR 0003):
+     * `_caught` is behavioral — a same-instance physics restore must not
+     * carry mid-play catches into the replayed attempt (GoalChecker re-arms
+     * per attempt). Snapshots are taken at play start (GameLoop.play →
+     * takeSnapshot), when the set is empty — cycles start clean.
+     * @param {object} _data - serialized snapshot entry (poses-only for Bucket)
+     */
+    restoreState(_data) {
+        this._caught.clear();
+    }
+
     dispose() {
         this._leftWall = null;
         this._rightWall = null;

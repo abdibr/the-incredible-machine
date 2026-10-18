@@ -49,10 +49,10 @@ export default class BaseObject {
      * @param {object} [options={}] - Object-specific configuration
      */
     constructor(x, y, options = {}) {
-        // customId is the named id from level JSON (e.g. goal zone ids); it is
-        // not a behavior option, so it never lands in _options. It is kept
-        // strictly separate from the auto-increment physics id below.
-        const { customId, ...behaviorOptions } = options;
+        // customId, angle, isFixed are lifecycle keys (id/pose/placement),
+        // not behavior options: they are consumed here and never land in
+        // _options, so serialize→deserialize round-trips stay stable (C3).
+        const { customId, angle, isFixed, ...behaviorOptions } = options;
 
         /** @type {number} Unique instance ID */
         this._id = _nextId++;
@@ -67,10 +67,10 @@ export default class BaseObject {
         this._y = y;
 
         /** @type {number} Rotation angle in radians */
-        this._angle = options.angle || 0;
+        this._angle = angle || 0;
 
         /** @type {boolean} If true, this object is pre-placed and cannot be moved by the player */
-        this._isFixed = options.isFixed || false;
+        this._isFixed = isFixed || false;
 
         /** @type {object} Original options for serialization */
         this._options = { ...behaviorOptions };
@@ -169,20 +169,42 @@ export default class BaseObject {
 
     // ── Runtime Hooks ─────────────────────────────
 
+    // Lifecycle contract (docs/adr/0003-lifecycle-contract.md): every object
+    // goes create (constructor) → play (onBeforeUpdate each step, in-world)
+    // → restore (restoreState across a play/reset cycle) → dispose (out of
+    // the world). Optional hooks: onBeforeUpdate and restoreState (both
+    // default no-ops); dispose must override when the subclass owns Matter
+    // state. There is deliberately NO onCollision hook here: contact
+    // reactions are declared in js/interactions/rules.js (the interaction
+    // matrix) and routed by PhysicsEngine to the owning object's behavior
+    // methods — see docs/interactions.md and docs/adr/0001-interaction-matrix.md.
+
     /**
      * Called every physics step before the engine updates.
      * Override to apply custom forces, behaviors, etc.
      * (e.g., Fan applies wind force, Conveyor applies surface velocity)
      * @param {object} engine - PhysicsEngine instance
+     * @param {number} [_dt] - delta time in ms (passed by PhysicsEngine.step)
      */
-    onBeforeUpdate(engine) {
+    onBeforeUpdate(engine, _dt) {
         // Default: no-op
     }
 
-    // Note: there is deliberately NO onCollision hook here. Contact
-    // reactions are declared in js/interactions/rules.js (the interaction
-    // matrix) and routed by PhysicsEngine to the owning object's behavior
-    // methods — see docs/interactions.md and docs/adr/0001-interaction-matrix.md.
+    /**
+     * Snapshot-restore seam: play/reset cycles replay through here.
+     * PhysicsEngine.restoreSnapshot() re-applies recorded body poses by body
+     * id first, then calls this on objects whose body-id set matches the
+     * snapshot's — so a subclass only handles behavioral state (flags,
+     * cooldowns, directions), never positions.
+     *
+     * Default: no-op. Override only when the class carries behavioral
+     * runtime state (Mouse pattern); `data` is the snapshot-time
+     * serialize() record.
+     * @param {object} [_data] - serialized snapshot entry (serialize() shape)
+     */
+    restoreState(_data) {
+        // Default: no behavioral state to restore
+    }
 
     // ── Rendering ─────────────────────────────────
 

@@ -137,12 +137,10 @@ export class PhysicsEngine {
 
         Engine.update(this.engine, dt);
 
-        // Post-update hooks
-        for (const obj of this._objects) {
-            if (obj.onAfterUpdate) {
-                obj.onAfterUpdate(this, dt);
-            }
-        }
+        // No post-update hooks: the old onAfterUpdate dispatch was dead
+        // contract (zero implementers anywhere) and is removed — ADR 0003
+        // decision 2. Post-step work lives in onBeforeUpdate of the next
+        // step or in the interaction matrix's contact handlers.
     }
 
     /**
@@ -194,8 +192,9 @@ export class PhysicsEngine {
         // impulses stored on pairs; stale impulses make restores diverge.
         Pairs.clear(this.engine.pairs);
 
-        // Optional behavioral state (e.g. Mouse walking direction) so
-        // play/reset cycles replay deterministically. Entries are matched to
+        // Behavioral state (restoreState — the declared BaseObject lifecycle
+        // seam, ADR 0003) so play/reset cycles replay deterministically.
+        // Entries are matched to live objects by their body-id set — the same identity the pose
         // live objects by their body-id set — the same identity the pose
         // restore below keys off — never by list position: a mid-play
         // remove+add keeps counts equal but swaps objects, and index zipping
