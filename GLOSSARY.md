@@ -37,3 +37,10 @@ Single-context domain vocabulary. Architecture decisions live in `docs/adr/`; th
 - **Wake-on-act** — an object wakes (`wakeBodies()`) exactly the bodies it acts on, right before applying a force/constraint: asleep bodies skip force integration in Matter, so acting without waking silently does nothing.
 - **Discovery never wakes** — the query methods are pure reads; sleeping candidates come back asleep. Sleep state has a single writer: `wakeBodies()`.
 - **Movable-non-wall-non-own policy** — default discovery matches dynamic bodies only; boundary walls (`wall-*` labels) and statics are opt-ins per call (`includeWalls` / `includeStatic`), and a caller never discovers its own bodies.
+
+## Lifecycle & restore (ADR 0003)
+
+- **Lifecycle contract** — every object goes create → play (`onBeforeUpdate` per step) → restore (`restoreState` across a play/reset cycle) → dispose; optional seams (`onBeforeUpdate`, `restoreState`) are default no-ops on `BaseObject`. A new object type must satisfy the conformance sweep in `tests/object-contract.test.js`.
+- **restoreState** — the snapshot-restore seam: `PhysicsEngine.restoreSnapshot()` re-apposes bodies by body id, then calls `restoreState` on body-id-matched objects for behavioral state only (never positions). Transient state resets "cycles start clean" (Bucket catches, Spring trigger, Trampoline stretch, Mouse cooldowns); Gear is snapshot-faithful (drive from the serialize ride-along).
+- **Dual restore paths** — *physics restore* (`GameLoop.reset()`): same instances, body-id matched, `restoreState` seam. *Placed restore* (`js/reset/levelReset.js`): fresh deserialize from the placed snapshot — construction IS the restore, new ids.
+- **loadCustom** — the only seam for ad-hoc level data (editor JSON import): installs `LevelManager._currentLevel` and emits `level:loaded` exactly like `loadLevel(id)`; UI never emits `level:loaded` directly.
