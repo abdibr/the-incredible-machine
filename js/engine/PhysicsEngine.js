@@ -89,6 +89,7 @@ export class PhysicsEngine {
 
         // Remove bodies
         for (const body of gameObject.bodies) {
+            if (!body) continue; // disposed objects may report null bodies
             Composite.remove(this.world, body);
             this._bodyToObject.delete(body.id);
         }
