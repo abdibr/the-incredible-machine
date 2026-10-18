@@ -131,20 +131,60 @@ describe('Rope severing — physical detachment', () => {
         expect(ctx.strokeStyles).toContain('#aaa');
     });
 
-    it('should sever and physically detach when scissors touch the rope', async () => {
+    it('should stay intact under open scissors resting in the blade fan', async () => {
         const { default: Scissors } = await import('../js/objects/Scissors.js');
 
         const physics = new PhysicsEngine(800, 600);
         // Rope hangs from (400, 40): segment centers at y = 45, 55, ..., 95
         const rope = new Rope(400, 40, { length: 60 });
-        // Scissors blade rect (30x8) covers the rope segment at y=55
+        // Open scissors straddle the rope — a segment rests in the blade
+        // fan, but open blades never cut (nor trigger on rope contact)
         const scissors = new Scissors(400, 55);
 
         physics.addObject(rope);
         physics.addObject(scissors);
-        physics.step(16.67);
+        for (let i = 0; i < 10; i++) physics.step(16.67);
 
-        expect(rope.isSevered).toBe(true);
+        expect(scissors.isClosed).toBe(false);
+        expect(rope.isSevered).toBe(false);
+        const worldConstraints = Composite.allConstraints(physics.world);
+        for (const constraint of rope.constraints) {
+            expect(worldConstraints).toContain(constraint);
+        }
+
+        physics.dispose();
+    });
+
+    it('should sever and physically detach when a weight snaps the scissors shut on the rope', async () => {
+        const { default: Scissors } = await import('../js/objects/Scissors.js');
+        const { default: Ball } = await import('../js/objects/Ball.js');
+
+        const physics = new PhysicsEngine(800, 600);
+        // Rope hangs from (400, 40): segment centers at y = 45, 55, ..., 95
+        const rope = new Rope(400, 40, { length: 60 });
+        // Open scissors straddle the rope (segment at y=55 rests in the
+        // blade fan). A tennis ball dropped onto the raised handle snaps
+        // the blades shut and severs it.
+        const scissors = new Scissors(400, 55);
+        const ball = new Ball(379, 28, { variant: 'tennis' });
+
+        physics.addObject(rope);
+        physics.addObject(scissors);
+        physics.addObject(ball);
+
+        let severedStep = -1;
+        for (let i = 0; i < 90; i++) {
+            physics.step(16.67);
+            if (rope.isSevered) {
+                severedStep = i;
+                break;
+            }
+        }
+        expect(severedStep).toBeGreaterThanOrEqual(0);
+        expect(scissors.isClosed).toBe(true);
+
+        // Freed rope stays detached — no constraint resurrection
+        for (let i = 0; i < 30; i++) physics.step(16.67);
         const worldConstraints = Composite.allConstraints(physics.world);
         for (const constraint of rope.constraints) {
             expect(worldConstraints).not.toContain(constraint);

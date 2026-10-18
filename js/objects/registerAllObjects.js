@@ -133,7 +133,7 @@ export function registerAllObjects() {
     objectRegistry.register('scissors', Scissors, {
         displayName: 'Scissors',
         category: 'triggers',
-        description: 'Sharp blades — cut ropes, pop balloons.',
+        description: 'Blades rest open — a weight on the handle snaps them shut, cutting ropes and popping balloons.',
     });
 
     objectRegistry.register('mouse', Mouse, {
