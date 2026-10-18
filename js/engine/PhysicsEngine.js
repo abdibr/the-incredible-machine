@@ -113,10 +113,11 @@ export class PhysicsEngine {
      * @param {number} dt ΓÇö delta time in ms
      */
     step(dt) {
-        // Pre-update hooks on all objects
+        // Pre-update hooks on all objects.
+        // BaseObject contract: onBeforeUpdate(engine, dt).
         for (const obj of this._objects) {
             if (obj.onBeforeUpdate) {
-                obj.onBeforeUpdate(dt, this);
+                obj.onBeforeUpdate(this, dt);
             }
         }
 
@@ -125,7 +126,7 @@ export class PhysicsEngine {
         // Post-update hooks
         for (const obj of this._objects) {
             if (obj.onAfterUpdate) {
-                obj.onAfterUpdate(dt, this);
+                obj.onAfterUpdate(this, dt);
             }
         }
     }
