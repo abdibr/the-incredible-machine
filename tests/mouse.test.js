@@ -295,3 +295,85 @@ describe('Mouse determinism across play/reset cycles', () => {
         engine.dispose();
     });
 });
+
+describe('Mouse ledge reversal (edge-probe cooldown, Phase 5 #6)', () => {
+    let engine;
+
+    beforeEach(() => {
+        engine = new PhysicsEngine(800, 600);
+    });
+
+    // Walkable plank with a real left edge at x=100: Ramp body is a
+    // 12px-thick rectangle, so center y=506 puts the walkable top at y=500
+    // (mouse center ≈ 494, mirroring the FLOOR_Y - 6 rigs above).
+    function makePlank() {
+        const plank = new Ramp(380, 506, { width: 560, angle: 0 });
+        engine.addObject(plank);
+        return plank;
+    }
+
+    /** Matter-style collision pair: normal points from bodyA to bodyB. */
+    function contactPair(mouseObj, otherObj) {
+        const bodyA = mouseObj.bodies[0];
+        const bodyB = otherObj.bodies[0];
+        const dx = bodyB.position.x - bodyA.position.x;
+        const dy = bodyB.position.y - bodyA.position.y;
+        const len = Math.hypot(dx, dy) || 1;
+        return { bodyA, bodyB, normal: { x: dx / len, y: dy / len } };
+    }
+
+    const directionOf = (mouse) => mouse.serialize().options.direction;
+
+    it('reverses at a ledge despite an active contact-reversal cooldown', () => {
+        makePlank();
+        const mouse = new Mouse(112, 494, { direction: 1 });
+        engine.addObject(mouse);
+        // Ball parked clear of the mouse purely as a stand-in to arm the
+        // shared contact debounce, exactly like a real head-on bump.
+        const bump = new Ball(160, 488, { variant: 'tennis' });
+        engine.addObject(bump);
+
+        mouse.onBeforeUpdate(engine); // grounded → walking velocity armed
+        // Head-on ball contact from the right: flips direction and arms the
+        // 30-frame contact debounce.
+        mouse.onCollision(bump, contactPair(mouse, bump));
+        expect(directionOf(mouse)).toBe(-1);
+
+        // Same instant, a ledge opens up in the (new) walking direction —
+        // (112 - 15, 505) is past the plank's left edge at x=100. The edge
+        // probe is instantaneous and geometric; it must not be silenced by
+        // the contact jitter debounce. The old shared cooldown swallowed
+        // this reversal and walked the mouse off the plank.
+        mouse.onBeforeUpdate(engine);
+        expect(directionOf(mouse)).toBe(1);
+        engine.dispose();
+    });
+
+    it('does not walk off a plank after a ball bump (edge reversal not swallowed)', () => {
+        makePlank();
+        const mouse = new Mouse(112, 494, { direction: 1 });
+        engine.addObject(mouse);
+        const bump = new Ball(160, 488, { variant: 'tennis' });
+        engine.addObject(bump);
+
+        // Arm the post-bump state through the real seams (deterministic —
+        // in-engine bump timing depends on solver damping), then hand over to
+        // physics: walking direction is already toward the plank's left edge
+        // while the contact cooldown is still running.
+        mouse.onBeforeUpdate(engine);
+        mouse.onCollision(bump, contactPair(mouse, bump));
+        expect(directionOf(mouse)).toBe(-1);
+
+        let maxY = mouse.bodies[0].position.y;
+        for (let i = 0; i < 120; i++) {
+            engine.step(DT);
+            maxY = Math.max(maxY, mouse.bodies[0].position.y);
+        }
+
+        // Old shared-cooldown behavior: the ledge reversal is swallowed for
+        // 30 frames, the mouse walks ~22px past the edge and falls (y grows
+        // well past the plank top of y=500).
+        expect(maxY).toBeLessThan(505);
+        engine.dispose();
+    });
+});

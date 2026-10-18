@@ -14,6 +14,10 @@ const MOUSE_WIDTH = 20;
 const MOUSE_HEIGHT = 12;
 const MOUSE_SPEED = 1.2;
 const REVERSAL_COOLDOWN_FRAMES = 30; // frames between allowed reversals (no jitter)
+// Separate short debounce for ledge-probe reversals (Phase 5 #6): sharing the
+// long contact debounce swallowed genuine edge reversals right after a
+// ball-push reversal (~22px), walking the mouse off planks.
+const EDGE_PROBE_COOLDOWN_FRAMES = 6;
 const FRONT_FACING_DOT = 0.7;        // head-on contact: |normal.x| along walk axis
 const MIN_REL_APPROACH = 0.25;       // relative approach (× speed) to treat contact as wall-like
 const BODY_COLOR = '#b0b0b0';
@@ -27,6 +31,7 @@ export default class Mouse extends BaseObject {
         this._isWalking = false;
         this._walkPhase = 0;
         this._reversalCooldown = 0; // frames until the next reversal is allowed
+        this._edgeProbeCooldown = 0; // separate, short debounce for ledge probes
 
         this._body = Bodies.rectangle(x, y, MOUSE_WIDTH, MOUSE_HEIGHT, {
             density: 0.002,
@@ -73,6 +78,7 @@ export default class Mouse extends BaseObject {
 
     onBeforeUpdate(engine) {
         if (this._reversalCooldown > 0) this._reversalCooldown -= 1;
+        if (this._edgeProbeCooldown > 0) this._edgeProbeCooldown -= 1;
 
         this._isWalking = this._isGrounded(engine);
 
@@ -106,7 +112,7 @@ export default class Mouse extends BaseObject {
         const hasGround = groundAhead.some(b => b !== this._body && b.isStatic);
 
         if (!hasGround) { // ledge ahead → turn around
-            this._reverse();
+            this._reverseFromEdge();
         }
     }
 
@@ -119,6 +125,21 @@ export default class Mouse extends BaseObject {
         if (this._reversalCooldown > 0) return;
         this._direction *= -1;
         this._reversalCooldown = REVERSAL_COOLDOWN_FRAMES;
+    }
+
+    /**
+     * Edge-probe reversals use their own short debounce instead of the long
+     * contact debounce (Phase 5 #6): a genuine ledge ahead is an
+     * instantaneous, non-oscillating signal, so delaying it for the full
+     * REVERSAL_COOLDOWN_FRAMES after a ball-push reversal walks the mouse
+     * ~22px off the plank. The short guard only stops the rare narrow-island
+     * case (no ground ahead on either side) from flip-flopping each frame.
+     * @private
+     */
+    _reverseFromEdge() {
+        if (this._edgeProbeCooldown > 0) return;
+        this._direction *= -1;
+        this._edgeProbeCooldown = EDGE_PROBE_COOLDOWN_FRAMES;
     }
 
     onCollision(other, pair) {
@@ -312,6 +333,7 @@ export default class Mouse extends BaseObject {
             this._direction = direction;
         }
         this._reversalCooldown = 0; // cooldown is transient; cycles start clean
+        this._edgeProbeCooldown = 0; // edge debounce is transient too
     }
 
     static deserialize(data) {
