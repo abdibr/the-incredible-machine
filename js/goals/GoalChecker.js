@@ -17,6 +17,9 @@
 
 import { eventBus } from '../EventBus.js';
 
+/** The only goal type this checker implements (level JSON `goal.type`) */
+const ZONE_GOAL_TYPE = 'object_in_zone';
+
 export class GoalChecker {
     constructor() {
         /** @type {import('../engine/PhysicsEngine.js').PhysicsEngine|null} */
@@ -62,7 +65,17 @@ export class GoalChecker {
 
     /** @private */
     _onCaught(bucket, object) {
-        if (this._goal === null || this._decided) return;
+        const goal = this._goal;
+        if (!goal || this._decided) return;
+
+        // Only zone-type goals are checked here
+        if (goal.type !== ZONE_GOAL_TYPE) return;
+
+        // Target-type filtering: a wrong object caught in the zone does not win
+        if (goal.targetType !== object?.type) return;
+
+        // Zone filtering: the catching bucket must be the level's goal zone
+        if (goal.zoneId !== bucket?.customId) return;
 
         this._decided = 'reached';
         eventBus.emit('goal:reached', { levelId: this._levelId });

@@ -56,4 +56,50 @@ describe('GoalChecker win path (issue #11)', () => {
         expect(reached).toHaveBeenCalledTimes(1);
         expect(reached).toHaveBeenCalledWith({ levelId: 'level-01' });
     });
+
+    it('does not win when a wrong object is caught — target-type filtering (issue #11)', () => {
+        const reached = vi.fn();
+        eventBus.on('goal:reached', reached);
+
+        eventBus.emit('level:loaded', level01); // level-01 goal.targetType === 'ball'
+
+        const bucket = Bucket.deserialize(level01.fixedObjects[0]);
+        const wrongObject = { type: 'domino', id: 99 }; // non-ball stray (the payload Bucket emits)
+
+        eventBus.emit('bucket:caught', { bucket, object: wrongObject, totalCaught: 1 });
+
+        expect(reached).not.toHaveBeenCalled();
+    });
+
+    it('does not win when the catching bucket is not the goal zone (customId mismatch)', () => {
+        const reached = vi.fn();
+        eventBus.on('goal:reached', reached);
+
+        eventBus.emit('level:loaded', level01); // level-01 goal.zoneId === 'bucket-goal'
+
+        const decoyBucket = new Bucket(300, 480); // no customId → not the goal zone
+        const ball = new Ball(300, 400);
+
+        eventBus.emit('bucket:caught', { bucket: decoyBucket, object: ball, totalCaught: 1 });
+
+        expect(reached).not.toHaveBeenCalled();
+    });
+
+    it('does not win for goal types the checker does not implement', () => {
+        const reached = vi.fn();
+        eventBus.on('goal:reached', reached);
+
+        eventBus.emit('level:loaded', {
+            ...level01,
+            id: 'custom-pop',
+            goal: { ...GOAL, type: 'pop_all_balloons' }, // editor offers this type; not zone-based
+        });
+
+        const bucket = new Bucket(700, 480, { customId: 'bucket-goal' });
+        const ball = new Ball(700, 450);
+
+        eventBus.emit('bucket:caught', { bucket, object: ball, totalCaught: 1 });
+
+        expect(reached).not.toHaveBeenCalled();
+    });
 });
