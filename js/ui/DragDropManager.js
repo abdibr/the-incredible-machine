@@ -15,6 +15,7 @@ import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { renderer } from '../render/Renderer.js';
 import { toolbox } from './Toolbox.js';
+import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 
 class DragDropManager {
     constructor() {
@@ -108,12 +109,27 @@ class DragDropManager {
             if (this._dragType === 'toolbox') {
                 eventBus.emit('drag:ghost-update', { type: this._dragObjType, x: pos.x, y: pos.y });
             } else if (this._dragType === 'move' && this._dragObject) {
-                this._dragObject.setPosition(pos.x, pos.y);
+                // Keep dragged parts fully inside the playfield — the static
+                // boundary walls coincide with the world edges.
+                const clamped = clampObjectToPlayfield(
+                    this._dragObject, pos.x, pos.y,
+                    renderer.canvas.width, renderer.canvas.height
+                );
+                this._dragObject.setPosition(clamped.x, clamped.y);
             } else if (this._dragType === 'rotate' && this._dragObject) {
                 const objX = this._dragObject.x;
                 const objY = this._dragObject.y;
                 const angle = Math.atan2(pos.y - objY, pos.x - objX);
                 this._dragObject.setAngle(angle);
+                // Rotation can swing the footprint across a boundary edge —
+                // keep the rotated AABB inside the playfield as well.
+                const clamped = clampObjectToPlayfield(
+                    this._dragObject, this._dragObject.x, this._dragObject.y,
+                    renderer.canvas.width, renderer.canvas.height
+                );
+                if (clamped.x !== this._dragObject.x || clamped.y !== this._dragObject.y) {
+                    this._dragObject.setPosition(clamped.x, clamped.y);
+                }
             }
         });
 
@@ -243,6 +259,16 @@ class DragDropManager {
 
         try {
             const obj = objectRegistry.create(type, x, y);
+            // Clamp into the playfield: a drop across a boundary edge (e.g. a
+            // release over the toolbox panel, or below the ground line) must
+            // land fully inside the walls, otherwise the part embeds in the
+            // static boundary walls and gets violently displaced at play start.
+            const clamped = clampObjectToPlayfield(
+                obj, x, y, renderer.canvas.width, renderer.canvas.height
+            );
+            if (clamped.x !== x || clamped.y !== y) {
+                obj.setPosition(clamped.x, clamped.y);
+            }
             this._objects.push(obj);
             this._selectObject(obj);
             eventBus.emit('object:placed', { type, id: obj.id, object: obj });

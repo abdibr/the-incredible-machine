@@ -8,6 +8,7 @@
 
 import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
+import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 
 class Renderer {
     constructor() {
@@ -119,6 +120,12 @@ class Renderer {
             this._drawGrid(ctx, w, h);
         }
 
+        // 2.5. Draw the playfield boundary lines (floor + side walls), every
+        // frame and in every mode: the physics boundary walls coincide with
+        // the world edges (the boundary floor's top edge is exactly y = h),
+        // so drawing them keeps the limits of the play area visible.
+        this._drawBoundaries(ctx, w, h);
+
         // 3. Draw all placed objects
         for (const obj of objs) {
             ctx.save();
@@ -135,7 +142,13 @@ class Renderer {
         if (this._ghostObj && this.ghostState) {
             ctx.save();
             ctx.globalAlpha = 0.5;
-            this._ghostObj.setPosition(this.ghostState.x, this.ghostState.y);
+            // Preview exactly where the part will land — same clamp the
+            // placement applies on mouseup, so the ghost never hangs over
+            // the boundary walls during the drag.
+            const gpos = clampObjectToPlayfield(
+                this._ghostObj, this.ghostState.x, this.ghostState.y, w, h
+            );
+            this._ghostObj.setPosition(gpos.x, gpos.y);
             this._ghostObj.draw(ctx);
             ctx.restore();
         }
@@ -236,6 +249,44 @@ class Renderer {
             ctx.lineTo(w, y);
             ctx.stroke();
         }
+        ctx.restore();
+    }
+
+    /**
+     * Draw the playfield boundary: a solid ground line along the bottom edge
+     * (the physics floor's top edge coincides with y = h, so objects resting
+     * on the floor sit on this line) plus subtle lines marking the side walls
+     * and the ceiling, so the limits of the play area are visible.
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {number} w - canvas width (world px)
+     * @param {number} h - canvas height (world px)
+     */
+    _drawBoundaries(ctx, w, h) {
+        ctx.save();
+
+        // Ground — a solid line exactly at the floor surface, with a faint
+        // support band above it for depth
+        ctx.fillStyle = 'rgba(90, 81, 66, 0.25)';
+        ctx.fillRect(0, h - 6, w, 6);
+        ctx.strokeStyle = '#5a5142';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(0, h - 1.5);
+        ctx.lineTo(w, h - 1.5);
+        ctx.stroke();
+
+        // Side walls + ceiling — 1px subtle lines at the world edges
+        ctx.strokeStyle = 'rgba(64, 64, 64, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0.5, 0);
+        ctx.lineTo(0.5, h);
+        ctx.moveTo(w - 0.5, 0);
+        ctx.lineTo(w - 0.5, h);
+        ctx.moveTo(0, 0.5);
+        ctx.lineTo(w, 0.5);
+        ctx.stroke();
+
         ctx.restore();
     }
 

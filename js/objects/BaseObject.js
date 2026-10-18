@@ -13,6 +13,35 @@
 
 let _nextId = 1;
 
+/**
+ * Clamp a desired object center position so the object's current AABB stays
+ * fully inside the playfield rectangle (0..playfieldWidth × 0..playfieldHeight).
+ *
+ * Used by placement and move/rotate-drag handling so parts never stick out of
+ * the world: the static boundary walls coincide exactly with the playfield
+ * edges (the boundary floor's top edge is at y = playfieldHeight), and a part
+ * embedded in a wall gets violently displaced when play starts.
+ *
+ * The footprint is read from `obj.bounds` at the object's current pose, so
+ * rotated objects are clamped against their rotated AABB.
+ *
+ * @param {BaseObject} obj - the object (its current bounds define the footprint)
+ * @param {number} x - desired center x
+ * @param {number} y - desired center y
+ * @param {number} playfieldWidth - world width in px (e.g. 1000)
+ * @param {number} playfieldHeight - world height in px (e.g. 600)
+ * @returns {{ x: number, y: number }} clamped center position
+ */
+export function clampObjectToPlayfield(obj, x, y, playfieldWidth, playfieldHeight) {
+    const b = obj.bounds;
+    const halfW = b.width / 2;
+    const halfH = b.height / 2;
+    return {
+        x: Math.min(Math.max(x, halfW), playfieldWidth - halfW),
+        y: Math.min(Math.max(y, halfH), playfieldHeight - halfH),
+    };
+}
+
 export default class BaseObject {
     /**
      * @param {number} x - Initial x position (center)
