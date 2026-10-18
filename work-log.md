@@ -1,4 +1,20 @@
 # Work Log — The Incredible Machine (Web Clone)
+## 2026-10-18 — Broken-functionality fix pipeline (integration/broken-functionality-fixes)
+
+Wave-1 merge series onto the integration branch, one branch per audit item:
+
+- `9e4679b` `ticket/03-hygiene` — Phase 4 sweep (work-log conflict markers, BOM/mojibake, dead MockObjects.js, README accuracy, npm/Vitest notes). Back to green.
+- `d0e8f40` `ticket/08-reset` — reset preserves the player's placed machine via the saved placed-snapshot; `PhysicsEngine` snapshot/restore hardening for play/reset cycles.
+- `1d6bbb4` `ticket/02-rope` — `Rope.sever()` now physically removes the rope's constraints/world segments on `rope:severed` (candle + scissors reach it through the existing collision dispatch).
+- `8b213dd` `ticket/07-balloon` — popped balloons remove their Matter body from the world immediately; no invisible colliders after pop.
+- `1193e57` `ticket/04-speed` — `controls:speed` wired to `GameLoop.cycleSpeed()` in `main.js`.
+- `6a41386` `ticket/06-fan` — rotation-aware wind zone (local-space rectangle test + distance falloff).
+- `a64fa69` `ticket/13-pulley` — true shared-rope coupling: weight on one platform raises the other.
+- `08e73a4` `ticket/09-mouse` — direction-jitter debouncing; front-facing/static contacts only; **hook contract change**: `step()` now calls `onBeforeUpdate(engine, dt)` (engine-first, dt is explicit ms), and the branch set engine `enableSleeping: true`. Both ripple: Pulley.js still had the old signature (traction silently early-returned — `.world` on a dt number) — fixed in `570a8b2` to `(engine, dt)`. Sleeping experiment disabled after review (mouse-jitter cycle tests don't depend on it; determinism now carried by the snapshot restore) — `enableSleeping: false` explicit with comment, merge amended `a13a5cf`.
+- `2aa0513` + `820b60e` `ticket/14-gear` — tooth traction in `onBeforeUpdate`; Gear also carried the old `(dt, engine)` signature (carry silently dead: partial speeds in tests were emergent kicks from `Body.setAngle` rotating the approximated circle's polygon facets, not real carry) — signature fixed, all green.
+- `6502a3c` `ticket/10-snapshot` — `restoreSnapshot` matches recorded poses to live bodies **by Matter body id** (never index), restores exact-replay state (vertices last, `positionImpulse`, motion/sleepCounter), detects snapshot↔world drift in both directions, warns + emits `physics:snapshot-mismatch` and self-heals by re-taking the snapshot. One real merge conflict in `PhysicsEngine.js` resolved by unioning both designs (ours' behavior restore zip + exact-replay extras, theirs' id-index + drift/retake).
+
+Status: `npm test` — 10 files / **91 tests, all green**. TODO.md updated: Phase 1.2-1.4, 2.1, 3.1-3.5, 4.1-4.5 marked done. Remaining: 1.1 goal system (`ticket/11`, build in flight), 2.2 dead-events sweep (`ticket/12`, build in flight), manual QA checklist, push/close.
 
 ## 2026-02-23 — Project Kickoff
 

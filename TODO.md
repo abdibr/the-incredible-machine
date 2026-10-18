@@ -24,31 +24,31 @@ Legend: [ ] = todo, [~] = in progress, [x] = done.
 - Acceptance: level-01, drop ball into bucket, play -> win overlay appears, level marked complete, next level loads.
 
 ### 1.2 Reset destroys the player's machine - iteration loop broken
-- [ ] `state._savedPlacedSnapshot` is written (`js/main.js:43,157,259`) but never read by anything.
-- [ ] In `_resetLevel()`, for level modes: restore player-placed objects from `_savedPlacedSnapshot` (deserialize + re-add to render list; bodies re-added on next play) instead of wiping them.
-- [ ] Sandbox mode: decide intended reset semantics (parts return to edit positions vs. clear all) and implement consistently.
-- Acceptance: place parts, play, reset -> parts are back at edit-mode positions; play/reset cycles are repeatable and stable.
+- [x] `state._savedPlacedSnapshot` is written (`js/main.js:43,157,259`) but never read by anything.
+- [x] In `_resetLevel()`, for level modes: restore player-placed objects from `_savedPlacedSnapshot` (deserialize + re-add to render list; bodies re-added on next play) instead of wiping them.
+- [x] Sandbox mode: decide intended reset semantics (parts return to edit positions vs. clear all) and implement consistently.
+- Acceptance: place parts, play, reset -> parts are back at edit-mode positions; play/reset cycles are repeatable and stable. ✅ (`ticket/08-reset`, snapshot/restore path incl. `PhysicsEngine` id-matched restore)
 
 ### 1.3 Rope severing does nothing physically
-- [ ] `Rope.sever()` (`js/objects/Rope.js:122-127`) only sets a flag and emits `rope:severed` (no listener); its Matter constraints are never removed.
-- [ ] Add removal path: PhysicsEngine subscribes to `rope:severed` (or rope gets an engine/world hook) and removes `Rope.constraints` from the `Composite`.
-- [ ] Confirm candle (flame sensor) and scissors collisions reach `Rope.onCollision` -> `sever()` through the existing collision dispatch (wiring already exists in PhysicsEngine).
-- Acceptance: rope touching candle flame physically detaches on screen and in physics.
+- [x] `Rope.sever()` (`js/objects/Rope.js:122-127`) only sets a flag and emits `rope:severed` (no listener); its Matter constraints are never removed.
+- [x] Add removal path: PhysicsEngine subscribes to `rope:severed` (or rope gets an engine/world hook) and removes `Rope.constraints` from the `Composite`.
+- [x] Confirm candle (flame sensor) and scissors collisions reach `Rope.onCollision` -> `sever()` through the existing collision dispatch (wiring already exists in PhysicsEngine).
+- Acceptance: rope touching candle flame physically detaches on screen and in physics. ✅ (`ticket/02-rope`, 7 tests green)
 
 ### 1.4 Popped balloons leave invisible colliders
-- [ ] `Balloon.pop()` (`js/objects/Balloon.js:80-84`) only sets `_popped`; `bodies` getter returns `[]` and draw no-ops, but the Matter body stays in the world forever (invisible, still buoyant/colliding).
-- [ ] On pop: remove `this._body` from the physics world (engine hook or `physics:object-remove-request` event) then dispose.
-- Acceptance: popped balloon stops interacting with the world immediately; no phantom body remains.
+- [x] `Balloon.pop()` (`js/objects/Balloon.js:80-84`) only sets `_popped`; `bodies` getter returns `[]` and draw no-ops, but the Matter body stays in the world forever (invisible, still buoyant/colliding).
+- [x] On pop: remove `this._body` from the physics world (engine hook or `physics:object-remove-request` event) then dispose.
+- Acceptance: popped balloon stops interacting with the world immediately; no phantom body remains. ✅ (`ticket/07-balloon`)
 
 ---
 
 ## Phase 2 - HIGH: dead controls & one-way event wiring
 
 ### 2.1 Speed button is a no-op
-- [ ] `PlayControls` emits `controls:speed`; no subscriber anywhere. `GameLoop.cycleSpeed()` is only called by unit tests.
-- [ ] Subscribe in `main.js`: `eventBus.on('controls:speed', () => state.gameLoop.cycleSpeed())`.
-- [ ] Optional UX: show current speed (button tooltip or debug header).
-- Acceptance: clicking fast-forward during play visibly cycles 0.5x / 1x / 2x motion.
+- [x] `PlayControls` emits `controls:speed`; no subscriber anywhere. `GameLoop.cycleSpeed()` is only called by unit tests.
+- [x] Subscribe in `main.js`: `eventBus.on('controls:speed', () => state.gameLoop.cycleSpeed())`.
+- [x] Optional UX: show current speed (button tooltip or debug header).
+- Acceptance: clicking fast-forward during play visibly cycles 0.5x / 1x / 2x motion. ✅ (`ticket/04-speed`)
 
 ### 2.2 Dead events - wire or prune (document decision per event)
 - [ ] `loop:frame` (GameLoop) - candidate: goal checker per-step polling (wire) else prune.
@@ -67,49 +67,49 @@ Legend: [ ] = todo, [~] = in progress, [x] = done.
 ## Phase 3 - MEDIUM: object behavior fixes
 
 ### 3.1 Fan wind zone broken for rotated fans
-- [ ] `js/objects/Fan.js:70-79` computes axis-aligned bounds with `halfWidth = FAN_WIDTH`, `halfHeight = windRange` - only correct at angle 0 (e.g. a 90-deg fan projects a tall-narrow zone instead of wide-flat).
-- [ ] Make rotation-aware: transform each body position into fan-local space (translate/rotate) and use local rectangle test with halfWidth = FAN_WIDTH, halfHeight = windRange/2; keep distance falloff.
-- Acceptance: 90-deg-rotated fan blows bodies to its face direction; wind zone matches the drawn wind lines.
+- [x] `js/objects/Fan.js:70-79` computes axis-aligned bounds with `halfWidth = FAN_WIDTH`, `halfHeight = windRange` - only correct at angle 0 (e.g. a 90-deg fan projects a tall-narrow zone instead of wide-flat).
+- [x] Make rotation-aware: transform each body position into fan-local space (translate/rotate) and use local rectangle test with halfWidth = FAN_WIDTH, halfHeight = windRange/2; keep distance falloff.
+- Acceptance: 90-deg-rotated fan blows bodies to its face direction; wind zone matches the drawn wind lines. ✅ (`ticket/06-fan`)
 
 ### 3.2 Pulley is not coupled
-- [ ] `js/objects/Pulley.js:57-76`: each platform hangs from its own fixed world anchor under the pivot with fixed length; no left<->right coupling. "One side up when other goes down" is not implemented.
-- [ ] Implement true coupling: shared-rope math (transfer length between the two constraints per step) or per-frame force transfer in `onBeforeUpdate` when either platform is loaded.
-- Acceptance: adding weight to one platform raises the other.
+- [x] `js/objects/Pulley.js:57-76`: each platform hangs from its own fixed world anchor under the pivot with fixed length; no left<->right coupling. "One side up when other goes down" is not implemented.
+- [x] Implement true coupling: shared-rope math (transfer length between the two constraints per step) or per-frame force transfer in `onBeforeUpdate` when either platform is loaded.
+- Acceptance: adding weight to one platform raises the other. ✅ (`ticket/13-pulley`)
 
 ### 3.3 Mouse direction jitter
-- [ ] `js/objects/Mouse.js:107-112` reverses on collision with ANY non-mouse object (dynamic bodies cause flip-flopping); wall/edge probes only see static bodies.
-- [ ] Add debounce (cooldown frames) before reversing; only reverse on significant front-facing contacts; optionally account for relative velocity of dynamic bodies.
-- Acceptance: mouse walks and pushes light objects deterministically; no rapid oscillation.
+- [x] `js/objects/Mouse.js:107-112` reverses on collision with ANY non-mouse object (dynamic bodies cause flip-flopping); wall/edge probes only see static bodies.
+- [x] Add debounce (cooldown frames) before reversing; only reverse on significant front-facing contacts; optionally account for relative velocity of dynamic bodies.
+- Acceptance: mouse walks and pushes light objects deterministically; no rapid oscillation. ✅ (`ticket/09-mouse`; deterministic-play work partly in `ticket/10-snapshot`; engine sleeping left OFF by decision)
 
 ### 3.4 Gear physics is cosmetic
-- [ ] `js/objects/Gear.js`: physics body is a plain static circle; teeth are visual-only; static-body rotation does not push other bodies in Matter.js.
-- [ ] Decision needed: implement interaction (tangential impulse on contact in `onBeforeUpdate`, or kinematic-dynamic body with motor torque) or document as a known limitation in README/work-log.
-- Acceptance: decision documented; if implemented, objects visibly ride the gear teeth.
+- [x] `js/objects/Gear.js`: physics body is a plain static circle; teeth are visual-only; static-body rotation does not push other bodies in Matter.js.
+- [x] Decision needed: implement interaction (tangential impulse on contact in `onBeforeUpdate`, or kinematic-dynamic body with motor torque) or document as a known limitation in README/work-log.
+- Acceptance: decision documented; if implemented, objects visibly ride the gear teeth. ✅ (`ticket/14-gear`: tangential tooth traction in `onBeforeUpdate`; signature `(engine, dt)`)
 
 ### 3.5 Snapshot restore robustness
-- [ ] `PhysicsEngine.restoreSnapshot` maps `snapshot[i] -> objects[i]` by index - silently corrupts poses if object count/order changed between take and restore (deleted/popped objects).
-- [ ] Match by body id instead of index, or validate count/order and fail loudly (re-take snapshot) on mismatch.
-- Acceptance: deleting an object mid-play, then pausing/resetting, does not teleport other objects.
+- [x] `PhysicsEngine.restoreSnapshot` maps `snapshot[i] -> objects[i]` by index - silently corrupts poses if object count/order changed between take and restore (deleted/popped objects).
+- [x] Match by body id instead of index, or validate count/order and fail loudly (re-take snapshot) on mismatch.
+- Acceptance: deleting an object mid-play, then pausing/resetting, does not teleport other objects. ✅ (`ticket/10-snapshot`: id-matched poses, drift detection via `physics:snapshot-mismatch` + snapshot retake, exact-replay state incl. vertices/positionImpulse/motion/sleepCounter)
 
 ---
 
-## Phase 4 - Repo hygiene
+## Phase 4 - Repo hygiene (all done via `ticket/03-hygiene`)
 
 ### 4.1 Merge-conflict markers
-- [ ] `work-log.md` contains unresolved `<<<<<<< HEAD` markers - resolve and rewrite the log coherently.
+- [x] `work-log.md` contains unresolved `<<<<<<< HEAD` markers - resolve and rewrite the log coherently. ✅
 
 ### 4.2 Encoding artifacts
-- [ ] `js/engine/GameLoop.js` and `js/engine/PhysicsEngine.js`: BOM + mojibake (em-dash shown as `ΓÇÓ`-style artifacts) in comments - re-save as clean UTF-8 without BOM and fix the comment text.
+- [x] `js/engine/GameLoop.js` and `js/engine/PhysicsEngine.js`: BOM + mojibake (em-dash shown as `ΓÇÓ`-style artifacts) in comments - re-save as clean UTF-8 without BOM and fix the comment text. ✅ (byte-level sweep; also fixed a BOM+mojibake em-dash in `js/render/ObjectRenderer.js`)
 
 ### 4.3 Dead testing module
-- [ ] `js/testing/MockObjects.js` (754 lines): `registerMockObjects()` is never called - delete the file, or move under `tests/` if still useful for UI harnesses.
+- [x] `js/testing/MockObjects.js` (754 lines): `registerMockObjects()` is never called - delete the file, or move under `tests/` if still useful for UI harnesses. ✅ (deleted - superseded by real `registerAllObjects()`)
 
 ### 4.4 README accuracy
-- [ ] `README.md:35` documents `audio/ <- Sound effects`; the folder and any sound system do not exist. Remove from tree or mark "planned".
+- [x] `README.md:35` documents `audio/ <- Sound effects`; the folder and any sound system do not exist. Remove from tree or mark "planned". ✅ (removed; `tests/` documented as existing)
 
 ### 4.5 Test/runner notes
-- [ ] Document in README/work-log: Vitest 4 removed `--reporter=basic`; use plain `npm test`.
-- [ ] PowerShell quirk: npm stderr can surface as `NativeCommandError` noise; prefer `cmd /c npm test`.
+- [x] Document in README/work-log: Vitest 4 removed `--reporter=basic`; use plain `npm test`. ✅
+- [x] PowerShell quirk: npm stderr can surface as `NativeCommandError` noise; prefer `cmd /c npm test`. ✅
 
 ---
 
