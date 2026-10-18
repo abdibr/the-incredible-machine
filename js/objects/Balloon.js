@@ -13,7 +13,13 @@ import { eventBus } from '../EventBus.js';
 const { Bodies, Body } = Matter;
 
 const BALLOON_RADIUS = 18;
-const BUOYANCY_FORCE = -0.0015;
+// Buoyancy, applied each frame as BUOYANCY_FORCE * mass * 20 (upward).
+// -0.0015 netted ~29x the balloon's own weight against gravity and produced
+// a terminal rise of ~200 px/tick (~12,000 px/s at 60fps) — the balloon
+// rocketed to the ceiling. -0.000075 gives ~1.5x own weight (net 0.5x after
+// gravity), terminal rise ~3.5 px/tick (~210 px/s): a gentle float, ~58x
+// slower. See tests/balloon.test.js "floats upward at a gentle speed".
+const BUOYANCY_FORCE = -0.000075;
 
 const COLORS = ['#e04040', '#4080e0', '#40c040', '#e0c040', '#d060d0'];
 

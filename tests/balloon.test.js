@@ -114,4 +114,23 @@ describe('Balloon pop - ghost body removal', () => {
         engine.step(16.666);
         expect(balloonBodiesIn(engine)).toHaveLength(0);
     });
+
+    it('floats upward at a gentle speed (regression: rocket buoyancy)', () => {
+        const engine = createEngine({ enableSleeping: false });
+        const balloon = new Balloon(400, 500);
+        engine.addObject(balloon);
+        const y0 = balloon.bodies[0].position.y;
+
+        // One second of standard-tick steps (60 x 16.666ms)
+        for (let i = 0; i < 60; i++) engine.step(16.666);
+
+        const rise = y0 - balloon.bodies[0].position.y;
+
+        // The old tuning (-0.0015) netted ~29x own weight and crossed the
+        // 600px-tall world in a handful of ticks (~12,000 px/s); dead
+        // buoyancy wouldn't move at all. The gentle float covers ~130 px
+        // per second of simulation.
+        expect(rise).toBeGreaterThan(50);
+        expect(rise).toBeLessThan(250);
+    });
 });
