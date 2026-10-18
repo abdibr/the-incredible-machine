@@ -103,7 +103,7 @@ export default class Spring extends BaseObject {
                 for (const body of allBodies) {
                     if (body.isStatic || body === this._base || body === this._platform) continue;
 
-                    const collision = Matter.SAT.collides(this._platform, body);
+                    const collision = Matter.Collision.collides(this._platform, body);
                     if (collision && collision.collided) {
                         Body.applyForce(body, body.position, {
                             x: launchDirX * this._launchForce,

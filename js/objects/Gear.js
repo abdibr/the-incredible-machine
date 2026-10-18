@@ -84,7 +84,7 @@ export default class Gear extends BaseObject {
         for (const body of Matter.Composite.allBodies(engine.world)) {
             if (body.isStatic) continue;
 
-            const collision = Matter.SAT.collides(this._body, body);
+            const collision = Matter.Collision.collides(this._body, body);
             if (!collision || !collision.collided) continue;
 
             // Outward radial direction from the gear centre to the touching body

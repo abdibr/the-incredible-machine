@@ -77,7 +77,7 @@ export default class Conveyor extends BaseObject {
             if (body.isStatic || body === this._body) continue;
 
             // Check collision between this conveyor and the body
-            const collision = Matter.SAT.collides(this._body, body);
+            const collision = Matter.Collision.collides(this._body, body);
             if (collision && collision.collided) {
                 // Apply surface velocity along the belt direction
                 const angle = this._body.angle;
