@@ -8,7 +8,7 @@
 import Matter from 'matter-js';
 import { eventBus } from '../EventBus.js';
 
-const { Engine, World, Bodies, Body, Composite, Events, Query, Sleeping } = Matter;
+const { Engine, World, Bodies, Body, Composite, Events, Query, Sleeping, Pairs } = Matter;
 
 export class PhysicsEngine {
     /**
@@ -120,10 +120,11 @@ export class PhysicsEngine {
      * @param {number} dt — delta time in ms
      */
     step(dt) {
-        // Pre-update hooks on all objects
+        // Pre-update hooks on all objects.
+        // BaseObject contract: onBeforeUpdate(engine, dt).
         for (const obj of this._objects) {
             if (obj.onBeforeUpdate) {
-                obj.onBeforeUpdate(dt, this);
+                obj.onBeforeUpdate(this, dt);
             }
         }
 
@@ -132,7 +133,7 @@ export class PhysicsEngine {
         // Post-update hooks
         for (const obj of this._objects) {
             if (obj.onAfterUpdate) {
-                obj.onAfterUpdate(dt, this);
+                obj.onAfterUpdate(this, dt);
             }
         }
     }
@@ -159,6 +160,13 @@ export class PhysicsEngine {
                     angle: b.angle,
                     velocity: { x: b.velocity.x, y: b.velocity.y },
                     angularVelocity: b.angularVelocity,
+                    // Vertex geometry drifts through rotate/translate each
+                    // step (floating point), so restored contacts would
+                    // differ; store it to keep restores bit-deterministic.
+                    vertices: b.vertices.map(v => ({ x: v.x, y: v.y })),
+                    positionImpulse: { x: b.positionImpulse.x, y: b.positionImpulse.y },
+                    motion: b.motion,
+                    sleepCounter: b.sleepCounter,
                 })),
             });
         }
@@ -168,11 +176,22 @@ export class PhysicsEngine {
     restoreSnapshot() {
         if (!this._snapshot) return;
 
+        // Reset the pair cache so contacts re-form cold after teleporting
+        // bodies: Matter warm-starts the solver from accumulated contact
+        // impulses stored on pairs; stale impulses make restores diverge.
+        Pairs.clear(this.engine.pairs);
+
         // Restore body states
         const objectArray = [...this._objects];
         for (let i = 0; i < this._snapshot.length && i < objectArray.length; i++) {
             const snap = this._snapshot[i];
             const obj = objectArray[i];
+
+            // Optional behavioral state (e.g. Mouse walking direction) so
+            // play/reset cycles replay deterministically.
+            if (typeof obj.restoreState === 'function' && snap.serialized) {
+                obj.restoreState(snap.serialized);
+            }
 
             for (const bodyState of snap.bodyStates) {
                 const body = obj.bodies.find(b => b.id === bodyState.id);
@@ -182,6 +201,25 @@ export class PhysicsEngine {
                     Body.setVelocity(body, bodyState.velocity);
                     Body.setAngularVelocity(body, bodyState.angularVelocity);
                     Sleeping.set(body, false);
+                    // Position-solver impulse accumulators warm across steps
+                    // (postSolvePosition keeps a fraction when the body moves
+                    // along the impulse); restore them for exact replay.
+                    if (bodyState.positionImpulse) {
+                        body.positionImpulse.x = bodyState.positionImpulse.x;
+                        body.positionImpulse.y = bodyState.positionImpulse.y;
+                    }
+                    // Sleeping is per-body numeric state; restore it so sleep
+                    // evolution replays identically (engine has sleeping on).
+                    body.motion = bodyState.motion ?? body.motion;
+                    body.sleepCounter = bodyState.sleepCounter ?? body.sleepCounter;
+                    // Restore exact vertex geometry LAST (setVertices() orients
+                    // around body.position): per-step rotate/translate
+                    // accumulate floating-point drift into vertices, so the
+                    // SAT solver would otherwise see slightly different
+                    // contacts than the original run.
+                    if (bodyState.vertices) {
+                        Body.setVertices(body, bodyState.vertices);
+                    }
                 }
             }
         }
