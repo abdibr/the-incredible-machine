@@ -22,7 +22,9 @@ import Ball from '../js/objects/Ball.js';
 import Mouse from '../js/objects/Mouse.js';
 import Bucket from '../js/objects/Bucket.js';
 import { GoalChecker } from '../js/goals/GoalChecker.js';
+import LevelManager from '../js/levels/LevelManager.js';
 import level01 from '../js/levels/puzzles/level-01.json';
+import level02 from '../js/levels/puzzles/level-02.json';
 import level05 from '../js/levels/puzzles/level-05.json';
 
 /** The goal criteria from level-01.json (known-good literal from the repo) */
@@ -224,5 +226,84 @@ describe('GoalChecker fail path (issue #11)', () => {
 
         expect(failed).toHaveBeenCalledTimes(1);
         expect(failed).toHaveBeenCalledWith({ levelId: 'level-05', reason: expect.any(String) });
+    });
+});
+
+describe('Level-progression path (issue #11)', () => {
+    let physics;
+    let checker;
+    let levelManager;
+
+    /**
+     * Serve the actual level JSONs when LevelManager fetches
+     * /js/levels/puzzles/<id>.json (node can't resolve the relative URLs).
+     */
+    function stubFetchForLevels() {
+        const levelFiles = new Map([
+            ['level-01', level01],
+            ['level-02', level02],
+        ]);
+        vi.stubGlobal('fetch', vi.fn(async (url) => {
+            const match = String(url).match(/([a-z0-9-]+)\.json$/);
+            const data = match ? levelFiles.get(match[1]) : undefined;
+            if (data) {
+                return { ok: true, json: async () => data };
+            }
+            return { ok: false, status: 404, json: async () => ({}) };
+        }));
+        const storage = new Map();
+        vi.stubGlobal('localStorage', {
+            getItem: (key) => storage.get(key) ?? null,
+            setItem: (key, value) => storage.set(key, String(value)),
+        });
+    }
+
+    beforeEach(() => {
+        stubFetchForLevels();
+
+        eventBus.clear();
+        physics = new PhysicsEngine(800, 600);
+        levelManager = new LevelManager();
+        levelManager.init();
+
+        checker = new GoalChecker();
+        checker.init({ physicsEngine: physics });
+    });
+
+    afterEach(() => {
+        physics.dispose();
+        vi.unstubAllGlobals();
+    });
+
+    it('marks the level complete and unlocks the next one when the ball is caught', async () => {
+        await levelManager.loadLevel('level-01');
+
+        const bucket = Bucket.deserialize(level01.fixedObjects[0]);
+        eventBus.emit('bucket:caught', { bucket, object: new Ball(700, 450), totalCaught: 1 });
+
+        expect(levelManager.isLevelCompleted('level-01')).toBe(true);
+        expect(levelManager.isLevelUnlocked('level-02')).toBe(true);
+    });
+
+    /**
+     * The Next Level action: GoalOverlay's button emits
+     * 'overlay:next-level' { levelId: nextId } and main.js answers with
+     * levelManager.loadLevel(levelId) — verified here at the same seam.
+     */
+    it('Next Level action loads the following level id', async () => {
+        await levelManager.loadLevel('level-01');
+
+        const bucket = Bucket.deserialize(level01.fixedObjects[0]);
+        eventBus.emit('bucket:caught', { bucket, object: new Ball(700, 450), totalCaught: 1 });
+
+        const nextId = levelManager.getNextLevel();
+        expect(nextId).toBe('level-02');
+
+        const loaded = vi.fn();
+        eventBus.on('level:loaded', loaded);
+        await levelManager.loadLevel(nextId); // what the overlay:next-level listener does
+
+        expect(levelManager.getCurrentLevel().id).toBe('level-02');
+        expect(loaded).toHaveBeenCalledWith(level02);
     });
 });
