@@ -130,6 +130,27 @@ describe('Rope severing — physical detachment', () => {
         // Gray tone marks the severed rope
         expect(ctx.strokeStyles).toContain('#aaa');
     });
+    it('should sever and physically detach when scissors touch the rope', async () => {
+        const { default: Scissors } = await import('../js/objects/Scissors.js');
+
+        const physics = new PhysicsEngine(800, 600);
+        // Rope hangs from (400, 40): segment centers at y = 45, 55, ..., 95
+        const rope = new Rope(400, 40, { length: 60 });
+        // Scissors blade rect (30x8) covers the rope segment at y=55
+        const scissors = new Scissors(400, 55);
+
+        physics.addObject(rope);
+        physics.addObject(scissors);
+        physics.step(16.67);
+
+        expect(rope.isSevered).toBe(true);
+        const worldConstraints = Composite.allConstraints(physics.world);
+        for (const constraint of rope.constraints) {
+            expect(worldConstraints).not.toContain(constraint);
+        }
+
+        physics.dispose();
+    });
 });
 
 /** Minimal canvas 2D-context stub that records calls (no DOM/canvas in Node). */

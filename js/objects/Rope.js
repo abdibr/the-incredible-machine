@@ -114,7 +114,8 @@ export default class Rope extends BaseObject {
     }
 
     onCollision(other, pair) {
-        if (other.type === 'candle' && !this._severed) {
+        // Scissors and candle flame both sever the rope (cf. Balloon.pop)
+        if ((other.type === 'scissors' || other.type === 'candle') && !this._severed) {
             this.sever();
         }
     }
