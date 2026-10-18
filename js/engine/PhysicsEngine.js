@@ -176,6 +176,7 @@ export class PhysicsEngine {
         }
 
         // Apply each pose to the live body carrying the same id.
+        const appliedBodyIds = new Set();
         for (const obj of this._objects) {
             for (const body of obj.bodies) {
                 const bodyState = posesById.get(body.id);
@@ -186,7 +187,35 @@ export class PhysicsEngine {
                 Body.setVelocity(body, bodyState.velocity);
                 Body.setAngularVelocity(body, bodyState.angularVelocity);
                 Sleeping.set(body, false);
+                appliedBodyIds.add(body.id);
             }
+        }
+
+        // Detect drift between snapshot and world: recorded poses whose
+        // bodies are gone (objects removed), and live bodies the snapshot
+        // never saw (objects added after it was taken).
+        const unmatchedSnapshotBodyIds = [...posesById.keys()]
+            .filter((id) => !appliedBodyIds.has(id));
+        const unmatchedLiveBodyIds = [];
+        for (const obj of this._objects) {
+            for (const body of obj.bodies) {
+                if (!posesById.has(body.id)) unmatchedLiveBodyIds.push(body.id);
+            }
+        }
+
+        if (unmatchedSnapshotBodyIds.length > 0 || unmatchedLiveBodyIds.length > 0) {
+            // Fail loudly, then self-heal: converge the baseline to the just-
+            // restored world so the next restore stays consistent.
+            console.warn(
+                '[PhysicsEngine] Snapshot mismatch: ' +
+                `${unmatchedSnapshotBodyIds.length} snapshot pose(s) not in world, ` +
+                `${unmatchedLiveBodyIds.length} live body(s) missing from snapshot. Re-taking snapshot.`
+            );
+            eventBus.emit('physics:snapshot-mismatch', {
+                unmatchedSnapshotBodyIds,
+                unmatchedLiveBodyIds,
+            });
+            this.takeSnapshot();
         }
     }
 

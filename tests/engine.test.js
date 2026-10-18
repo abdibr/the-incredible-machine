@@ -79,6 +79,49 @@ describe('PhysicsEngine', () => {
         engine.dispose();
     });
 
+    it('flags a snapshot/world mismatch loudly and re-baselines it after a deletion', async () => {
+        const engine = new PhysicsEngine(800, 600);
+        const { default: Ball } = await import('../js/objects/Ball.js');
+        const { eventBus } = await import('../js/EventBus.js');
+
+        const a = new Ball(200, 150);
+        const b = new Ball(400, 150);
+        engine.addObject(a);
+        engine.addObject(b);
+        engine.takeSnapshot();
+
+        const warnings = [];
+        const mismatches = [];
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation((msg) => warnings.push(msg));
+        const unsubscribe = eventBus.on('physics:snapshot-mismatch', (payload) => mismatches.push(payload));
+
+        const bBodyId = b.bodies[0].id;
+        engine.removeObject(b); // delete mid-play
+        engine.restoreSnapshot(); // "reset"
+
+        // Mismatch is loud: a console warning and a physics:snapshot-mismatch event.
+        expect(warnings.length).toBe(1);
+        expect(mismatches.length).toBe(1);
+        expect(mismatches[0].unmatchedSnapshotBodyIds).toEqual([bBodyId]);
+        expect(mismatches[0].unmatchedLiveBodyIds).toEqual([]);
+        expect(engine.hasSnapshot()).toBe(true);
+
+        // Self-healing: the fresh baseline matches the restored world, so the
+        // next restore does not repeat the mismatch.
+        engine.step(16.67);
+        mismatches.length = 0;
+        warnings.length = 0;
+        engine.restoreSnapshot();
+
+        expect(mismatches.length).toBe(0);
+        expect(warnings.length).toBe(0);
+
+        unsubscribe();
+        warnSpy.mockRestore();
+        engine.dispose();
+    });
+
+
     it('should set time scale', () => {
         const engine = new PhysicsEngine(800, 600);
         engine.setTimeScale(2);
