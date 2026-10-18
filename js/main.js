@@ -67,6 +67,19 @@ export function getMode() {
     return state.mode;
 }
 
+/**
+ * Subscribe the speed control to the game loop (issue #4 / TODO §2.1).
+ * Exported separately from _wireEvents() so the wiring is unit-testable
+ * without a DOM boot.
+ * @param {{gameLoop: GameLoop|null}} appState
+ * @returns {Function} unsubscribe function
+ */
+export function wireSpeedControl(appState) {
+    return eventBus.on('controls:speed', () => {
+        if (appState.gameLoop) appState.gameLoop.cycleSpeed();
+    });
+}
+
 // ──────────────────────────────────────────────
 // Initialization
 // ──────────────────────────────────────────────
@@ -187,6 +200,9 @@ function _wireEvents() {
             _resetLevel();
         }
     });
+
+    // Speed button → cycle motion speed (issue #4 / TODO §2.1)
+    wireSpeedControl(state);
 
     // Level loaded → set up the board
     eventBus.on('level:loaded', (levelData) => {
