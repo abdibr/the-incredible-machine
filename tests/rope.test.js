@@ -42,4 +42,33 @@ describe('Rope severing — physical detachment', () => {
 
         physics.dispose();
     });
+
+    it('should keep the rope hanging until severed, then let the freed piece fall', () => {
+        const physics = new PhysicsEngine(800, 600);
+        const rope = new Rope(200, 100);
+        physics.addObject(rope);
+
+        const initialY = rope.bodies.map(b => b.position.y);
+
+        // Intact: the rope hangs near its laid-out positions (soft constraints
+        // sag ~20px under gravity; free fall would displace 100px+)
+        for (let i = 0; i < 20; i++) physics.step(16.67);
+        for (const [i, body] of rope.bodies.entries()) {
+            expect(Math.abs(body.position.y - initialY[i])).toBeLessThan(45);
+        }
+
+        rope.sever();
+
+        // Severed: the freed segments drop under gravity (static anchor stays)
+        for (let i = 0; i < 60; i++) physics.step(16.67);
+        for (const [i, body] of rope.bodies.entries()) {
+            if (body.isStatic) {
+                expect(body.position.y).toBe(initialY[i]);
+            } else {
+                expect(body.position.y).toBeGreaterThan(initialY[i] + 30);
+            }
+        }
+
+        physics.dispose();
+    });
 });
