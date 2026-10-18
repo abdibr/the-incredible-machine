@@ -184,17 +184,28 @@ export class PhysicsEngine {
         Pairs.clear(this.engine.pairs);
 
         // Optional behavioral state (e.g. Mouse walking direction) so
-        // play/reset cycles replay deterministically. Snapshot entries zip
-        // with the objects in recording order; only when the object set is
-        // unchanged — otherwise the drift check below re-takes the snapshot
-        // to self-heal, and stale behavioral state must not leak.
-        const objectArray = [...this._objects];
-        if (this._snapshot.length === objectArray.length) {
-            for (let i = 0; i < objectArray.length; i++) {
-                const obj = objectArray[i];
-                if (typeof obj.restoreState === 'function' && this._snapshot[i].serialized) {
-                    obj.restoreState(this._snapshot[i].serialized);
-                }
+        // play/reset cycles replay deterministically. Entries are matched to
+        // live objects by their body-id set — the same identity the pose
+        // restore below keys off — never by list position: a mid-play
+        // remove+add keeps counts equal but swaps objects, and index zipping
+        // would apply one object's state to another.
+        const snapByIdSet = new Map();
+        for (const snap of this._snapshot) {
+            let ids = '';
+            for (const bodyState of snap.bodyStates) {
+                ids += (ids ? ',' : '') + bodyState.id;
+            }
+            if (snap.serialized) snapByIdSet.set(ids, snap.serialized);
+        }
+        for (const obj of this._objects) {
+            if (typeof obj.restoreState !== 'function') continue;
+            let ids = '';
+            for (const body of obj.bodies) {
+                if (!body) continue; // a disposed object's bodies are already released
+                ids += (ids ? ',' : '') + body.id;
+            }
+            if (ids && snapByIdSet.has(ids)) {
+                obj.restoreState(snapByIdSet.get(ids));
             }
         }
 
