@@ -102,4 +102,35 @@ describe('GoalChecker win path (issue #11)', () => {
 
         expect(reached).not.toHaveBeenCalled();
     });
+
+    it('emits goal:reached once per play attempt even if the zone reports the catch repeatedly', () => {
+        const reached = vi.fn();
+        eventBus.on('goal:reached', reached);
+
+        eventBus.emit('level:loaded', level01);
+
+        const bucket = Bucket.deserialize(level01.fixedObjects[0]);
+        const ball = new Ball(700, 450);
+
+        eventBus.emit('bucket:caught', { bucket, object: ball, totalCaught: 1 });
+        eventBus.emit('bucket:caught', { bucket, object: ball, totalCaught: 1 });
+
+        expect(reached).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-arms for a new play attempt so a retry after win can win again', () => {
+        const reached = vi.fn();
+        eventBus.on('goal:reached', reached);
+
+        eventBus.emit('level:loaded', level01);
+
+        const bucket = Bucket.deserialize(level01.fixedObjects[0]);
+        eventBus.emit('bucket:caught', { bucket, object: new Ball(700, 450), totalCaught: 1 });
+
+        // Retry → play again (a new PLAYING attempt, no new level load)
+        eventBus.emit('mode:changed', { oldMode: 'WON', newMode: 'PLAYING' });
+        eventBus.emit('bucket:caught', { bucket, object: new Ball(700, 450), totalCaught: 1 });
+
+        expect(reached).toHaveBeenCalledTimes(2);
+    });
 });
