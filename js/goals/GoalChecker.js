@@ -1,0 +1,74 @@
+/**
+ * GoalChecker — decides when a level's goal is reached or failed.
+ *
+ * Makes levels winnable end-to-end (issue #11):
+ * - Listens on `bucket:caught` (emitted by Bucket sensors): if the caught
+ *   object matches the level goal (object_in_zone → goal.targetType) and
+ *   the bucket's customId matches goal.zoneId, emit `goal:reached { levelId }`.
+ *   (Display: GoalOverlay shows the win overlay. Progression:
+ *   LevelManager.markComplete unlocks the next level.)
+ * - Per-frame fail check on `loop:frame`: if a target object falls
+ *   off-world below the canvas, emit `goal:failed { levelId, reason }`.
+ *   (Display: GoalOverlay shows the fail overlay.)
+ *
+ * Either outcome fires once per play attempt; the checker re-arms on a
+ * new PLAYING attempt and on every level load.
+ */
+
+import { eventBus } from '../EventBus.js';
+
+export class GoalChecker {
+    constructor() {
+        /** @type {import('../engine/PhysicsEngine.js').PhysicsEngine|null} */
+        this._physics = null;
+
+        /** @type {object|null} Level goal (level JSON `goal` field) */
+        this._goal = null;
+
+        /** @type {string|null} Current level id */
+        this._levelId = null;
+
+        /** @type {string|null} 'reached' | 'failed' | null (latched per play attempt) */
+        this._decided = null;
+    }
+
+    /**
+     * Initialize the checker and hook it into the event bus.
+     * @param {object} [deps]
+     * @param {import('../engine/PhysicsEngine.js').PhysicsEngine} [deps.physicsEngine]
+     *        Needed for the per-frame off-world fail check.
+     */
+    init({ physicsEngine = null } = {}) {
+        this._physics = physicsEngine;
+
+        // Track the active goal; every loaded level re-arms the checker
+        eventBus.on('level:loaded', (levelData) => {
+            this._goal = levelData.goal ?? null;
+            this._levelId = levelData.id ?? null;
+            this._decided = null;
+        });
+
+        // A new play attempt re-arms the checker (retry / replay)
+        eventBus.on('mode:changed', ({ newMode }) => {
+            if (newMode === 'PLAYING') {
+                this._decided = null;
+            }
+        });
+
+        eventBus.on('bucket:caught', ({ bucket, object }) => {
+            this._onCaught(bucket, object);
+        });
+    }
+
+    /** @private */
+    _onCaught(bucket, object) {
+        if (this._goal === null || this._decided) return;
+
+        this._decided = 'reached';
+        eventBus.emit('goal:reached', { levelId: this._levelId });
+    }
+}
+
+/** Singleton goal checker instance (initialized by main.js) */
+export const goalChecker = new GoalChecker();
+export default GoalChecker;
