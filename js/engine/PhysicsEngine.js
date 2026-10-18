@@ -7,8 +7,10 @@
 
 import Matter from 'matter-js';
 import { eventBus } from '../EventBus.js';
+import { InteractionMatrix } from '../interactions/InteractionMatrix.js';
+import { DEFAULT_INTERACTION_ROWS } from '../interactions/rules.js';
 
-const { Engine, World, Bodies, Body, Composite, Events, Query, Sleeping, Pairs } = Matter;
+const { Engine, World, Bodies, Body, Composite, Events, Query, Bounds, Collision, Sleeping, Pairs } = Matter;
 
 export class PhysicsEngine {
     /**
@@ -42,6 +44,10 @@ export class PhysicsEngine {
 
         /** @type {object|null} Serialized snapshot for reset */
         this._snapshot = null;
+
+        // The single registry of object-to-object reactions (see
+        // js/interactions/rules.js); collisionStart pairs route through it.
+        this._interactions = new InteractionMatrix(DEFAULT_INTERACTION_ROWS);
 
         // Add boundary walls
         this._addBoundaries();
@@ -77,6 +83,11 @@ export class PhysicsEngine {
                 Composite.add(this.world, constraint);
             }
         }
+    }
+
+    /** @returns {InteractionMatrix} the interaction table backing collision dispatch */
+    get interactions() {
+        return this._interactions;
     }
 
     /**
@@ -126,12 +137,10 @@ export class PhysicsEngine {
 
         Engine.update(this.engine, dt);
 
-        // Post-update hooks
-        for (const obj of this._objects) {
-            if (obj.onAfterUpdate) {
-                obj.onAfterUpdate(this, dt);
-            }
-        }
+        // No post-update hooks: the old onAfterUpdate dispatch was dead
+        // contract (zero implementers anywhere) and is removed — ADR 0003
+        // decision 2. Post-step work lives in onBeforeUpdate of the next
+        // step or in the interaction matrix's contact handlers.
     }
 
     /**
@@ -183,8 +192,9 @@ export class PhysicsEngine {
         // impulses stored on pairs; stale impulses make restores diverge.
         Pairs.clear(this.engine.pairs);
 
-        // Optional behavioral state (e.g. Mouse walking direction) so
-        // play/reset cycles replay deterministically. Entries are matched to
+        // Behavioral state (restoreState — the declared BaseObject lifecycle
+        // seam, ADR 0003) so play/reset cycles replay deterministically.
+        // Entries are matched to live objects by their body-id set — the same identity the pose
         // live objects by their body-id set — the same identity the pose
         // restore below keys off — never by list position: a mid-play
         // remove+add keeps counts equal but swaps objects, and index zipping
@@ -326,6 +336,175 @@ export class PhysicsEngine {
         return this._bodyToObject.get(body.id) ?? null;
     }
 
+    // ── Discovery & wake seam (ADR 0002, candidate C2) ───────────
+
+    /** @private */
+    _isWallBody(body) {
+        return /^wall-/.test(body?.label ?? '');
+    }
+
+    /**
+     * Resolve the registered owner of a body, or null for unregistered ones
+     * (raw bodies added straight to the world).
+     * @private
+     */
+    _ownerOf(body) {
+        return this._bodyToObject.get(body?.id) ?? null;
+    }
+
+    /**
+     * Pair-grade discovery (ADR 0002): every world body whose geometry
+     * touches any of the given source bodies, found with the same primitives
+     * the contact solver uses — Matter Query.collides semantics (bounds
+     * broadphase, candidate-part iteration, Collision.collides SAT on
+     * vertices).
+     *
+     * Shared discovery policy:
+     *  - the actor's own registered bodies are skipped (no self-contact);
+     *  - static bodies and boundary walls are skipped unless opted in —
+     *    zone scans act on movable objects only.
+     *
+     * Discovery only: bodies come back in world iteration order and nothing
+     * is woken — wake exactly the bodies you act on with wakeBodies().
+     *
+     * @param {import('../objects/BaseObject.js').default} actor - the scanning object
+     * @param {object} [opts]
+     * @param {Matter.Body[]} [opts.sourceBodies] - collide against these instead of actor.bodies
+     * @param {boolean} [opts.includeStatic=false] - keep static candidates
+     * @param {boolean} [opts.includeWalls=false] - keep boundary walls
+     * @returns {Matter.Body[]}
+     */
+    queryTouching(actor, opts = {}) {
+        const sources = opts.sourceBodies ?? actor.bodies;
+        if (!sources || sources.length === 0) return [];
+        const owner = this._ownerOf(actor?.bodies?.[0]);
+        const results = [];
+
+        for (const candidate of Composite.allBodies(this.world)) {
+            if (sources.includes(candidate)) continue;
+            if (!opts.includeStatic && candidate.isStatic) continue;
+            if (!opts.includeWalls && this._isWallBody(candidate)) continue;
+            if (owner && this._bodyToObject.get(candidate.id) === owner) continue;
+
+            let touching = false;
+            for (const source of sources) {
+                if (!Bounds.overlaps(source.bounds, candidate.bounds)) continue;
+                // Compound candidates: skip the compound parent (index 0),
+                // same as Query.collides.
+                const partsStart = candidate.parts.length > 1 ? 1 : 0;
+                for (let j = partsStart; j < candidate.parts.length; j++) {
+                    const part = candidate.parts[j];
+                    if (!Bounds.overlaps(part.bounds, source.bounds)) continue;
+                    if (Collision.collides(source, part)) {
+                        touching = true;
+                        break;
+                    }
+                }
+                if (touching) break;
+            }
+            if (touching) results.push(candidate);
+        }
+        return results;
+    }
+
+    /**
+     * Region-grade discovery (ADR 0002): every world body whose POSITION
+     * lies inside `zone` — a rectangle expressed in the reference body's
+     * local frame (origin = body centre, axes rotate with the body).
+     * Broadphase is Query.region over the rotated rect's exact enclosing
+     * AABB; the exact test is position-in-rect in local space, so a body
+     * only grazing the zone with its bounds is not matched.
+     *
+     * Zone convention: {cx, cy} is the rect centre as a local offset from
+     * the reference body centre — a fan's wind cone (local up = out of the
+     * face) is {cx: 0, cy: -height/2, width, height}, exact at any body
+     * rotation.
+     *
+     * Same discovery policy and ordering as queryTouching.
+     *
+     * @param {Matter.Body} referenceBody - the zone lives in this body's frame
+     * @param {{ cx: number, cy: number, width: number, height: number }} zone
+     * @param {object} [opts] - { includeStatic: boolean, includeWalls: boolean }
+     * @returns {Matter.Body[]}
+     */
+    queryZone(referenceBody, zone, opts = {}) {
+        const pos = referenceBody.position;
+        const cos = Math.cos(referenceBody.angle);
+        const sin = Math.sin(referenceBody.angle);
+        const halfW = zone.width / 2;
+        const halfH = zone.height / 2;
+
+        // Rect centre in world space (rotate the local offset by body angle)
+        const worldCx = pos.x + zone.cx * cos - zone.cy * sin;
+        const worldCy = pos.y + zone.cx * sin + zone.cy * cos;
+
+        // Exact enclosing AABB of the rotated rectangle (broadphase)
+        const extentX = halfW * Math.abs(cos) + halfH * Math.abs(sin);
+        const extentY = halfW * Math.abs(sin) + halfH * Math.abs(cos);
+        const rect = {
+            min: { x: worldCx - extentX, y: worldCy - extentY },
+            max: { x: worldCx + extentX, y: worldCy + extentY },
+        };
+
+        const owner = this._ownerOf(referenceBody);
+        const results = [];
+
+        for (const body of Query.region(Composite.allBodies(this.world), rect)) {
+            if (body === referenceBody) continue;
+            if (!opts.includeStatic && body.isStatic) continue;
+            if (!opts.includeWalls && this._isWallBody(body)) continue;
+            if (owner && this._bodyToObject.get(body.id) === owner) continue;
+
+            // Exact test: the body's position in the zone's local frame
+            const dx = body.position.x - pos.x;
+            const dy = body.position.y - pos.y;
+            const localX = dx * cos + dy * sin;
+            const localY = -dx * sin + dy * cos;
+            if (Math.abs(localX - zone.cx) > halfW) continue;
+            if (Math.abs(localY - zone.cy) > halfH) continue;
+            results.push(body);
+        }
+        return results;
+    }
+
+    /**
+     * Probe-grade discovery (ADR 0002): every world body containing the
+     * point (Matter Query.point — bounds pass, then per-part vertices test),
+     * minus bodies owned by `opts.excludeOwner` so an actor never probes
+     * itself.
+     *
+     * Point probes answer "what is here" (ground under feet, wall ahead), so
+     * statics and boundary walls are included by design; callers apply their
+     * own semantic filter (e.g. walkable ground = body.isStatic).
+     *
+     * @param {{ x: number, y: number }} point
+     * @param {object} [opts] - { excludeOwner: BaseObject|null }
+     * @returns {Matter.Body[]}
+     */
+    queryPoint(point, opts = {}) {
+        const excluded = opts.excludeOwner ?? null;
+        const results = [];
+        for (const body of Query.point(Composite.allBodies(this.world), point)) {
+            if (excluded && this._bodyToObject.get(body.id) === excluded) continue;
+            results.push(body);
+        }
+        return results;
+    }
+
+    /**
+     * Central wake primitive (ADR 0002): the single approved way to wake
+     * bodies. Objects wake exactly the bodies they are about to act on — a
+     * sleeping body skips force and velocity integration in Matter, so
+     * waking is part of acting, never a side effect.
+     * @param {Matter.Body|Matter.Body[]} targets
+     */
+    wakeBodies(targets) {
+        const list = Array.isArray(targets) ? targets : [targets];
+        for (const body of list) {
+            if (body) Sleeping.set(body, false);
+        }
+    }
+
     // ── Boundaries ────────────────────────────────
 
     /** @private */
@@ -354,10 +533,12 @@ export class PhysicsEngine {
                 const objB = this._bodyToObject.get(pair.bodyB.id);
 
                 if (objA && objB) {
-                    if (objA.onCollision) objA.onCollision(objB, pair);
-                    if (objB.onCollision) objB.onCollision(objA, pair);
-                    // (`physics:collision` was pruned — no production
-                    // listener; objects receive contacts via onCollision.)
+                    // Reaction routing lives in the interaction matrix
+                    // (js/interactions/rules.js); the engine only feeds
+                    // pairs in. Boundary walls are not mapped to objects,
+                    // so they never reach it. (`physics:collision` was
+                    // pruned — no production listener.)
+                    this._interactions.resolve(objA, objB, pair);
                 }
             }
         });
@@ -381,9 +562,7 @@ export class PhysicsEngine {
             Composite.remove(this.world, constraint);
         }
         // A rope held by constraints can be asleep; release it so it falls
-        for (const body of rope.bodies) {
-            Sleeping.set(body, false);
-        }
+        this.wakeBodies(rope.bodies);
     }
 
     /** @private */

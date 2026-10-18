@@ -8,7 +8,7 @@
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
 
-const { Bodies, Body, Composite } = Matter;
+const { Bodies, Body } = Matter;
 
 const SPRING_WIDTH = 30;
 const SPRING_HEIGHT = 40;
@@ -69,15 +69,23 @@ export default class Spring extends BaseObject {
         Body.setAngle(this._platform, angle);
     }
 
-    onCollision(other, pair) {
-        if (this._cooldown > 0) return;
-
-        // Check if something hit the platform
+    /**
+     * Decision seam for the interaction matrix: did something land on the
+     * spring platform while the spring is armed (off cooldown, untriggered)?
+     * @param {BaseObject} _other
+     * @param {Matter.Pair} pair
+     * @returns {boolean}
+     */
+    isLaunchTrigger(_other, pair) {
+        if (this._cooldown > 0) return false;
         const hitPlatform = pair.bodyA === this._platform || pair.bodyB === this._platform;
-        if (hitPlatform && !this._triggered) {
-            this._triggered = true;
-            this._compression = 1;
-        }
+        return hitPlatform && !this._triggered;
+    }
+
+    /** Behavior seam: compress and arm the launch (release happens in onBeforeUpdate). */
+    armLaunch() {
+        this._triggered = true;
+        this._compression = 1;
     }
 
     onBeforeUpdate(engine) {
@@ -99,17 +107,17 @@ export default class Spring extends BaseObject {
                 const launchDirX = -Math.sin(angle);
                 const launchDirY = -Math.cos(angle);
 
-                const allBodies = Composite.allBodies(engine.world);
-                for (const body of allBodies) {
-                    if (body.isStatic || body === this._base || body === this._platform) continue;
-
-                    const collision = Matter.Collision.collides(this._platform, body);
-                    if (collision && collision.collided) {
-                        Body.applyForce(body, body.position, {
-                            x: launchDirX * this._launchForce,
-                            y: launchDirY * this._launchForce,
-                        });
-                    }
+                // Platform-only contacts via the engine's discovery seam
+                // (ADR 0002): sourceBodies excludes base contacts; statics
+                // and the spring's own bodies are pre-filtered.
+                for (const body of engine.queryTouching(this, { sourceBodies: [this._platform] })) {
+                    // A sleeping rider would skip force integration — waking
+                    // is part of launching it (ADR 0002).
+                    engine.wakeBodies([body]);
+                    Body.applyForce(body, body.position, {
+                        x: launchDirX * this._launchForce,
+                        y: launchDirY * this._launchForce,
+                    });
                 }
             }
         }
@@ -198,6 +206,21 @@ export default class Spring extends BaseObject {
             customId: data.id,
             launchForce: data.options?.launchForce || LAUNCH_FORCE,
         });
+    }
+
+    /**
+     * Snapshot-restore seam (BaseObject lifecycle contract, ADR 0003):
+     * trigger/compression/cooldown are behavioral transients — a
+     * same-instance physics restore must restart the spring armed-fresh,
+     * not mid-animation with a half-ticked cooldown. Snapshots are taken
+     * at play start (GameLoop.play → takeSnapshot), when the spring is
+     * untriggered with no cooldown — cycles start clean.
+     * @param {object} _data - serialized snapshot entry (pose-only for Spring)
+     */
+    restoreState(_data) {
+        this._triggered = false;
+        this._compression = 0;
+        this._cooldown = 0;
     }
 
     dispose() {

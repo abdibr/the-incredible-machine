@@ -63,8 +63,8 @@ export default class Trampoline extends BaseObject {
         Body.setAngle(this._body, angle);
     }
 
-    onCollision(other, pair) {
-        // Trigger stretch animation on impact
+    /** Behavior seam for the interaction matrix: play the stretch animation. */
+    stretch() {
         this._stretch = 1;
     }
 
@@ -75,6 +75,17 @@ export default class Trampoline extends BaseObject {
         } else {
             this._stretch = 0;
         }
+    }
+
+    /**
+     * Snapshot-restore seam (BaseObject lifecycle contract, ADR 0003):
+     * `_stretch` is behavioral animation state — snapshots are taken at
+     * play start (GameLoop.play → takeSnapshot), when it is 0, so the
+     * replayed attempt starts with a flat fabric.
+     * @param {object} _data - serialized snapshot entry (pose-only payload)
+     */
+    restoreState(_data) {
+        this._stretch = 0;
     }
 
     draw(ctx) {

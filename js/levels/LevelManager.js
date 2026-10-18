@@ -33,9 +33,11 @@ class LevelManager {
     init() {
         this._loadProgress();
 
-        // Listen for goal:reached to mark level complete
+        // Listen for goal:reached to mark level complete (id-guarded: ad-hoc
+        // levels may carry no id, and 'undefined' must not land in the
+        // persisted progress set)
         eventBus.on('goal:reached', () => {
-            if (this._currentLevel) {
+            if (this._currentLevel?.id) {
                 this.markComplete(this._currentLevel.id);
             }
         });
@@ -75,6 +77,22 @@ class LevelManager {
             console.error(`[LevelManager] Failed to load level "${id}":`, e);
             throw e;
         }
+    }
+
+    /**
+     * Load an ad-hoc level (e.g. a JSON file imported through the editor):
+     * install it as the current level and emit 'level:loaded' through the
+     * same seam as loadLevel(), so goal progression (`goal:reached` marks
+     * the current level) and reset (`_resetLevel` reads `getCurrentLevel()`)
+     * observe the data actually on screen — a direct bus emit left
+     * `_currentLevel` pointing at the previous puzzle.
+     * @param {object} data - arbitrary level data (validated upstream)
+     * @returns {object} the same data
+     */
+    loadCustom(data) {
+        this._currentLevel = data;
+        eventBus.emit('level:loaded', data);
+        return data;
     }
 
     /**

@@ -2,8 +2,9 @@
  * Unit tests for Mouse walking behavior — ticket #9 (no jitter).
  *
  * Seams under test (public interface):
- * - PhysicsEngine.step() driving Mouse.onBeforeUpdate / onCollision end-to-end,
- * - Mouse.onCollision(other, pair) fed Matter-style pair data,
+ * - PhysicsEngine.step() driving Mouse.onBeforeUpdate end-to-end,
+ * - engine.interactions.resolve(mouse, other, pair) fed Matter-style pair data
+ *   (contact reactions live in js/interactions/rules.js, not on Mouse),
  * - Mouse.serialize().options.direction as the direction seam,
  * - PhysicsEngine take/restore/clearSnapshot for play/reset determinism.
  */
@@ -77,18 +78,18 @@ describe('Mouse collision reversal (debounced)', () => {
         const leftWall = verticalWall(200);
 
         mouse.onBeforeUpdate(engine); // grounded → sets walking velocity
-        mouse.onCollision(rightWall, contactPair(mouse, rightWall));
+        engine.interactions.resolve(mouse, rightWall, contactPair(mouse, rightWall));
         expect(directionOf(mouse)).toBe(-1); // first head-on contact reverses
 
         // 5 frames later, still inside the cooldown: bumping the left wall
         // again must NOT flip-flop.
         for (let i = 0; i < 5; i++) mouse.onBeforeUpdate(engine);
-        mouse.onCollision(leftWall, contactPair(mouse, leftWall));
+        engine.interactions.resolve(mouse, leftWall, contactPair(mouse, leftWall));
         expect(directionOf(mouse)).toBe(-1);
 
         // After the cooldown expires, a head-on contact reverses again.
         for (let i = 0; i < 35; i++) mouse.onBeforeUpdate(engine);
-        mouse.onCollision(leftWall, contactPair(mouse, leftWall));
+        engine.interactions.resolve(mouse, leftWall, contactPair(mouse, leftWall));
         expect(directionOf(mouse)).toBe(1);
         engine.dispose();
     });
@@ -99,7 +100,7 @@ describe('Mouse collision reversal (debounced)', () => {
         const wall = verticalWall(600); // on the right; mouse walks left
         mouse.onBeforeUpdate(engine);
 
-        mouse.onCollision(wall, contactPair(mouse, wall));
+        engine.interactions.resolve(mouse, wall, contactPair(mouse, wall));
         expect(directionOf(mouse)).toBe(-1);
         engine.dispose();
     });
@@ -111,7 +112,7 @@ describe('Mouse collision reversal (debounced)', () => {
         engine.addObject(platform);
         mouse.onBeforeUpdate(engine);
 
-        mouse.onCollision(platform, contactPair(mouse, platform));
+        engine.interactions.resolve(mouse, platform, contactPair(mouse, platform));
         expect(directionOf(mouse)).toBe(1);
         engine.dispose();
     });
@@ -125,7 +126,7 @@ describe('Mouse collision reversal (debounced)', () => {
 
         // Sustained push: ball already carried along at the mouse's speed.
         Matter.Body.setVelocity(ball.bodies[0], { x: 1.2, y: 0 });
-        mouse.onCollision(ball, contactPair(mouse, ball));
+        engine.interactions.resolve(mouse, ball, contactPair(mouse, ball));
         expect(directionOf(mouse)).toBe(1); // pushing stays deterministic
         engine.dispose();
     });
@@ -336,7 +337,7 @@ describe('Mouse ledge reversal (edge-probe cooldown, Phase 5 #6)', () => {
         mouse.onBeforeUpdate(engine); // grounded → walking velocity armed
         // Head-on ball contact from the right: flips direction and arms the
         // 30-frame contact debounce.
-        mouse.onCollision(bump, contactPair(mouse, bump));
+        engine.interactions.resolve(mouse, bump, contactPair(mouse, bump));
         expect(directionOf(mouse)).toBe(-1);
 
         // Same instant, a ledge opens up in the (new) walking direction —
@@ -361,7 +362,7 @@ describe('Mouse ledge reversal (edge-probe cooldown, Phase 5 #6)', () => {
         // physics: walking direction is already toward the plank's left edge
         // while the contact cooldown is still running.
         mouse.onBeforeUpdate(engine);
-        mouse.onCollision(bump, contactPair(mouse, bump));
+        engine.interactions.resolve(mouse, bump, contactPair(mouse, bump));
         expect(directionOf(mouse)).toBe(-1);
 
         let maxY = mouse.bodies[0].position.y;

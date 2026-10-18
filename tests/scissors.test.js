@@ -14,8 +14,16 @@ import Scissors from '../js/objects/Scissors.js';
 import Rope from '../js/objects/Rope.js';
 import Ball from '../js/objects/Ball.js';
 import PhysicsEngine from '../js/engine/PhysicsEngine.js';
+import { InteractionMatrix } from '../js/interactions/InteractionMatrix.js';
+import { DEFAULT_INTERACTION_ROWS } from '../js/interactions/rules.js';
 
 const { Composite } = Matter;
+
+/**
+ * Contact reactions live in the interaction matrix (js/interactions/rules.js);
+ * drive the unit tests through that seam instead of the removed onCollision hook.
+ */
+const resolve = (a, b, pair) => new InteractionMatrix(DEFAULT_INTERACTION_ROWS).resolve(a, b, pair);
 
 describe('Scissors - open until a weight snaps them shut', () => {
     const engines = [];
@@ -148,16 +156,16 @@ describe('Scissors - open until a weight snaps them shut', () => {
         const fakeStatic = { isStatic: true };
 
         // Rope touching either handle never snaps them shut
-        scissors.onCollision({ type: 'rope' }, { bodyA: handleUpper, bodyB: fakeDynamic });
-        scissors.onCollision({ type: 'rope' }, { bodyA: fakeDynamic, bodyB: handleLower });
+        resolve(scissors, { type: 'rope' }, { bodyA: handleUpper, bodyB: fakeDynamic });
+        resolve(scissors, { type: 'rope' }, { bodyA: fakeDynamic, bodyB: handleLower });
         // Static bodies can't "fall" onto a handle
-        scissors.onCollision({ type: 'ramp' }, { bodyA: handleUpper, bodyB: fakeStatic });
+        resolve(scissors, { type: 'ramp' }, { bodyA: handleUpper, bodyB: fakeStatic });
         // Weight landing on a blade sensor doesn't trigger either
-        scissors.onCollision({ type: 'ball' }, { bodyA: bladesOf(scissors)[1], bodyB: fakeDynamic });
+        resolve(scissors, { type: 'ball' }, { bodyA: bladesOf(scissors)[1], bodyB: fakeDynamic });
         expect(scissors.isClosed).toBe(false);
 
         // A dynamic body landing on the handle does
-        scissors.onCollision({ type: 'ball' }, { bodyA: handleLower, bodyB: fakeDynamic });
+        resolve(scissors, { type: 'ball' }, { bodyA: handleLower, bodyB: fakeDynamic });
         expect(scissors.isClosed).toBe(true);
     });
 
@@ -166,7 +174,7 @@ describe('Scissors - open until a weight snaps them shut', () => {
         expect(scissors.serialize().options.closed).toBe(false);
 
         const [, handleLower] = handlesOf(scissors);
-        scissors.onCollision({ type: 'ball' }, { bodyA: handleLower, bodyB: { isStatic: false } });
+        resolve(scissors, { type: 'ball' }, { bodyA: handleLower, bodyB: { isStatic: false } });
         expect(scissors.isClosed).toBe(true);
 
         const data = scissors.serialize();

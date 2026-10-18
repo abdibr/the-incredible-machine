@@ -88,8 +88,9 @@ describe('Rope severing — physical detachment', () => {
 
         physics.step(16.67);
 
-        // Collision dispatch: flame sensor pair -> Rope.onCollision -> sever,
-        // and the engine consumer drops the constraints in the same beat
+        // Collision dispatch: flame sensor pair -> interaction row
+        // `rope-candle-flame` -> sever, and the engine consumer drops
+        // the constraints in the same beat
         expect(rope.isSevered).toBe(true);
         const worldConstraints = Composite.allConstraints(physics.world);
         for (const constraint of rope.constraints) {

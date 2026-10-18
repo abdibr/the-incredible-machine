@@ -10,7 +10,7 @@
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
 
-const { Bodies, Body, Sleeping } = Matter;
+const { Bodies, Body } = Matter;
 
 const GEAR_RADIUS = 28;
 const GEAR_TEETH = 10;
@@ -76,13 +76,14 @@ export default class Gear extends BaseObject {
      */
     _applyToothTraction(engine) {
         const omega = this._angularSpeed;
-        if (omega === 0 || !engine || !engine.world) return;
+        if (omega === 0 || !engine?.queryTouching) return;
 
         const center = this._body.position;
         const toothSpeed = omega * this._radius;
 
-        for (const body of Matter.Composite.allBodies(engine.world)) {
-            if (body.isStatic) continue;
+        // Contacts via the engine's pair-grade discovery seam (ADR 0002):
+        // dynamic bodies touching the gear, self/statics/walls pre-filtered.
+        for (const body of engine.queryTouching(this)) {
 
             const collision = Matter.Collision.collides(this._body, body);
             if (!collision || !collision.collided) continue;
@@ -102,7 +103,7 @@ export default class Gear extends BaseObject {
             const dv = toothSpeed - (body.velocity.x * ux + body.velocity.y * uy);
             if (Math.abs(dv) < 0.01) continue; // already riding; allow it to sleep
 
-            Sleeping.set(body, false);
+            engine.wakeBodies([body]); // wake-on-act (ADR 0002): sleeping bodies skip setVelocity
             Body.setVelocity(body, {
                 x: body.velocity.x + ux * dv,
                 y: body.velocity.y + uy * dv,
@@ -110,11 +111,42 @@ export default class Gear extends BaseObject {
         }
     }
 
-    onCollision(other, pair) {
-        // When touching another gear, reverse their direction
-        if (other.type === 'gear') {
-            other._angularSpeed = -Math.sign(other._angularSpeed) * Math.abs(this._angularSpeed);
-        }
+    /**
+     * Mesh seam: drive an adjacent gear to counter-rotate at this gear's
+     * speed. The gear ✕ gear interaction row fires meshWith() in both
+     * directions for a touching pair (js/interactions/rules.js), which
+     * reproduces the old mutual double-dispatch outcome without reaching
+     * into the other gear's private state.
+     * @param {Gear} other - the adjacent gear
+     */
+    meshWith(other) {
+        other.applyGearDrive(this._angularSpeed);
+    }
+
+    /**
+     * Receive a meshing drive from the other gear: reverse direction and
+     * adopt the driving gear's speed magnitude.
+     * @param {number} speed - the driving gear's angular speed
+     */
+    applyGearDrive(speed) {
+        this._angularSpeed = -Math.sign(this._angularSpeed) * Math.abs(speed);
+    }
+
+    /**
+     * Snapshot-restore seam (BaseObject lifecycle contract, ADR 0003):
+     * gear ✕ gear meshing mutates `_angularSpeed` mid-play
+     * (`applyGearDrive`), but snapshots are taken at play start
+     * (GameLoop.play → takeSnapshot) — the replayed attempt must restart
+     * from the snapshot-time drive, so undo any meshing reversal that
+     * survived the pose restore. serialize() rides `angularSpeed` as the
+     * snapshot-faithful payload (deserialize's exact fallback applies).
+     * @param {object} data - serialized snapshot entry (serialize() shape)
+     */
+    restoreState(data) {
+        const speed = data?.options?.angularSpeed;
+        this._angularSpeed = (typeof speed === 'number' && Number.isFinite(speed))
+            ? speed
+            : (this._options.angularSpeed ?? 0.03);
     }
 
     draw(ctx) {

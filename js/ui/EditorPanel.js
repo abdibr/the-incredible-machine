@@ -6,6 +6,7 @@
  */
 
 import { eventBus } from '../EventBus.js';
+import { levelManager } from '../levels/LevelManager.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { DEFAULT_GOAL_ZONE_ID, stampGoalZoneIds } from '../goals/GoalChecker.js';
 import { dragDropManager } from './DragDropManager.js';
@@ -258,8 +259,11 @@ class EditorPanel {
 
         dragDropManager.setObjects(objects);
 
-        // Emit level loaded for toolbox
-        eventBus.emit('level:loaded', data);
+        // Route through LevelManager, not a direct bus emit (ADR 0003): the
+        // imported data becomes _currentLevel, so reset (_resetLevel →
+        // getCurrentLevel) and goal progression observe it, and
+        // 'level:loaded' still reaches the toolbox/goal-checker listeners.
+        levelManager.loadCustom(data);
     }
 
     _inferAvailableParts() {

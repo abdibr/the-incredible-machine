@@ -89,22 +89,34 @@ export default class Bucket extends BaseObject {
         super.setAngle(0);
     }
 
-    onCollision(other, pair) {
-        // Check if the sensor was involved
-        const isSensor = pair.bodyA === this._sensor || pair.bodyB === this._sensor;
-        if (!isSensor) return;
+    /**
+     * Decision seam for the interaction matrix: does this contact count as
+     * the sensor catching `other`?
+     * @param {BaseObject} other
+     * @param {Matter.Pair} pair
+     * @returns {boolean}
+     */
+    isCatchContact(other, pair) {
+        // Only the sensor zone catches; wall/floor contacts don't count
+        if (pair.bodyA !== this._sensor && pair.bodyB !== this._sensor) return false;
+        // Catch type filter (null = catch anything)
+        return !this._catchType || other.type === this._catchType;
+    }
 
-        // Check catch type filter
-        if (this._catchType && other.type !== this._catchType) return;
-
-        if (!this._caught.has(other.id)) {
-            this._caught.add(other.id);
-            eventBus.emit('bucket:caught', {
-                bucket: this,
-                object: other,
-                totalCaught: this._caught.size,
-            });
-        }
+    /**
+     * Behavior seam: register the catch, once per object, and announce it.
+     * @param {BaseObject} other
+     * @returns {boolean} true if this was a new catch
+     */
+    registerCatch(other) {
+        if (this._caught.has(other.id)) return false;
+        this._caught.add(other.id);
+        eventBus.emit('bucket:caught', {
+            bucket: this,
+            object: other,
+            totalCaught: this._caught.size,
+        });
+        return true;
     }
 
     /** @returns {number} */
@@ -228,6 +240,18 @@ export default class Bucket extends BaseObject {
             height: data.options?.height || BUCKET_HEIGHT,
             catchType: data.options?.catchType || null,
         });
+    }
+
+    /**
+     * Snapshot-restore seam (BaseObject lifecycle contract, ADR 0003):
+     * `_caught` is behavioral — a same-instance physics restore must not
+     * carry mid-play catches into the replayed attempt (GoalChecker re-arms
+     * per attempt). Snapshots are taken at play start (GameLoop.play →
+     * takeSnapshot), when the set is empty — cycles start clean.
+     * @param {object} _data - serialized snapshot entry (poses-only for Bucket)
+     */
+    restoreState(_data) {
+        this._caught.clear();
     }
 
     dispose() {

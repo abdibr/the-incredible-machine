@@ -11,7 +11,7 @@
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
 
-const { Bodies, Body, Composite, Constraint, Query, Sleeping } = Matter;
+const { Bodies, Body, Constraint } = Matter;
 
 const PLATFORM_WIDTH = 60;
 const PLATFORM_HEIGHT = 8;
@@ -156,8 +156,7 @@ export default class Pulley extends BaseObject {
                 if (this._lastRestDelta !== 0) {
                     // Sleeping platforms are skipped by the constraint solver —
                     // wake them whenever the rope actually exchanges length.
-                    Sleeping.set(this._leftPlatform, false);
-                    Sleeping.set(this._rightPlatform, false);
+                    engine.wakeBodies([this._leftPlatform, this._rightPlatform]);
                 }
             } else {
                 this._lastRestDelta = 0;
@@ -188,19 +187,23 @@ export default class Pulley extends BaseObject {
      */
     _sideMass(engine, platform) {
         let mass = platform.mass;
-        if (!engine || !engine.world) return mass;
+        if (!engine?.queryTouching) return mass;
 
-        const own = [this._wheel, this._leftPlatform, this._rightPlatform];
-        const allBodies = Composite.allBodies(engine.world);
-        const counted = new Set(own);
+        // Only the pulley's own bodies are seeded — riders found through the
+        // seam still count the neighbours they carry (a rope chain spilling
+        // off the platform loads it through its own weight), just like the
+        // counted-set walk before the seam (ADR 0002).
+        const counted = new Set(this.bodies);
         let frontier = [platform];
 
         for (let depth = 0; depth < SUPPORT_DEPTH && frontier.length; depth++) {
             const next = [];
             for (const support of frontier) {
-                for (const collision of Query.collides(support, allBodies)) {
-                    const rider = collision.bodyA === support ? collision.bodyB : collision.bodyA;
-                    if (rider.isStatic || counted.has(rider)) continue;
+                // Support closure via the engine's pair-grade discovery seam
+                // (ADR 0002): Query.collides semantics, dynamic non-wall
+                // bodies, the pulley's own bodies pre-filtered.
+                for (const rider of engine.queryTouching(this, { sourceBodies: [support] })) {
+                    if (counted.has(rider)) continue;
                     counted.add(rider);
                     mass += rider.mass;
                     next.push(rider);

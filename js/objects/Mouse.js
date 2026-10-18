@@ -8,7 +8,7 @@
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
 
-const { Bodies, Body, Composite } = Matter;
+const { Bodies, Body } = Matter;
 
 const MOUSE_WIDTH = 20;
 const MOUSE_HEIGHT = 12;
@@ -70,10 +70,11 @@ export default class Mouse extends BaseObject {
         const pos = this._body.position;
         const feetY = pos.y + MOUSE_HEIGHT / 2 + 2;
 
-        const allBodies = Composite.allBodies(engine.world);
-        const testBodies = Matter.Query.point(allBodies, { x: pos.x, y: feetY });
-
-        return testBodies.some(b => b !== this._body && b.isStatic);
+        // Static-surface probe through the engine's query seam (ADR 0002):
+        // point-in-geometry; statics AND boundary walls included (the floor
+        // is ground), the mouse's own body never matches.
+        return engine.queryPoint({ x: pos.x, y: feetY }, { excludeOwner: this })
+            .some(b => b.isStatic);
     }
 
     onBeforeUpdate(engine) {
@@ -97,10 +98,12 @@ export default class Mouse extends BaseObject {
         const aheadX = pos.x + this._direction * (MOUSE_WIDTH / 2 + 5);
         const aheadY = pos.y;
 
-        // Check wall collision
-        const allBodies = Composite.allBodies(engine.world);
-        const wallCheck = Matter.Query.point(allBodies, { x: aheadX, y: aheadY });
-        const hitWall = wallCheck.some(b => b !== this._body && b.isStatic);
+        // Walls and ledges answer "static surface here?" via the engine's
+        // query seam (ADR 0002): point-in-geometry, statics AND boundary
+        // walls included (both are walkable/reversing signals), the mouse's
+        // own body excluded.
+        const hitWall = engine.queryPoint({ x: aheadX, y: aheadY }, { excludeOwner: this })
+            .some(b => b.isStatic);
 
         if (hitWall) { // wall ahead → turn around
             this._reverse();
@@ -108,8 +111,8 @@ export default class Mouse extends BaseObject {
 
         // Check for edge (no ground ahead)
         const edgeCheckY = pos.y + MOUSE_HEIGHT / 2 + 5;
-        const groundAhead = Matter.Query.point(allBodies, { x: aheadX, y: edgeCheckY });
-        const hasGround = groundAhead.some(b => b !== this._body && b.isStatic);
+        const hasGround = engine.queryPoint({ x: aheadX, y: edgeCheckY }, { excludeOwner: this })
+            .some(b => b.isStatic);
 
         if (!hasGround) { // ledge ahead → turn around
             this._reverseFromEdge();
@@ -142,13 +145,20 @@ export default class Mouse extends BaseObject {
         this._edgeProbeCooldown = EDGE_PROBE_COOLDOWN_FRAMES;
     }
 
-    onCollision(other, pair) {
-        // Reverse only on significant, front-facing, head-on contacts —
-        // debounced so pushed bodies can't cause rapid oscillation.
-        if (!pair || !this._body || other.type === 'mouse') return;
+    /**
+     * Decision seam for the interaction matrix: is this contact a
+     * significant, front-facing, head-on hit that should reverse the walk?
+     * Pure decision — no state changes.
+     *
+     * @param {BaseObject} other
+     * @param {Matter.Pair} pair
+     * @returns {boolean}
+     */
+    isRelevantContact(other, pair) {
+        if (!pair || !this._body || other.type === 'mouse') return false;
 
         const otherBody = pair.bodyA === this._body ? pair.bodyB : pair.bodyA;
-        if (!otherBody) return;
+        if (!otherBody) return false;
 
         const dx = otherBody.position.x - this._body.position.x;
         const dy = otherBody.position.y - this._body.position.y;
@@ -160,7 +170,7 @@ export default class Mouse extends BaseObject {
 
         // Front-facing: the obstacle must be on the side we are walking
         // toward. Contacts from behind occur right after pushing something.
-        if (dx * this._direction <= 0) return;
+        if (dx * this._direction <= 0) return false;
 
         // Orient the contact normal from the obstacle toward us, independent
         // of Matter's bodyA/bodyB ordering.
@@ -169,14 +179,17 @@ export default class Mouse extends BaseObject {
 
         // Only head-on contacts count as walls; floor and ceiling contacts
         // (normal ≈ vertical) do not.
-        if (towardMeX * this._direction >= -FRONT_FACING_DOT) return;
+        if (towardMeX * this._direction >= -FRONT_FACING_DOT) return false;
 
         // Relative velocity: treat the body as a wall only when we are
         // driving into it. A body already moving with us is a push, keeping
         // pushing of light dynamic objects deterministic.
         const relApproach = (this._body.velocity.x - otherBody.velocity.x) * this._direction;
-        if (relApproach <= MIN_REL_APPROACH * this._speed) return;
+        return relApproach > MIN_REL_APPROACH * this._speed;
+    }
 
+    /** Behavior seam: run the debounced walk-direction reversal. */
+    reverseFromContact() {
         this._reverse();
     }
 

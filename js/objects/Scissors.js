@@ -12,11 +12,13 @@
  *     right away — collision events alone can't cover this, since
  *     rope/blade pairs already in flight don't re-emit collisionStart
  *     when the blades move.
- *   - While closed, ropes touching the blade bodies sever via the normal
- *     collision path (Rope.onCollision gates on isClosed + blade label).
+ *   - While closed, ropes touching the blade bodies sever via the
+ *     interaction row `rope-closed-scissors-blade` (js/interactions/rules.js;
+ *     gates on isClosed + blade label).
  *   - Open blades never cut; handle contact never triggers the snap and
  *     ropes never trigger it either (they're too light to pull a lever).
- * Balloons still pop on any scissors contact (see Balloon.onCollision).
+ * Balloons still pop on any scissors contact (row `balloon-scissors`).
+ * Contact reactions live in the interaction matrix, not on this class.
  */
 
 import Matter from 'matter-js';
@@ -115,16 +117,28 @@ export default class Scissors extends BaseObject {
         this._applyLeverPoses();
     }
 
-    onCollision(other, pair) {
-        if (this._closed) return;
-        if (!this._touchingHandle(pair)) return;
+    /**
+     * Decision seam for the interaction matrix: should this contact snap
+     * the levers shut? Only a dynamic, non-rope body landing on a handle,
+     * while the scissors are still open.
+     * @param {BaseObject} other
+     * @param {Matter.Pair} pair
+     * @returns {boolean}
+     */
+    isSnapTrigger(other, pair) {
+        if (this._closed) return false;
+        if (!this._touchingHandle(pair)) return false;
         // Light, flimsy rope segments brushing the handles shouldn't snap
         // them shut; statics can't "fall" onto a handle either.
-        if (other.type === 'rope') return;
+        if (other.type === 'rope') return false;
         const otherBody = pair.bodyA === this._handleUpper || pair.bodyA === this._handleLower
             ? pair.bodyB
             : pair.bodyA;
-        if (otherBody.isStatic) return;
+        return !otherBody.isStatic;
+    }
+
+    /** Behavior seam: one-shot snap (public path used by the matrix). */
+    snapShut() {
         this._snapShut();
     }
 
