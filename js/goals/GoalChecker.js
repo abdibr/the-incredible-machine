@@ -58,39 +58,61 @@ export class GoalChecker {
 
         /** @type {string|null} 'reached' | 'failed' | null (latched per play attempt) */
         this._decided = null;
+
+        /** @type {Array<() => void>} eventBus unsubscribe fns (captured by init, drained by dispose) */
+        this._unsubscribes = [];
     }
 
     /**
-     * Initialize the checker and hook it into the event bus.
+     * Initialize the checker and hook it into the event bus. Idempotent:
+     * the init-once guard keeps a second call from stacking duplicate
+     * subscriptions (which would double goal:reached / goal:failed).
+     * Subscriptions are captured in `_unsubscribes` and drained by dispose(),
+     * so a dispose() → init() round-trip re-subscribes exactly once.
      * @param {object} [deps]
      * @param {import('../engine/PhysicsEngine.js').PhysicsEngine} [deps.physicsEngine]
      *        Needed for the per-frame off-world fail check.
      */
     init({ physicsEngine = null } = {}) {
         this._physics = physicsEngine;
+        if (this._unsubscribes.length > 0) return; // already initialized
 
-        // Track the active goal; every loaded level re-arms the checker
-        eventBus.on('level:loaded', (levelData) => {
-            this._goal = levelData.goal ?? null;
-            this._levelId = levelData.id ?? null;
-            this._decided = null;
-        });
-
-        // A new play attempt re-arms the checker (retry / replay)
-        eventBus.on('mode:changed', ({ newMode }) => {
-            if (newMode === 'PLAYING') {
+        this._unsubscribes.push(
+            // Track the active goal; every loaded level re-arms the checker
+            eventBus.on('level:loaded', (levelData) => {
+                this._goal = levelData.goal ?? null;
+                this._levelId = levelData.id ?? null;
                 this._decided = null;
-            }
-        });
+            }),
+            // A new play attempt re-arms the checker (retry / replay)
+            eventBus.on('mode:changed', ({ newMode }) => {
+                if (newMode === 'PLAYING') {
+                    this._decided = null;
+                }
+            }),
+            eventBus.on('bucket:caught', ({ bucket, object }) => {
+                this._onCaught(bucket, object);
+            }),
+            // Per-step fail check (GameLoop emits loop:frame once per physics step)
+            eventBus.on('loop:frame', () => {
+                this._checkOffWorld();
+            }),
+        );
+    }
 
-        eventBus.on('bucket:caught', ({ bucket, object }) => {
-            this._onCaught(bucket, object);
-        });
-
-        // Per-step fail check (GameLoop emits loop:frame once per physics step)
-        eventBus.on('loop:frame', () => {
-            this._checkOffWorld();
-        });
+    /**
+     * Detach from the event bus and release state references (mainly for
+     * tests and future teardown callers). Safe to call more than once:
+     * it drains only the captured unsubscribes, and a subsequent init()
+     * re-subscribes exactly once.
+     */
+    dispose() {
+        for (const unsubscribe of this._unsubscribes) unsubscribe();
+        this._unsubscribes = [];
+        this._physics = null;
+        this._goal = null;
+        this._levelId = null;
+        this._decided = null;
     }
 
     /**
