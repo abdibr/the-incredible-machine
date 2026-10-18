@@ -121,7 +121,7 @@ Closing reviewer pass over `main...integration/broken-functionality-fixes` (suit
 - [ ] `tests/reset.test.js` level-mode helper sets a dead `obj._goalId` instead of passing `customId: objData.id` through `registry.create` - use the production seam so the reset tests exercise the real goal-zone path.
 - [ ] `js/objects/Gear.js` `_applyToothTraction` uses deprecated `Matter.SAT.collides` - switch to `Matter.Collision.collides(...)` (removes deprecation noise and future break risk).
 - [ ] `js/objects/Pulley.js` `_isTeleport()` can false-positive on a hard rider impact (>0.35px in one step), spuriously re-deriving the rope split mid-play - implement `Pulley.restoreState()` (seam already called by PhysicsEngine) to reset cached poses instead of heuristics.
-- [ ] `js/objects/Mouse.js` the shared 30-frame reversal cooldown swallows ledge reversals after a ball-push reversal (mouse can walk ~22px off an edge) - add a separate short edge-probe cooldown.
+- [x] `js/objects/Mouse.js` the shared 30-frame reversal cooldown swallows ledge reversals after a ball-push reversal (mouse can walk ~22px off an edge) - add a separate short edge-probe cooldown. — ✅ 2026-10-18 `ticket/21-mouse-edge-cooldown`: ledge probes now use their own `EDGE_PROBE_COOLDOWN_FRAMES = 6` debounce (`_reverseFromEdge()`); the 30-frame contact/wall debounce is untouched. Suite 12 files / 123 tests green (two new ledge tests: direct seam + post-bump plank-fall regression).
 - [ ] `js/ui/EditorPanel.js` save stamps `bucket-goal` onto EVERY unnamed fixed bucket, so multi-bucket custom levels trivially satisfy `goal.zoneId` - stamp only the first unnamed bucket (or reject multiple unnamed buckets on save).
 
 ---
