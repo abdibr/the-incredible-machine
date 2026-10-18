@@ -112,10 +112,10 @@ export default class Pulley extends BaseObject {
      * (issue #13): each side's carried weight is measured, and constraint
      * rest lengths exchange length so the rope total stays conservative —
      * the heavily loaded side sinks while the other side rises.
-     * @param {number} dt - delta time in ms
      * @param {object} engine - PhysicsEngine instance (for load queries)
+     * @param {number} dt - delta time in ms
      */
-    onBeforeUpdate(dt, engine) {
+    onBeforeUpdate(engine, dt) {
         const leftC = this._leftConstraint;
         const rightC = this._rightConstraint;
         if (!this._leftPlatform || !this._rightPlatform || !leftC || !rightC) return;
