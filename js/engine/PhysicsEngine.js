@@ -48,6 +48,9 @@ export class PhysicsEngine {
 
         // Forward collision events
         this._setupCollisionEvents();
+
+        // Object removal events (popped balloons, etc.)
+        this._setupRemovalEvents();
     }
 
     // ΓöÇΓöÇ Object Lifecycle ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -256,10 +259,25 @@ export class PhysicsEngine {
         });
     }
 
+    /** @private */
+    _setupRemovalEvents() {
+        // Popped balloons must leave the physics world immediately: the body
+        // is invisible (draw no-ops) but would keep colliding and buoyantly
+        // acting on other objects forever (work plan section 1.4).
+        this._onBalloonPopped = ({ body }) => {
+            if (!body || !this._bodyToObject.has(body.id)) return;
+            Composite.remove(this.world, body);
+            this._bodyToObject.delete(body.id);
+        };
+
+        eventBus.on('balloon:popped', this._onBalloonPopped);
+    }
+
     // ΓöÇΓöÇ Cleanup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     /** Tear down the engine completely. */
     dispose() {
+        eventBus.off('balloon:popped', this._onBalloonPopped);
         Events.off(this.engine);
         this.clear();
         World.clear(this.world);
