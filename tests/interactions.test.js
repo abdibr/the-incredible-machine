@@ -303,7 +303,7 @@ describe('Row mouse-reverse', () => {
 });
 
 describe('Row spring-trigger', () => {
-    it('spring ✕ platform contact triggers; armed spring does not retrigger', () => {
+    it('spring ✕ platform contact triggers; cooldown suppresses retriggers', () => {
         const spring = new Spring(400, 300);
         const platform = bodyWithLabel(spring, 'spring-platform');
 
