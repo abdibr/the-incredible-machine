@@ -130,6 +130,7 @@ describe('Rope severing — physical detachment', () => {
         // Gray tone marks the severed rope
         expect(ctx.strokeStyles).toContain('#aaa');
     });
+
     it('should sever and physically detach when scissors touch the rope', async () => {
         const { default: Scissors } = await import('../js/objects/Scissors.js');
 
