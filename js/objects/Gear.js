@@ -55,7 +55,7 @@ export default class Gear extends BaseObject {
         Body.setAngle(this._body, angle);
     }
 
-    onBeforeUpdate(dt, engine) {
+    onBeforeUpdate(engine, dt) {
         // Maintain constant rotation (static body doesn't rotate on its own)
         Body.setAngle(this._body, this._body.angle + this._angularSpeed);
 
