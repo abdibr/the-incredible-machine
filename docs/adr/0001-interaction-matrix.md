@@ -43,6 +43,6 @@ Before this change, deciding "what reacts to this contact?" was scattered across
 
 ## Out of scope (follow-up candidates)
 
-- Sleeping-body wake asymmetry: `Body.applyForce` users (Fan/Conveyor/Spring/Balloon) don't wake sleepers; only Gear/Pulley wake (candidate C2).
+- ~~Sleeping-body wake asymmetry~~ — **implemented 2026-10-18 as ADR 0002** (discovery & wake seam; wake-on-act in Spring/Conveyor/Fan/Gear/Pulley/Balloon).
 - Lifecycle contract: `restoreState` parity for `Bucket._caught` / `Spring._triggered/_cooldown`; dead `onAfterUpdate` hook; `EditorPanel` emitting `level:loaded` past `LevelManager` (candidate C3).
 - collisionActive/collisionEnd rows; migrating goal-catch matching onto the matrix.

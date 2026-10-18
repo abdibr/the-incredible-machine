@@ -30,3 +30,10 @@ Single-context domain vocabulary. Architecture decisions live in `docs/adr/`; th
 - **onCollision hook** — the pre-matrix per-object collision hook; *removed* 2026-10-18 (ADR 0001). Do not reintroduce; add a row instead.
 - **Snapshot / restoreState** — play/reset determinism seam: `PhysicsEngine.takeSnapshot/restoreSnapshot` restores bodies; objects with behavioral state re-apply it via `restoreState` (Mouse, Pulley, Scissors).
 - **Event bus** — `js/EventBus.js` decoupled events (`rope:severed`, `balloon:popped`, `bucket:caught`, level flow). PhysicsEngine consumes severing/removal; GoalChecker consumes catches.
+
+## Discovery & wake (ADR 0002)
+
+- **Discovery seam** — the only way game objects scan the world: `PhysicsEngine.queryTouching()` (SAT-precision contacts), `queryZone()` (position-in-local-rect), `queryPoint()` (vertex-precise point probe). Objects never call Matter query APIs directly.
+- **Wake-on-act** — an object wakes (`wakeBodies()`) exactly the bodies it acts on, right before applying a force/constraint: asleep bodies skip force integration in Matter, so acting without waking silently does nothing.
+- **Discovery never wakes** — the query methods are pure reads; sleeping candidates come back asleep. Sleep state has a single writer: `wakeBodies()`.
+- **Movable-non-wall-non-own policy** — default discovery matches dynamic bodies only; boundary walls (`wall-*` labels) and statics are opt-ins per call (`includeWalls` / `includeStatic`), and a caller never discovers its own bodies.
