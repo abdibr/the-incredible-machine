@@ -96,16 +96,20 @@ function init() {
         return;
     }
 
-    // Size canvas to fill the game area
-    // (`canvas:resized` was pruned — no listener; the renderer reads canvas
-    // dimensions per frame, so resize needs no fan-out.)
-    function resizeCanvas() {
-        canvas.width = gameArea.clientWidth;
-        canvas.height = gameArea.clientHeight;
-    }
-
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
+    // Fixed playfield size: levels are authored for a 1000×600 world, and
+    // goal objects near the bottom/right edge of that world (e.g. the level-1
+    // bucket at x=700,y=480) must stay inside the physics boundaries at every
+    // window size. The canvas stretches to the game area via CSS
+    // (`#game-canvas { width: 100%; height: 100% }`), so the backing store
+    // (world space) can stay constant; renderer.pageToCanvas() already
+    // divides by the CSS scale. (Found via QA: with the old resize-to-area
+    // canvas, world space equalled the container size — at a 714×471 window
+    // the bucket's sensor sat below the physics floor and balls could never
+    // be caught.)
+    const WORLD_WIDTH = 1000;
+    const WORLD_HEIGHT = 600;
+    canvas.width = WORLD_WIDTH;
+    canvas.height = WORLD_HEIGHT;
 
     // ── Register ALL real game objects ──
     registerAllObjects();
@@ -222,6 +226,15 @@ function _wireEvents() {
 
     // Next level
     eventBus.on('overlay:next-level', async ({ levelId }) => {
+        // The goal overlay fires while the GameLoop is still RUNNING (the
+        // win/fail overlay itself does not pause it; it only emits events).
+        // Overlay-driven mode switches MUST stop the loop first, or the next
+        // `controls:play` hits GameLoop.play()'s RUNNING early-return and
+        // skips the contracted play-start snapshot (stale snapshot then
+        // false-triggers the mismatch re-baseline on the next reset).
+        // Mirrors controls:reset's ordered path (reviewer finding #1).
+        if (!state.gameLoop.isStopped) state.gameLoop.reset();
+        renderer.startLoop();
         try {
             await levelManager.loadLevel(levelId);
             setMode(AppMode.EDITING);
@@ -232,11 +245,17 @@ function _wireEvents() {
 
     // Retry → reset the level
     eventBus.on('overlay:retry', () => {
+        // Loop-stop first (same reason as overlay:next-level).
+        if (!state.gameLoop.isStopped) state.gameLoop.reset();
+        renderer.startLoop();
         _resetLevel();
     });
 
     // Back to menu
     eventBus.on('overlay:menu', () => {
+        // Loop-stop first (same reason as overlay:next-level).
+        if (!state.gameLoop.isStopped) state.gameLoop.reset();
+        renderer.startLoop();
         state.placedObjects.length = 0;
         renderer.setObjects(state.placedObjects);
         setMode(AppMode.MENU);
