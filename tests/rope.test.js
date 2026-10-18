@@ -71,4 +71,31 @@ describe('Rope severing — physical detachment', () => {
 
         physics.dispose();
     });
+
+    it('should sever and physically detach when a candle flame touches the rope', async () => {
+        const { default: Candle } = await import('../js/objects/Candle.js');
+
+        const physics = new PhysicsEngine(800, 600);
+        // Rope hangs from (200, 40): segment centers at y = 45, 55, 65, ... 95
+        const rope = new Rope(200, 40, { length: 60 });
+        // Flame sensor (r=10) centers exactly on the rope segment at y=55
+        const candle = new Candle(200, 80);
+
+        physics.addObject(rope);
+        physics.addObject(candle);
+
+        expect(rope.isSevered).toBe(false);
+
+        physics.step(16.67);
+
+        // Collision dispatch: flame sensor pair -> Rope.onCollision -> sever,
+        // and the engine consumer drops the constraints in the same beat
+        expect(rope.isSevered).toBe(true);
+        const worldConstraints = Composite.allConstraints(physics.world);
+        for (const constraint of rope.constraints) {
+            expect(worldConstraints).not.toContain(constraint);
+        }
+
+        physics.dispose();
+    });
 });
