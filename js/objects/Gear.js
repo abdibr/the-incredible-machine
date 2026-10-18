@@ -179,6 +179,7 @@ export default class Gear extends BaseObject {
         return new Gear(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
             radius: data.options?.radius || GEAR_RADIUS,
             angularSpeed: data.options?.angularSpeed ?? 0.03,
             teeth: data.options?.teeth || GEAR_TEETH,

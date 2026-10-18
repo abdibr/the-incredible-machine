@@ -223,6 +223,7 @@ export default class Pulley extends BaseObject {
         return new Pulley(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
             ropeLength: data.options?.ropeLength || 150,
         });
     }

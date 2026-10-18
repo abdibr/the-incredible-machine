@@ -195,6 +195,7 @@ export default class Spring extends BaseObject {
         return new Spring(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
             launchForce: data.options?.launchForce || LAUNCH_FORCE,
         });
     }

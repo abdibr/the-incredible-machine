@@ -156,6 +156,7 @@ export default class Scissors extends BaseObject {
         return new Scissors(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
         });
     }
 

@@ -204,6 +204,7 @@ export default class Fan extends BaseObject {
         return new Fan(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
             windRange: data.options?.windRange || WIND_RANGE,
             windForce: data.options?.windForce || WIND_FORCE,
         });

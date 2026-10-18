@@ -186,6 +186,7 @@ export default class Candle extends BaseObject {
         return new Candle(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
         });
     }
 

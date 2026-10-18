@@ -243,11 +243,8 @@ function _setupLevel(levelData) {
                 const obj = objectRegistry.create(objData.type, objData.x, objData.y, {
                     angle: objData.angle || 0,
                     isFixed: true,
+                    customId: objData.id, // named id from level JSON (goal zone refs)
                 });
-                // Preserve goal-referenced IDs
-                if (objData.id) {
-                    obj._goalId = objData.id;
-                }
                 state.placedObjects.push(obj);
             } catch (e) {
                 console.warn(`[App] Could not create fixed object: ${objData.type}`, e);

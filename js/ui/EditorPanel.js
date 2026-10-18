@@ -240,8 +240,8 @@ class EditorPanel {
                     const obj = objectRegistry.create(objData.type, objData.x, objData.y, {
                         angle: objData.angle,
                         isFixed: true,
+                        customId: objData.id, // same convention as main.js _setupLevel
                     });
-                    if (objData.id) obj._id = objData.id; // Preserve goal IDs
                     objects.push(obj);
                 } catch (err) {
                     console.warn(`[EditorPanel] Could not create object: ${objData.type}`, err);

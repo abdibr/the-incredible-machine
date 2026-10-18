@@ -38,7 +38,7 @@ export function registerAllObjects() {
     objectRegistry.register('tennis-ball', class TennisBall extends Ball {
         constructor(x, y, opts = {}) { super(x, y, { ...opts, variant: 'tennis' }); }
         get type() { return 'tennis-ball'; }
-        static deserialize(data) { return new TennisBall(data.x, data.y, data.options); }
+        static deserialize(data) { return new TennisBall(data.x, data.y, { ...data.options, customId: data.id }); }
     }, {
         displayName: 'Tennis Ball',
         category: 'balls',
@@ -48,7 +48,7 @@ export function registerAllObjects() {
     objectRegistry.register('baseball', class Baseball extends Ball {
         constructor(x, y, opts = {}) { super(x, y, { ...opts, variant: 'baseball' }); }
         get type() { return 'baseball'; }
-        static deserialize(data) { return new Baseball(data.x, data.y, data.options); }
+        static deserialize(data) { return new Baseball(data.x, data.y, { ...data.options, customId: data.id }); }
     }, {
         displayName: 'Baseball',
         category: 'balls',

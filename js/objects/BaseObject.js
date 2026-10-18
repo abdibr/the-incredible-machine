@@ -20,8 +20,16 @@ export default class BaseObject {
      * @param {object} [options={}] - Object-specific configuration
      */
     constructor(x, y, options = {}) {
+        // customId is the named id from level JSON (e.g. goal zone ids); it is
+        // not a behavior option, so it never lands in _options. It is kept
+        // strictly separate from the auto-increment physics id below.
+        const { customId, ...behaviorOptions } = options;
+
         /** @type {number} Unique instance ID */
         this._id = _nextId++;
+
+        /** @type {string|null} Named id from level JSON, if the level names this object */
+        this._customId = customId ?? null;
 
         /** @type {number} World x position */
         this._x = x;
@@ -36,7 +44,7 @@ export default class BaseObject {
         this._isFixed = options.isFixed || false;
 
         /** @type {object} Original options for serialization */
-        this._options = { ...options };
+        this._options = { ...behaviorOptions };
     }
 
     // ── Identity ──────────────────────────────────
@@ -44,6 +52,16 @@ export default class BaseObject {
     /** @returns {number} Unique instance ID */
     get id() {
         return this._id;
+    }
+
+    /**
+     * Named id from level JSON (e.g. the goal bucket's zone id, referenced by
+     * `goal.zoneId` in the level spec). Distinct id space from `id`, which
+     * stays auto-increment for physics/engine references.
+     * @returns {string|null}
+     */
+    get customId() {
+        return this._customId;
     }
 
     /**
@@ -176,7 +194,7 @@ export default class BaseObject {
      * @returns {object}
      */
     serialize() {
-        return {
+        const data = {
             type: this.type,
             x: this._x,
             y: this._y,
@@ -184,6 +202,12 @@ export default class BaseObject {
             isFixed: this._isFixed,
             options: { ...this._options },
         };
+        // Match the level-JSON key convention (`"id": "bucket-goal"`) so
+        // editor-saved levels and round-trips keep named ids. Omitted when unset.
+        if (this._customId !== null) {
+            data.id = this._customId;
+        }
+        return data;
     }
 
     /**

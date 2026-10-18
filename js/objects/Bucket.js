@@ -223,6 +223,7 @@ export default class Bucket extends BaseObject {
         return new Bucket(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
             width: data.options?.width || BUCKET_WIDTH,
             height: data.options?.height || BUCKET_HEIGHT,
             catchType: data.options?.catchType || null,

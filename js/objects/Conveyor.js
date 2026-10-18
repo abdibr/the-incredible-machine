@@ -192,6 +192,7 @@ export default class Conveyor extends BaseObject {
         return new Conveyor(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
             speed: data.options?.speed ?? 2,
             width: data.options?.width || CONVEYOR_WIDTH,
         });

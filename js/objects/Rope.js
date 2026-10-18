@@ -196,6 +196,7 @@ export default class Rope extends BaseObject {
         return new Rope(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
             length: data.options?.length || 100,
             endPoint: data.options?.endPoint,
         });

@@ -180,6 +180,7 @@ export default class Trampoline extends BaseObject {
         return new Trampoline(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
             width: data.options?.width || TRAMP_WIDTH,
         });
     }

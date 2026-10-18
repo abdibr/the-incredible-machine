@@ -172,6 +172,7 @@ export default class Balloon extends BaseObject {
         return new Balloon(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            customId: data.id,
             colorIndex: data.options?.colorIndex,
         });
     }
