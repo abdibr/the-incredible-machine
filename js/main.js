@@ -18,6 +18,7 @@ import { levelSelect } from './ui/LevelSelect.js';
 import { editorPanel } from './ui/EditorPanel.js';
 import { dragDropManager } from './ui/DragDropManager.js';
 import { objectRegistry } from './objects/ObjectRegistry.js';
+import { beginPlay, restorePlacedFromSnapshot, resetSandboxBoard } from './reset/levelReset.js';
 
 // ──────────────────────────────────────────────
 // Application Modes
@@ -152,15 +153,11 @@ function _wireEvents() {
     eventBus.on('controls:play', () => {
         const mode = getMode();
         if (mode === 'EDITING' || mode === 'PAUSED' || mode === 'SANDBOX') {
-            // On first play (not resume), add objects to physics world
+            // On first play (not resume), rebuild the physics world from the
+            // placed board and save the snapshot for reset
+            // (GameLoop.play() takes the physics snapshot when STOPPED)
             if (mode === 'EDITING' || mode === 'SANDBOX') {
-                state._savedPlacedSnapshot = state.placedObjects.map(o => o.serialize());
-                // Add all placed objects to the physics world
-                state.physicsEngine.clear();
-                for (const obj of state.placedObjects) {
-                    state.physicsEngine.addObject(obj);
-                }
-                // GameLoop.play() calls takeSnapshot() when STOPPED
+                state._savedPlacedSnapshot = beginPlay(state.physicsEngine, state.placedObjects);
             }
             // Stop renderer's own loop — GameLoop will drive rendering
             renderer.stopLoop();
@@ -257,22 +254,36 @@ function _setupLevel(levelData) {
 }
 
 /**
- * Reset the current level — remove player-placed objects, re-setup.
+ * Reset the current level — rebuild the board for edit mode.
+ *
+ * The player's machine survives: player-placed objects are restored from
+ * the snapshot taken at the start of the last play (parts return to their
+ * edit positions; their bodies are re-added on the next play). Fixed
+ * objects are always rebuilt from the level data.
  */
 function _resetLevel() {
     const levelData = levelManager.getCurrentLevel();
     const previousMode = getMode();
+    // Capture before _setupLevel() replaces the snapshot on board rebuild
+    const savedPlacedSnapshot = state._savedPlacedSnapshot;
 
     if (levelData) {
         _setupLevel(levelData);
+
+        // Restore the player's parts from the placed snapshot (bodies
+        // re-added on next play). The renderer shares the placedObjects
+        // array reference, so restored parts are drawn automatically.
+        restorePlacedFromSnapshot(state.placedObjects, savedPlacedSnapshot);
 
         // Determine which mode to return to
         if (previousMode === 'WON' || previousMode === 'PLAYING' || previousMode === 'PAUSED') {
             setMode(state.currentLevelId ? AppMode.EDITING : AppMode.SANDBOX);
         }
     } else {
-        // Sandbox mode — just clear non-fixed objects
-        dragDropManager.clearPlacedObjects();
+        // Sandbox mode — rewind to the last play-start board (decided
+        // semantic: reset never destroys a sandbox; without a prior play
+        // there is nothing to rewind to, so the sandbox is left untouched)
+        resetSandboxBoard(state.physicsEngine, state.placedObjects, savedPlacedSnapshot);
         setMode(AppMode.SANDBOX);
     }
 }
