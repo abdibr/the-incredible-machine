@@ -172,7 +172,13 @@ export class PhysicsEngine {
         }
     }
 
-    /** Restore to the last snapshot. */
+    /**
+     * Restore to the last snapshot.
+     *
+     * Poses are matched to live bodies by Matter.js body id, never by
+     * position in the object list, so adding/removing objects after the
+     * snapshot cannot shift, skip, or misapply recorded poses.
+     */
     restoreSnapshot() {
         if (!this._snapshot) return;
 
@@ -181,47 +187,95 @@ export class PhysicsEngine {
         // impulses stored on pairs; stale impulses make restores diverge.
         Pairs.clear(this.engine.pairs);
 
-        // Restore body states
+        // Optional behavioral state (e.g. Mouse walking direction) so
+        // play/reset cycles replay deterministically. Snapshot entries zip
+        // with the objects in recording order; only when the object set is
+        // unchanged — otherwise the drift check below re-takes the snapshot
+        // to self-heal, and stale behavioral state must not leak.
         const objectArray = [...this._objects];
-        for (let i = 0; i < this._snapshot.length && i < objectArray.length; i++) {
-            const snap = this._snapshot[i];
-            const obj = objectArray[i];
-
-            // Optional behavioral state (e.g. Mouse walking direction) so
-            // play/reset cycles replay deterministically.
-            if (typeof obj.restoreState === 'function' && snap.serialized) {
-                obj.restoreState(snap.serialized);
-            }
-
-            for (const bodyState of snap.bodyStates) {
-                const body = obj.bodies.find(b => b.id === bodyState.id);
-                if (body) {
-                    Body.setPosition(body, bodyState.position);
-                    Body.setAngle(body, bodyState.angle);
-                    Body.setVelocity(body, bodyState.velocity);
-                    Body.setAngularVelocity(body, bodyState.angularVelocity);
-                    Sleeping.set(body, false);
-                    // Position-solver impulse accumulators warm across steps
-                    // (postSolvePosition keeps a fraction when the body moves
-                    // along the impulse); restore them for exact replay.
-                    if (bodyState.positionImpulse) {
-                        body.positionImpulse.x = bodyState.positionImpulse.x;
-                        body.positionImpulse.y = bodyState.positionImpulse.y;
-                    }
-                    // Sleeping is per-body numeric state; restore it so sleep
-                    // evolution replays identically (engine has sleeping on).
-                    body.motion = bodyState.motion ?? body.motion;
-                    body.sleepCounter = bodyState.sleepCounter ?? body.sleepCounter;
-                    // Restore exact vertex geometry LAST (setVertices() orients
-                    // around body.position): per-step rotate/translate
-                    // accumulate floating-point drift into vertices, so the
-                    // SAT solver would otherwise see slightly different
-                    // contacts than the original run.
-                    if (bodyState.vertices) {
-                        Body.setVertices(body, bodyState.vertices);
-                    }
+        if (this._snapshot.length === objectArray.length) {
+            for (let i = 0; i < objectArray.length; i++) {
+                const obj = objectArray[i];
+                if (typeof obj.restoreState === 'function' && this._snapshot[i].serialized) {
+                    obj.restoreState(this._snapshot[i].serialized);
                 }
             }
+        }
+
+        // Index the recorded poses by body id.
+        const posesById = new Map();
+        for (const snap of this._snapshot) {
+            for (const bodyState of snap.bodyStates) {
+                posesById.set(bodyState.id, bodyState);
+            }
+        }
+
+        // Apply each pose to the live body carrying the same id.
+        const appliedBodyIds = new Set();
+        for (const obj of this._objects) {
+            for (const body of obj.bodies) {
+                if (!body) continue; // disposed objects may report null bodies
+                const bodyState = posesById.get(body.id);
+                if (!bodyState) continue;
+
+                Body.setPosition(body, bodyState.position);
+                Body.setAngle(body, bodyState.angle);
+                Body.setVelocity(body, bodyState.velocity);
+                Body.setAngularVelocity(body, bodyState.angularVelocity);
+                Sleeping.set(body, false);
+
+                // Position-solver impulse accumulators warm across steps
+                // (postSolvePosition keeps a fraction when the body moves
+                // along the impulse); restore them for exact replay.
+                if (bodyState.positionImpulse) {
+                    body.positionImpulse.x = bodyState.positionImpulse.x;
+                    body.positionImpulse.y = bodyState.positionImpulse.y;
+                }
+
+                // Sleeping is per-body numeric state; restore it so sleep
+                // evolution replays identically (engine has sleeping on).
+                body.motion = bodyState.motion ?? body.motion;
+                body.sleepCounter = bodyState.sleepCounter ?? body.sleepCounter;
+
+                // Restore exact vertex geometry LAST (setVertices() orients
+                // around body.position): per-step rotate/translate
+                // accumulate floating-point drift into vertices, so the
+                // SAT solver would otherwise see slightly different
+                // contacts than the original run.
+                if (bodyState.vertices) {
+                    Body.setVertices(body, bodyState.vertices);
+                }
+
+                appliedBodyIds.add(body.id);
+            }
+        }
+
+        // Detect drift between snapshot and world: recorded poses whose
+        // bodies are gone (objects removed), and live bodies the snapshot
+        // never saw (objects added after it was taken).
+        const unmatchedSnapshotBodyIds = [...posesById.keys()]
+            .filter((id) => !appliedBodyIds.has(id));
+        const unmatchedLiveBodyIds = [];
+        for (const obj of this._objects) {
+            for (const body of obj.bodies) {
+                if (!body) continue; // disposed objects may report null bodies
+                if (!posesById.has(body.id)) unmatchedLiveBodyIds.push(body.id);
+            }
+        }
+
+        if (unmatchedSnapshotBodyIds.length > 0 || unmatchedLiveBodyIds.length > 0) {
+            // Fail loudly, then self-heal: converge the baseline to the just-
+            // restored world so the next restore stays consistent.
+            console.warn(
+                '[PhysicsEngine] Snapshot mismatch: ' +
+                `${unmatchedSnapshotBodyIds.length} snapshot pose(s) not in world, ` +
+                `${unmatchedLiveBodyIds.length} live body(s) missing from snapshot. Re-taking snapshot.`
+            );
+            eventBus.emit('physics:snapshot-mismatch', {
+                unmatchedSnapshotBodyIds,
+                unmatchedLiveBodyIds,
+            });
+            this.takeSnapshot();
         }
     }
 
