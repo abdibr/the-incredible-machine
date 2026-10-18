@@ -32,8 +32,10 @@ npm test
 │   ├── ui/                 ← Toolbox, controls, overlays
 │   ├── levels/             ← Level manager & puzzle JSONs
 │   └── render/             ← Canvas renderer
-└── audio/                  ← Sound effects
+└── tests/                  ← Unit tests (Vitest)
 ```
+
+> **Testing notes:** plain `npm test` — Vitest 4 removed the old `--reporter=basic` flag. On Windows, npm's stderr can surface in PowerShell as `NativeCommandError` noise; `cmd /c npm test` avoids it.
 
 ## 🤝 Multi-Agent Development
 

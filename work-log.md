@@ -24,7 +24,6 @@
 - Created branches: `agent-a/engine-and-objects`, `agent-b/ui-and-puzzles`
 - Prepared Agent B task instructions document
 
-<<<<<<< HEAD
 ## 2026-02-24 — Agent A: Engine & Objects
 
 ### Implementation (branch: `agent-a/engine-and-objects`)
@@ -40,16 +39,6 @@
 - Committed and pushed to `agent-a/engine-and-objects`
 - Created PR #2: `agent-a/engine-and-objects` → `main`
 
-## 2026-02-24 — Agent B: UI & Puzzle System (complete)
-
-- See PR #1: `agent-b/ui-and-puzzles` → `main`
-- 15 files, 2845 insertions — renderer, toolbox, drag-and-drop, level manager, 5 starter puzzles
-
-## Next Steps — Integration
-- Merge PR #1 (Agent B) first, then PR #2 (Agent A), resolve any conflicts
-- Wire object registry into main.js and connect to Renderer + Toolbox
-- End-to-end browser testing
-=======
 ## 2026-02-24 — Agent B: UI & Puzzle System
 
 ### Implementation (branch: `agent-b/ui-and-puzzles`)
@@ -79,4 +68,12 @@
 - Vite build: ✅ 37 modules, 0 errors
 - 22 unit tests pass
 - Pushed integration commit to `main`
+
+## 2026-10-18 — Repo Hygiene Sweep (issue #3)
+
+- Resolved the truncated conflict block left in this log (`<<<<<<< HEAD` / `=======` markers with no `>>>>>>>` side surviving): both narratives are now kept as one chronological account above (Kickoff → Agent A → Agent B → Integration).
+- Encoding sweep via byte-level scan of all tracked files: re-saved `js/engine/GameLoop.js` and `js/engine/PhysicsEngine.js` (UTF-8 BOM + CP437-style mojibake comments: `ΓÇö`→—, `ΓöÇ`→─, `├ù`→×) as clean UTF-8 without BOM; comments now read correctly. Byte scan also found `js/render/ObjectRenderer.js` had a BOM + one mojibake em-dash — fixed the same way. Comments only; no code lines changed.
+- Removed dead `js/testing/MockObjects.js` (754 lines; `registerMockObjects()` never called, zero imports, zero events emitted — superseded by real `registerAllObjects()` during integration).
+- README: removed the non-existent `audio/` folder from the project tree (no sound system in the repo), added `tests/`, and documented test-running notes: plain `npm test` (Vitest 4 removed `--reporter=basic`), and prefer `cmd /c npm test` on Windows to avoid PowerShell `NativeCommandError` stderr noise.
+- Regression: `npm test` green before and after all edits — 22 passed.
 
