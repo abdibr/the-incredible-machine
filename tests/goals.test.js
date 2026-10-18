@@ -387,3 +387,82 @@ describe('Editor-saved level parity (issue #11)', () => {
         expect(failed).not.toHaveBeenCalled();
     });
 });
+
+describe('GoalChecker lifecycle (Phase 5 hygiene)', () => {
+    let physics;
+    let checker;
+    let onSpy;
+
+    beforeEach(async () => {
+        const { registerAllObjects } = await import('../js/objects/registerAllObjects.js');
+        registerAllObjects();
+
+        eventBus.clear();
+        physics = new PhysicsEngine(800, 600);
+        checker = new GoalChecker();
+        onSpy = vi.spyOn(eventBus, 'on');
+    });
+
+    afterEach(() => {
+        onSpy.mockRestore();
+        checker.dispose();
+        physics.dispose();
+    });
+
+    /** Minimal level JSON whose goal matches an unnamed-then-stamped bucket. */
+    const goalLevel = (id) => ({
+        id,
+        goal: { type: 'object_in_zone', targetType: 'ball', zoneId: 'bucket-goal' },
+        fixedObjects: [],
+    });
+
+    /** Registry-built bucket + caught-ball emission, as Bucket.js sensors produce it. */
+    function emitCaught(eventBus, registry) {
+        const bucket = registry.create('bucket', 700, 480, { isFixed: true, customId: 'bucket-goal' });
+        eventBus.emit('bucket:caught', { bucket, object: registry.create('ball', 700, 450), totalCaught: 1 });
+    }
+
+    it('a second init() must not create duplicate subscriptions', () => {
+        checker.init({ physicsEngine: physics });
+        const subsAfterFirstInit = onSpy.mock.calls.length;
+        expect(subsAfterFirstInit).toBe(4); // level:loaded, mode:changed, bucket:caught, loop:frame
+
+        checker.init({ physicsEngine: physics }); // double init must not double-subscribe
+        expect(onSpy.mock.calls.length).toBe(subsAfterFirstInit);
+    });
+
+    it('dispose() detaches from the event bus; a disposed checker no longer reacts', () => {
+        checker.init({ physicsEngine: physics });
+        checker.dispose();
+
+        const reached = vi.fn();
+        const failed = vi.fn();
+        eventBus.on('goal:reached', reached);
+        eventBus.on('goal:failed', failed);
+
+        // Level load after dispose must not re-arm the checker
+        eventBus.emit('level:loaded', goalLevel('disposed-level'));
+        // ...and a matching catch must not reach (its listeners are detached)
+        emitCaught(eventBus, objectRegistry);
+        eventBus.emit('loop:frame', { dt: 16.67, elapsed: 16.67 });
+
+        expect(reached).not.toHaveBeenCalled();
+        expect(failed).not.toHaveBeenCalled();
+    });
+
+    it('a disposed checker can be re-initialized and works again', () => {
+        checker.init({ physicsEngine: physics });
+        checker.dispose();
+
+        onSpy.mockClear(); // only the re-init's subscriptions count now
+        checker.init({ physicsEngine: physics });
+        expect(onSpy.mock.calls.length).toBe(4);
+
+        const reached = vi.fn();
+        eventBus.on('goal:reached', reached);
+        eventBus.emit('level:loaded', goalLevel('reinit-level'));
+        emitCaught(eventBus, objectRegistry);
+
+        expect(reached).toHaveBeenCalledWith({ levelId: 'reinit-level' });
+    });
+});
