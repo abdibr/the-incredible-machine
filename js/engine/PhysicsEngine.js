@@ -157,25 +157,35 @@ export class PhysicsEngine {
         }
     }
 
-    /** Restore to the last snapshot. */
+    /**
+     * Restore to the last snapshot.
+     *
+     * Poses are matched to live bodies by Matter.js body id, never by
+     * position in the object list, so adding/removing objects after the
+     * snapshot cannot shift, skip, or misapply recorded poses.
+     */
     restoreSnapshot() {
         if (!this._snapshot) return;
 
-        // Restore body states
-        const objectArray = [...this._objects];
-        for (let i = 0; i < this._snapshot.length && i < objectArray.length; i++) {
-            const snap = this._snapshot[i];
-            const obj = objectArray[i];
-
+        // Index the recorded poses by body id.
+        const posesById = new Map();
+        for (const snap of this._snapshot) {
             for (const bodyState of snap.bodyStates) {
-                const body = obj.bodies.find(b => b.id === bodyState.id);
-                if (body) {
-                    Body.setPosition(body, bodyState.position);
-                    Body.setAngle(body, bodyState.angle);
-                    Body.setVelocity(body, bodyState.velocity);
-                    Body.setAngularVelocity(body, bodyState.angularVelocity);
-                    Sleeping.set(body, false);
-                }
+                posesById.set(bodyState.id, bodyState);
+            }
+        }
+
+        // Apply each pose to the live body carrying the same id.
+        for (const obj of this._objects) {
+            for (const body of obj.bodies) {
+                const bodyState = posesById.get(body.id);
+                if (!bodyState) continue;
+
+                Body.setPosition(body, bodyState.position);
+                Body.setAngle(body, bodyState.angle);
+                Body.setVelocity(body, bodyState.velocity);
+                Body.setAngularVelocity(body, bodyState.angularVelocity);
+                Sleeping.set(body, false);
             }
         }
     }

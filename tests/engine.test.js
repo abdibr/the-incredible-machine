@@ -50,6 +50,35 @@ describe('PhysicsEngine', () => {
         engine.dispose();
     });
 
+    it('restores by body id so a mid-play deletion never misplaces other objects', async () => {
+        const engine = new PhysicsEngine(800, 600);
+        const { default: Ball } = await import('../js/objects/Ball.js');
+
+        const a = new Ball(200, 100);
+        const b = new Ball(400, 100);
+        const c = new Ball(600, 100);
+        for (const obj of [a, b, c]) engine.addObject(obj);
+
+        engine.takeSnapshot();
+        const poseOf = (obj) => ({ x: obj.bodies[0].position.x, y: obj.bodies[0].position.y });
+        const snapshotPoses = [poseOf(a), poseOf(b), poseOf(c)];
+
+        // Mid-play: the simulation runs and objects move.
+        for (let i = 0; i < 12; i++) engine.step(16.67);
+        expect(poseOf(c).y).not.toBe(snapshotPoses[2].y);
+
+        // Delete an object mid-play, then reset to the snapshot.
+        engine.removeObject(b);
+        engine.restoreSnapshot();
+
+        // Survivors must land at their OWN snapshot poses; index-based mapping
+        // would silently skip/misapply entries shifted by the deletion.
+        expect(poseOf(a)).toEqual(snapshotPoses[0]);
+        expect(poseOf(c)).toEqual(snapshotPoses[2]);
+
+        engine.dispose();
+    });
+
     it('should set time scale', () => {
         const engine = new PhysicsEngine(800, 600);
         engine.setTimeScale(2);
