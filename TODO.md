@@ -12,16 +12,15 @@ Legend: [ ] = todo, [~] = in progress, [x] = done.
 ## Phase 1 - CRITICAL: gameplay blockers (game cannot be played as designed)
 
 ### 1.1 Goal system never fires - levels are unwinnable
-- [ ] Restore named object ids: `static deserialize()` in all 15 object classes ignores `data.id`; `main.js _setupLevel` never assigns `spec.id`. Keep `BaseObject.id` auto-increment for physics refs, add a `customId` field resolved from level JSON so `"zoneId": "bucket-goal"` can resolve.
-- [ ] Implement goal checker (suggest `js/goals/GoalChecker.js` or a block in `main.js`):
-  - [ ] Listen on `bucket:caught` (emitted by `js/objects/Bucket.js:102`, currently no listener).
-  - [ ] Per-step check (reuse `loop:frame` or hook in GameLoop) of level `goal`: if target object (by `goal.targetType`: `ball`, `mouse`) is caught by the zone matching `goal.zoneId` -> emit `goal:reached { levelId }`.
-  - [ ] Add fail condition and emit `goal:failed` (minimum: target falls off-world below canvas; optional per-level time limit).
-- [ ] Verify display path (no change expected): `js/ui/GoalOverlay.js:60-66` already listens for `goal:reached`/`goal:failed`.
-- [ ] Verify progression path (no change expected): `js/levels/LevelManager.js:37` already listens for `goal:reached` -> `markComplete` -> unlocks/next.
-- [ ] Wire "Next Level" flow end-to-end (`overlay:next-level` in `main.js` -> load next level id).
-- [ ] EditorPanel parity: custom saved levels hard-code `zoneId: 'bucket-goal'` (`js/ui/EditorPanel.js:190`) - confirm convention matches checker.
-- Acceptance: level-01, drop ball into bucket, play -> win overlay appears, level marked complete, next level loads.
+- [x] Restore named object ids: `customId` field on `BaseObject` (separate from the auto-increment physics `id`), resolved from level JSON `data.id` in every object class's `deserialize()` and in `main.js _setupLevel` via `objectRegistry.create(..., customId: objData.id)`.
+- [x] Implement goal checker as `js/goals/GoalChecker.js` (+ `stampGoalZoneIds` editor-save parity helper):
+  - [x] Listen on `bucket:caught`: target type must match `goal.targetType` and bucket `customId` must match `goal.zoneId` -> emit `goal:reached { levelId }` (latched once per attempt).
+  - [x] Fail condition on `loop:frame`: target body ends up below world height -> emit `goal:failed { levelId, reason }`; re-arms on every `level:loaded` and PLAYING attempt.
+- [x] Verify display path: `js/ui/GoalOverlay.js` win ("🎉 Puzzle Complete!") / fail ("😅 Try Again!") overlays — verified live E2E (2026-10-18): win overlay shown on level-01 bucket catch.
+- [x] Verify progression path: `js/levels/LevelManager.js` on `goal:reached` -> `markComplete` — console logged `[LevelManager] Completed: level-01`; level-02 unlocked in the level select.
+- [x] Wire "Next Level" flow end-to-end (`overlay:next-level` in `main.js` -> `levelManager.loadLevel`): clicked "➡ Next Level" in the win overlay -> level-02 "Across the Gap" loaded.
+- [x] EditorPanel parity: custom saved levels hard-code `zoneId: 'bucket-goal'` (`js/ui/EditorPanel.js`) — matches checker convention; `stampGoalZoneIds` stamps unnamed saved buckets.
+- Acceptance: level-01, drop ball into bucket, play -> win overlay appears, level marked complete, next level loads. ✅ Verified live E2E 2026-10-18 (boot → level select → #01 → drag ball @ (700,300) → play → catch in bucket → win overlay → next level), plus `npm test`: 11 files / 105 tests pass (`goals.test.js`, `custom-id.test.js`). NOTE: level select shows on boot (MENU) — the level loads only when its card is clicked; coordinate clicks aimed at the canvas/toolbar are swallowed by the level-select overlay while it is open.
 
 ### 1.2 Reset destroys the player's machine - iteration loop broken
 - [x] `state._savedPlacedSnapshot` is written (`js/main.js:43,157,259`) but never read by anything.
@@ -113,15 +112,29 @@ Legend: [ ] = todo, [~] = in progress, [x] = done.
 
 ---
 
+## Phase 5 - Reviewer follow-ups (post-integration review, 2026-10-18)
+
+Closing reviewer pass over `main...integration/broken-functionality-fixes` (suite 11 files / 105 tests green at review time). Finding #1 ([major], goal-overlay handlers left the GameLoop RUNNING across mode switches) was fixed immediately by the orchestrator; the rest are minor/latent backlogs:
+
+- [ ] `js/goals/GoalChecker.js` `init()`: four permanent eventBus subscriptions, no re-init guard or `dispose()` - capture unsubscribes, add `dispose()` or guard init-once.
+- [ ] `js/engine/PhysicsEngine.js` `restoreState`: equal-count path zips by index before the body-id pose check, so a mid-play remove+add can misapply one object's state to another - compute the body-id pose set first, restore only by id (latent: no production mid-play removal today).
+- [ ] `tests/reset.test.js` level-mode helper sets a dead `obj._goalId` instead of passing `customId: objData.id` through `registry.create` - use the production seam so the reset tests exercise the real goal-zone path.
+- [ ] `js/objects/Gear.js` `_applyToothTraction` uses deprecated `Matter.SAT.collides` - switch to `Matter.Collision.collides(...)` (removes deprecation noise and future break risk).
+- [ ] `js/objects/Pulley.js` `_isTeleport()` can false-positive on a hard rider impact (>0.35px in one step), spuriously re-deriving the rope split mid-play - implement `Pulley.restoreState()` (seam already called by PhysicsEngine) to reset cached poses instead of heuristics.
+- [ ] `js/objects/Mouse.js` the shared 30-frame reversal cooldown swallows ledge reversals after a ball-push reversal (mouse can walk ~22px off an edge) - add a separate short edge-probe cooldown.
+- [ ] `js/ui/EditorPanel.js` save stamps `bucket-goal` onto EVERY unnamed fixed bucket, so multi-bucket custom levels trivially satisfy `goal.zoneId` - stamp only the first unnamed bucket (or reject multiple unnamed buckets on save).
+
+---
+
 ## Manual QA checklist (run after each phase)
 
-- [ ] Level-01: win screen on goal, markComplete + unlock works, Next Level loads level-02.
-- [ ] Reset keeps player-placed parts; repeated play/reset cycles stable (no leaked bodies in world after full reset).
-- [ ] Speed button cycles during play visibly.
-- [ ] Candle burns rope -> rope detaches; balloon pops on scissors/flame -> no ghost collider remains.
-- [ ] Rotated fan blows correctly; pulley couples; mouse walks planks without jitter.
-- [ ] Level select -> sandbox -> menu round-trip leaves no stale bodies/ghosts.
-- [ ] `npm test` green (22 passed or updated count with new tests).
+- [x] Level-01: win screen on goal, markComplete + unlock works, Next Level loads level-02. ✅ 2026-10-18 in-browser at a 714×471 window: Bowling Ball → (700,300), Play → "🎉 Puzzle Complete!", "➡ Next Level" → "Across the Gap".
+- [x] Reset keeps player-placed parts; repeated play/reset cycles stable (no leaked bodies in world after full reset). ✅ `ticket/08-reset` + `ticket/10-snapshot` unit coverage, and live: Retry from the win overlay restored the ball (count stays 0, ball visible); replay → win again on the same board.
+- [x] Speed button cycles during play visibly. ✅ `tests/speed-wiring.test.js` (GameLoop speed cycles; label/tooltip follow `loop:speed`).
+- [x] Candle burns rope → rope detaches; balloon pops on scissors/flame → no ghost collider remains. ✅ `tests/rope.test.js` (flame-sever + constraint removal in the same beat), `tests/balloon.test.js` (pop removes the body on Matter `collisionStart`).
+- [x] Rotated fan blows correctly; pulley couples; mouse walks planks without jitter. ✅ unit: fan rotation-aware wind zone, pulley true coupling, mouse debounce/front-facing tests.
+- [x] Level select → sandbox → menu round-trip leaves no stale bodies/ghosts. ✅ live 2026-10-18: sandbox enter (parts ∞, clean canvas), ball placed, Reset-without-play leaves the sandbox untouched (`ticket/08` semantics); console clean throughout.
+- [x] `npm test` green (22 passed or updated count with new tests). ✅ final tip: 11 files / 105 tests, all green after the full ticket wave + reviewer fix.
 
 ## Future ideas (out of scope unless requested)
 - [ ] Sound system (matches README's aspirational `audio/` entry).
