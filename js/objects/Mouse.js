@@ -13,6 +13,9 @@ const { Bodies, Body, Composite } = Matter;
 const MOUSE_WIDTH = 20;
 const MOUSE_HEIGHT = 12;
 const MOUSE_SPEED = 1.2;
+const REVERSAL_COOLDOWN_FRAMES = 30; // frames between allowed reversals (no jitter)
+const FRONT_FACING_DOT = 0.7;        // head-on contact: |normal.x| along walk axis
+const MIN_REL_APPROACH = 0.25;       // relative approach (× speed) to treat contact as wall-like
 const BODY_COLOR = '#b0b0b0';
 const EAR_COLOR = '#e0a0a0';
 
@@ -23,6 +26,7 @@ export default class Mouse extends BaseObject {
         this._direction = options.direction || 1; // 1 = right, -1 = left
         this._isWalking = false;
         this._walkPhase = 0;
+        this._reversalCooldown = 0; // frames until the next reversal is allowed
 
         this._body = Bodies.rectangle(x, y, MOUSE_WIDTH, MOUSE_HEIGHT, {
             density: 0.002,
@@ -68,6 +72,8 @@ export default class Mouse extends BaseObject {
     }
 
     onBeforeUpdate(engine) {
+        if (this._reversalCooldown > 0) this._reversalCooldown -= 1;
+
         this._isWalking = this._isGrounded(engine);
 
         if (!this._isWalking) return;
@@ -90,8 +96,8 @@ export default class Mouse extends BaseObject {
         const wallCheck = Matter.Query.point(allBodies, { x: aheadX, y: aheadY });
         const hitWall = wallCheck.some(b => b !== this._body && b.isStatic);
 
-        if (hitWall) {
-            this._direction *= -1;
+        if (hitWall) { // wall ahead → turn around
+            this._reverse();
         }
 
         // Check for edge (no ground ahead)
@@ -99,16 +105,58 @@ export default class Mouse extends BaseObject {
         const groundAhead = Matter.Query.point(allBodies, { x: aheadX, y: edgeCheckY });
         const hasGround = groundAhead.some(b => b !== this._body && b.isStatic);
 
-        if (!hasGround) {
-            this._direction *= -1;
+        if (!hasGround) { // ledge ahead → turn around
+            this._reverse();
         }
     }
 
+    /**
+     * Flip walking direction with a cooldown so repeated reversal signals
+     * (wall probes, collision starts) can't cause flip-flopping.
+     * @private
+     */
+    _reverse() {
+        if (this._reversalCooldown > 0) return;
+        this._direction *= -1;
+        this._reversalCooldown = REVERSAL_COOLDOWN_FRAMES;
+    }
+
     onCollision(other, pair) {
-        // Reverse direction on collision with objects
-        if (other.type !== 'mouse') {
-            this._direction *= -1;
-        }
+        // Reverse only on significant, front-facing, head-on contacts —
+        // debounced so pushed bodies can't cause rapid oscillation.
+        if (!pair || !this._body || other.type === 'mouse') return;
+
+        const otherBody = pair.bodyA === this._body ? pair.bodyB : pair.bodyA;
+        if (!otherBody) return;
+
+        const dx = otherBody.position.x - this._body.position.x;
+        const dy = otherBody.position.y - this._body.position.y;
+
+        // Matter ≥0.20 nests the collision (and its normal) under pair;
+        // older pairs carried bodyA/bodyB/normal directly.
+        const contact = pair.collision || pair;
+        const normal = contact && contact.normal ? contact.normal : { x: 0, y: 1 };
+
+        // Front-facing: the obstacle must be on the side we are walking
+        // toward. Contacts from behind occur right after pushing something.
+        if (dx * this._direction <= 0) return;
+
+        // Orient the contact normal from the obstacle toward us, independent
+        // of Matter's bodyA/bodyB ordering.
+        const nDotToOther = normal.x * dx + normal.y * dy;
+        const towardMeX = (nDotToOther >= 0 ? -1 : 1) * normal.x;
+
+        // Only head-on contacts count as walls; floor and ceiling contacts
+        // (normal ≈ vertical) do not.
+        if (towardMeX * this._direction >= -FRONT_FACING_DOT) return;
+
+        // Relative velocity: treat the body as a wall only when we are
+        // driving into it. A body already moving with us is a push, keeping
+        // pushing of light dynamic objects deterministic.
+        const relApproach = (this._body.velocity.x - otherBody.velocity.x) * this._direction;
+        if (relApproach <= MIN_REL_APPROACH * this._speed) return;
+
+        this._reverse();
     }
 
     draw(ctx) {
@@ -251,6 +299,19 @@ export default class Mouse extends BaseObject {
                 direction: this._direction,
             },
         };
+    }
+
+    /**
+     * Re-apply serialized behavioral state after a snapshot restore so that
+     * play/reset cycles replay deterministically.
+     * @param {object} data - serialized data (same shape as serialize() output)
+     */
+    restoreState(data) {
+        const direction = data?.options?.direction;
+        if (direction === 1 || direction === -1) {
+            this._direction = direction;
+        }
+        this._reversalCooldown = 0; // cooldown is transient; cycles start clean
     }
 
     static deserialize(data) {

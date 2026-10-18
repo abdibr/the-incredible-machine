@@ -1,5 +1,5 @@
-﻿/**
- * PhysicsEngine ΓÇö Matter.js wrapper
+/**
+ * PhysicsEngine — Matter.js wrapper
  *
  * Manages the Matter.js world, object lifecycle, collision events,
  * snapshot/restore for reset, boundary walls, and hit-testing.
@@ -8,12 +8,12 @@
 import Matter from 'matter-js';
 import { eventBus } from '../EventBus.js';
 
-const { Engine, World, Bodies, Body, Composite, Events, Query, Sleeping } = Matter;
+const { Engine, World, Bodies, Body, Composite, Events, Query, Sleeping, Pairs } = Matter;
 
 export class PhysicsEngine {
     /**
-     * @param {number} width   ΓÇö playfield width in px
-     * @param {number} height  ΓÇö playfield height in px
+     * @param {number} width   — playfield width in px
+     * @param {number} height  — playfield height in px
      * @param {object} [opts]
      * @param {number} [opts.gravityX=0]
      * @param {number} [opts.gravityY=1]
@@ -48,9 +48,15 @@ export class PhysicsEngine {
 
         // Forward collision events
         this._setupCollisionEvents();
+
+        // Consume severing so a severed rope is physically detached
+        this._setupSeveredEvents();
+
+        // Object removal events (popped balloons, etc.)
+        this._setupRemovalEvents();
     }
 
-    // ΓöÇΓöÇ Object Lifecycle ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Object Lifecycle ──────────────────────────
 
     /**
      * Add a game object to the physics world.
@@ -89,6 +95,7 @@ export class PhysicsEngine {
 
         // Remove bodies
         for (const body of gameObject.bodies) {
+            if (!body) continue; // disposed objects may report null bodies
             Composite.remove(this.world, body);
             this._bodyToObject.delete(body.id);
         }
@@ -106,17 +113,18 @@ export class PhysicsEngine {
         }
     }
 
-    // ΓöÇΓöÇ Simulation ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Simulation ────────────────────────────────
 
     /**
      * Advance the physics simulation by dt milliseconds.
-     * @param {number} dt ΓÇö delta time in ms
+     * @param {number} dt — delta time in ms
      */
     step(dt) {
-        // Pre-update hooks on all objects
+        // Pre-update hooks on all objects.
+        // BaseObject contract: onBeforeUpdate(engine, dt).
         for (const obj of this._objects) {
             if (obj.onBeforeUpdate) {
-                obj.onBeforeUpdate(dt, this);
+                obj.onBeforeUpdate(this, dt);
             }
         }
 
@@ -125,7 +133,7 @@ export class PhysicsEngine {
         // Post-update hooks
         for (const obj of this._objects) {
             if (obj.onAfterUpdate) {
-                obj.onAfterUpdate(dt, this);
+                obj.onAfterUpdate(this, dt);
             }
         }
     }
@@ -138,7 +146,7 @@ export class PhysicsEngine {
         this.engine.timing.timeScale = scale;
     }
 
-    // ΓöÇΓöÇ Snapshot / Restore ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Snapshot / Restore ────────────────────────
 
     /** Save the current state for later reset. */
     takeSnapshot() {
@@ -152,6 +160,13 @@ export class PhysicsEngine {
                     angle: b.angle,
                     velocity: { x: b.velocity.x, y: b.velocity.y },
                     angularVelocity: b.angularVelocity,
+                    // Vertex geometry drifts through rotate/translate each
+                    // step (floating point), so restored contacts would
+                    // differ; store it to keep restores bit-deterministic.
+                    vertices: b.vertices.map(v => ({ x: v.x, y: v.y })),
+                    positionImpulse: { x: b.positionImpulse.x, y: b.positionImpulse.y },
+                    motion: b.motion,
+                    sleepCounter: b.sleepCounter,
                 })),
             });
         }
@@ -161,11 +176,22 @@ export class PhysicsEngine {
     restoreSnapshot() {
         if (!this._snapshot) return;
 
+        // Reset the pair cache so contacts re-form cold after teleporting
+        // bodies: Matter warm-starts the solver from accumulated contact
+        // impulses stored on pairs; stale impulses make restores diverge.
+        Pairs.clear(this.engine.pairs);
+
         // Restore body states
         const objectArray = [...this._objects];
         for (let i = 0; i < this._snapshot.length && i < objectArray.length; i++) {
             const snap = this._snapshot[i];
             const obj = objectArray[i];
+
+            // Optional behavioral state (e.g. Mouse walking direction) so
+            // play/reset cycles replay deterministically.
+            if (typeof obj.restoreState === 'function' && snap.serialized) {
+                obj.restoreState(snap.serialized);
+            }
 
             for (const bodyState of snap.bodyStates) {
                 const body = obj.bodies.find(b => b.id === bodyState.id);
@@ -175,6 +201,25 @@ export class PhysicsEngine {
                     Body.setVelocity(body, bodyState.velocity);
                     Body.setAngularVelocity(body, bodyState.angularVelocity);
                     Sleeping.set(body, false);
+                    // Position-solver impulse accumulators warm across steps
+                    // (postSolvePosition keeps a fraction when the body moves
+                    // along the impulse); restore them for exact replay.
+                    if (bodyState.positionImpulse) {
+                        body.positionImpulse.x = bodyState.positionImpulse.x;
+                        body.positionImpulse.y = bodyState.positionImpulse.y;
+                    }
+                    // Sleeping is per-body numeric state; restore it so sleep
+                    // evolution replays identically (engine has sleeping on).
+                    body.motion = bodyState.motion ?? body.motion;
+                    body.sleepCounter = bodyState.sleepCounter ?? body.sleepCounter;
+                    // Restore exact vertex geometry LAST (setVertices() orients
+                    // around body.position): per-step rotate/translate
+                    // accumulate floating-point drift into vertices, so the
+                    // SAT solver would otherwise see slightly different
+                    // contacts than the original run.
+                    if (bodyState.vertices) {
+                        Body.setVertices(body, bodyState.vertices);
+                    }
                 }
             }
         }
@@ -190,7 +235,7 @@ export class PhysicsEngine {
         return this._snapshot !== null;
     }
 
-    // ΓöÇΓöÇ Queries ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Queries ───────────────────────────────────
 
     /** @returns {Set<import('../objects/BaseObject.js').default>} */
     getObjects() {
@@ -220,7 +265,7 @@ export class PhysicsEngine {
         return this._bodyToObject.get(body.id) ?? null;
     }
 
-    // ΓöÇΓöÇ Boundaries ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Boundaries ────────────────────────────────
 
     /** @private */
     _addBoundaries() {
@@ -238,7 +283,7 @@ export class PhysicsEngine {
         Composite.add(this.world, walls);
     }
 
-    // ΓöÇΓöÇ Collision Events ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Collision Events ──────────────────────────
 
     /** @private */
     _setupCollisionEvents() {
@@ -256,11 +301,50 @@ export class PhysicsEngine {
         });
     }
 
-    // ΓöÇΓöÇ Cleanup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    /** @private */
+    _setupSeveredEvents() {
+        this._onRopeSevered = ({ rope }) => this._detachRopeConstraints(rope);
+        eventBus.on('rope:severed', this._onRopeSevered);
+    }
+
+    /**
+     * Physically detach a severed rope: drop its Matter constraints from the
+     * world (mirroring the severed flag/visual), then wake its bodies so the
+     * freed piece falls in the next step.
+     * @param {import('../objects/Rope.js').default} rope
+     * @private
+     */
+    _detachRopeConstraints(rope) {
+        for (const constraint of rope.constraints) {
+            Composite.remove(this.world, constraint);
+        }
+        // A rope held by constraints can be asleep; release it so it falls
+        for (const body of rope.bodies) {
+            Sleeping.set(body, false);
+        }
+    }
+
+    /** @private */
+    _setupRemovalEvents() {
+        // Popped balloons must leave the physics world immediately: the body
+        // is invisible (draw no-ops) but would keep colliding and buoyantly
+        // acting on other objects forever (work plan section 1.4).
+        this._onBalloonPopped = ({ body }) => {
+            if (!body || !this._bodyToObject.has(body.id)) return;
+            Composite.remove(this.world, body);
+            this._bodyToObject.delete(body.id);
+        };
+
+        eventBus.on('balloon:popped', this._onBalloonPopped);
+    }
+
+    // ── Cleanup ───────────────────────────────────
 
     /** Tear down the engine completely. */
     dispose() {
+        eventBus.off('balloon:popped', this._onBalloonPopped);
         Events.off(this.engine);
+        eventBus.off('rope:severed', this._onRopeSevered);
         this.clear();
         World.clear(this.world);
         Engine.clear(this.engine);

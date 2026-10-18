@@ -72,7 +72,11 @@ class PlayControls {
             this._updateButtonStates();
         });
 
+        // Mirror the live loop speed — GameLoop is the source of truth
+        eventBus.on('loop:speed', ({ speed }) => this._setSpeed(speed));
+
         // Initial state
+        this._setSpeed(this._speed);
         this._updateButtonStates();
 
         console.log('[PlayControls] Initialized');
@@ -104,10 +108,17 @@ class PlayControls {
     }
 
     _onSpeed() {
-        this._speed = this._speed === 1 ? 2 : 1;
-        this.buttons.speed.textContent = `${this._speed}×`;
-        this.buttons.speed.classList.toggle('btn-active', this._speed === 2);
+        // GameLoop.cycleSpeed() (wired at app level) owns the speed state;
+        // this UI mirrors it via the `loop:speed` event.
         eventBus.emit('controls:speed', { speed: this._speed });
+    }
+
+    /** Show the current speed on the button label and tooltip. */
+    _setSpeed(speed) {
+        this._speed = speed;
+        this.buttons.speed.textContent = `${speed}×`;
+        this.buttons.speed.title = `Play speed: ${speed}×`;
+        this.buttons.speed.classList.toggle('btn-active', speed !== 1);
     }
 
     _updateButtonStates() {
@@ -117,6 +128,11 @@ class PlayControls {
         for (const btn of Object.values(this.buttons)) {
             btn.classList.remove('btn-active', 'btn-pressed');
             btn.disabled = false;
+        }
+
+        // Preserve the speed button's highlight — it reflects current speed
+        if (this._speed !== 1) {
+            this.buttons.speed.classList.add('btn-active');
         }
 
         switch (mode) {

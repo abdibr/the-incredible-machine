@@ -62,20 +62,27 @@ export default class Fan extends BaseObject {
 
         const pos = this._body.position;
         const angle = this._body.angle;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
 
-        // Wind direction is "up" relative to the fan (perpendicular to face)
-        const windDirX = -Math.sin(angle);
-        const windDirY = -Math.cos(angle);
+        // Face direction is fan-local "up" (0, -1) rotated by the body angle —
+        // the same direction the wind lines are drawn in.
+        const windDirX = sin;
+        const windDirY = -cos;
 
-        // Define the wind zone as a rectangular region in front of the fan
-        const zoneCenterX = pos.x + windDirX * this._windRange / 2;
-        const zoneCenterY = pos.y + windDirY * this._windRange / 2;
-        const zoneHalfWidth = FAN_WIDTH;
-        const zoneHalfHeight = this._windRange / 2;
+        // Wind zone: a rectangle anchored to the fan, FAN_WIDTH wide across
+        // the face (|local x| <= FAN_WIDTH) and windRange long out of the face
+        // (local y from -windRange up to 0, matching the 0° zone exactly).
+        const zoneHalfLength = this._windRange / 2;
+        const zoneCenterX = pos.x + windDirX * zoneHalfLength;
+        const zoneCenterY = pos.y + windDirY * zoneHalfLength;
 
+        // Broadphase: axis-aligned bounds enclosing the rotated zone rectangle.
+        const extentX = FAN_WIDTH * Math.abs(cos) + zoneHalfLength * Math.abs(sin);
+        const extentY = FAN_WIDTH * Math.abs(sin) + zoneHalfLength * Math.abs(cos);
         const bounds = {
-            min: { x: zoneCenterX - zoneHalfWidth, y: zoneCenterY - zoneHalfHeight },
-            max: { x: zoneCenterX + zoneHalfWidth, y: zoneCenterY + zoneHalfHeight },
+            min: { x: zoneCenterX - extentX, y: zoneCenterY - extentY },
+            max: { x: zoneCenterX + extentX, y: zoneCenterY + extentY },
         };
 
         const allBodies = Composite.allBodies(engine.world);
@@ -84,9 +91,18 @@ export default class Fan extends BaseObject {
         for (const body of inRange) {
             if (body.isStatic || body === this._body) continue;
 
-            // Distance-based falloff
+            // Exact test: transform the body position into fan-local space
+            // (translate, then inverse-rotate) and test the local rectangle.
             const dx = body.position.x - pos.x;
             const dy = body.position.y - pos.y;
+            const localX = dx * cos + dy * sin;
+            const localY = -dx * sin + dy * cos;
+
+            const acrossFace = localX >= -FAN_WIDTH && localX <= FAN_WIDTH;
+            const outOfFace = localY >= -this._windRange && localY <= 0;
+            if (!acrossFace || !outOfFace) continue;
+
+            // Distance-based falloff
             const dist = Math.sqrt(dx * dx + dy * dy);
 
             if (dist < this._windRange && dist > 0) {

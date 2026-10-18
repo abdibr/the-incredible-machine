@@ -80,7 +80,10 @@ export default class Balloon extends BaseObject {
     pop() {
         if (this._popped) return;
         this._popped = true;
-        eventBus.emit('balloon:popped', { balloon: this });
+        // Payload carries the Matter body so the physics layer can evict it
+        // while it is still reachable; dispose() runs afterwards.
+        eventBus.emit('balloon:popped', { balloon: this, body: this._body });
+        this.dispose();
     }
 
     get isPopped() {
