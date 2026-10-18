@@ -132,14 +132,19 @@ export default class Mouse extends BaseObject {
         const dx = otherBody.position.x - this._body.position.x;
         const dy = otherBody.position.y - this._body.position.y;
 
+        // Matter ≥0.20 nests the collision (and its normal) under pair;
+        // older pairs carried bodyA/bodyB/normal directly.
+        const contact = pair.collision || pair;
+        const normal = contact && contact.normal ? contact.normal : { x: 0, y: 1 };
+
         // Front-facing: the obstacle must be on the side we are walking
         // toward. Contacts from behind occur right after pushing something.
         if (dx * this._direction <= 0) return;
 
         // Orient the contact normal from the obstacle toward us, independent
         // of Matter's bodyA/bodyB ordering.
-        const nDotToOther = pair.normal.x * dx + pair.normal.y * dy;
-        const towardMeX = (nDotToOther >= 0 ? -1 : 1) * pair.normal.x;
+        const nDotToOther = normal.x * dx + normal.y * dy;
+        const towardMeX = (nDotToOther >= 0 ? -1 : 1) * normal.x;
 
         // Only head-on contacts count as walls; floor and ceiling contacts
         // (normal ≈ vertical) do not.
