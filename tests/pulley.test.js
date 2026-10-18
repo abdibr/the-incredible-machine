@@ -8,7 +8,7 @@
  * Seams: Pulley construction + PhysicsEngine.step (public physics surface).
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const PIVOT_X = 400;
 const PIVOT_Y = 150;
@@ -145,6 +145,58 @@ describe('Pulley coupling', () => {
         } finally {
             baseline.physics.dispose();
             loaded.physics.dispose();
+        }
+    });
+
+    // ── snapshot-restore seam (Phase 5 #5: no mid-play pose-jump heuristic) ──
+
+    it('does not re-derive the rope split from mid-play pose-jump heuristics', () => {
+        const rig = makeRig();
+        try {
+            stepRig(rig, SETTLE_STEPS);
+
+            // Drop a heavy ball onto the left platform: the impact jolts the
+            // platform by far more than any plausible per-step threshold. The
+            // coupling must treat that as ordinary dynamics — a pose-jump
+            // "teleport" heuristic misreads hard rider impacts, and it is the
+            // same mechanism that false-positives after snapshot restores,
+            // so it must not exist mid-play at all (an explicit restoreState
+            // seam handles restores/reset instead).
+            rig.physics.addObject(new Ball(PIVOT_X - 60, 163, { variant: 'bowling' }));
+            const syncSpy = vi.spyOn(rig.pulley, '_syncRopeToGeometry');
+            stepRig(rig, 40); // fall + impact + settle window
+
+            expect(syncSpy).not.toHaveBeenCalled();
+        } finally {
+            rig.physics.dispose();
+        }
+    });
+
+    it('re-derives the rope split exactly once on the step after a snapshot restore', () => {
+        const rig = makeRig();
+        try {
+            stepRig(rig, SETTLE_STEPS);
+            rig.physics.takeSnapshot();
+
+            // Load + swing: the rope split drifts away from the snapshot's.
+            rig.physics.addObject(new Ball(PIVOT_X - 60, 163, { variant: 'bowling' }));
+            stepRig(rig, SWING_STEPS);
+
+            // Unload so the live object set matches the snapshot again (no
+            // drift retake) — mirrors the game's placed-parts restore flow.
+            for (const obj of [...rig.physics.getObjects()]) {
+                if (obj.type === 'ball') rig.physics.removeObject(obj);
+            }
+
+            const syncSpy = vi.spyOn(rig.pulley, '_syncRopeToGeometry');
+            rig.physics.restoreSnapshot();
+
+            stepRig(rig, 1);
+            expect(syncSpy).toHaveBeenCalledTimes(1); // one-shot resync after restore
+            stepRig(rig, 30);
+            expect(syncSpy).toHaveBeenCalledTimes(1); // then never re-derived mid-play
+        } finally {
+            rig.physics.dispose();
         }
     });
 });
