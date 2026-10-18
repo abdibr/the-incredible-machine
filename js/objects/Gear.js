@@ -3,12 +3,14 @@
  *
  * A circular body that rotates at a constant angular velocity.
  * Can mesh with adjacent gears (contact reverses direction).
+ * The teeth push contacting bodies along the rim in onBeforeUpdate
+ * (a static body's rotation alone is ignored by Matter.js).
  */
 
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
 
-const { Bodies, Body } = Matter;
+const { Bodies, Body, Sleeping } = Matter;
 
 const GEAR_RADIUS = 28;
 const GEAR_TEETH = 10;
@@ -53,9 +55,59 @@ export default class Gear extends BaseObject {
         Body.setAngle(this._body, angle);
     }
 
-    onBeforeUpdate(engine) {
-        // Maintain constant angular velocity (static body doesn't rotate on its own)
+    onBeforeUpdate(dt, engine) {
+        // Maintain constant rotation (static body doesn't rotate on its own)
         Body.setAngle(this._body, this._body.angle + this._angularSpeed);
+
+        this._applyToothTraction(engine);
+    }
+
+    /**
+     * Tooth interaction — the Matter.js solver ignores a static body's
+     * rotation, so bodies touching the teeth are pushed manually each step:
+     * their velocity's tangential component (perpendicular to the radial
+     * direction at the contact) is driven toward the local tooth surface speed
+     * (omega * radius), proportional to the gear rotation rate. Only the
+     * tangential component changes, so normal motion — gravity resting on the
+     * rim, solver penetration resolution — is untouched. Bodies already riding
+     * at tooth speed are left alone so they may sleep.
+     * @param {object} engine - PhysicsEngine instance
+     * @private
+     */
+    _applyToothTraction(engine) {
+        const omega = this._angularSpeed;
+        if (omega === 0 || !engine || !engine.world) return;
+
+        const center = this._body.position;
+        const toothSpeed = omega * this._radius;
+
+        for (const body of Matter.Composite.allBodies(engine.world)) {
+            if (body.isStatic) continue;
+
+            const collision = Matter.SAT.collides(this._body, body);
+            if (!collision || !collision.collided) continue;
+
+            // Outward radial direction from the gear centre to the touching body
+            const rx = body.position.x - center.x;
+            const ry = body.position.y - center.y;
+            const dist = Math.hypot(rx, ry);
+            if (dist < 1e-6) continue; // degenerate: body exactly at gear centre
+
+            // Tooth motion direction at this contact; surface points move along
+            // (-r.y, r.x) for positive omega (rigid rotation velocity omega x r)
+            const ux = -ry / dist;
+            const uy = rx / dist;
+
+            // Drive the tangential velocity component toward the tooth speed
+            const dv = toothSpeed - (body.velocity.x * ux + body.velocity.y * uy);
+            if (Math.abs(dv) < 0.01) continue; // already riding; allow it to sleep
+
+            Sleeping.set(body, false);
+            Body.setVelocity(body, {
+                x: body.velocity.x + ux * dv,
+                y: body.velocity.y + uy * dv,
+            });
+        }
     }
 
     onCollision(other, pair) {
