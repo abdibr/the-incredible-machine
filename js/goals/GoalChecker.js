@@ -20,6 +20,31 @@ import { eventBus } from '../EventBus.js';
 /** The only goal type this checker implements (level JSON `goal.type`) */
 const ZONE_GOAL_TYPE = 'object_in_zone';
 
+/**
+ * The zone id EditorPanel hard-codes into custom levels' goals
+ * (EditorPanel._saveLevel). Buckets saved without a named id get this
+ * stamped on, so a reloaded custom level's bucket resolves to
+ * `goal.zoneId` exactly like official level JSON does.
+ */
+export const DEFAULT_GOAL_ZONE_ID = 'bucket-goal';
+
+/**
+ * Stamp the goal zone id onto serialized fixed buckets that have no
+ * named id yet (EditorPanel save parity: keeps an existing id, never
+ * touches non-bucket objects).
+ * @param {Array<object>} fixedObjects - fresh serialize() results from _saveLevel
+ * @param {string} [zoneId]
+ * @returns {Array<object>} the same array, ids stamped
+ */
+export function stampGoalZoneIds(fixedObjects, zoneId = DEFAULT_GOAL_ZONE_ID) {
+    for (const data of fixedObjects) {
+        if (data?.type === 'bucket' && !data.id) {
+            data.id = zoneId;
+        }
+    }
+    return fixedObjects;
+}
+
 export class GoalChecker {
     constructor() {
         /** @type {import('../engine/PhysicsEngine.js').PhysicsEngine|null} */

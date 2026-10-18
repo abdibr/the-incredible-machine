@@ -21,7 +21,8 @@ import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
 import Ball from '../js/objects/Ball.js';
 import Mouse from '../js/objects/Mouse.js';
 import Bucket from '../js/objects/Bucket.js';
-import { GoalChecker } from '../js/goals/GoalChecker.js';
+import { GoalChecker, DEFAULT_GOAL_ZONE_ID, stampGoalZoneIds } from '../js/goals/GoalChecker.js';
+import { objectRegistry } from '../js/objects/ObjectRegistry.js';
 import LevelManager from '../js/levels/LevelManager.js';
 import level01 from '../js/levels/puzzles/level-01.json';
 import level02 from '../js/levels/puzzles/level-02.json';
@@ -305,5 +306,84 @@ describe('Level-progression path (issue #11)', () => {
 
         expect(levelManager.getCurrentLevel().id).toBe('level-02');
         expect(loaded).toHaveBeenCalledWith(level02);
+    });
+});
+
+describe('Editor-saved level parity (issue #11)', () => {
+    let physics;
+    let checker;
+
+    beforeEach(async () => {
+        const { registerAllObjects } = await import('../js/objects/registerAllObjects.js');
+        registerAllObjects();
+
+        eventBus.clear();
+        physics = new PhysicsEngine(800, 600);
+        checker = new GoalChecker();
+        checker.init({ physicsEngine: physics });
+    });
+
+    afterEach(() => {
+        physics.dispose();
+    });
+
+    /**
+     * An editor-scene bucket as _saveLevel sees it: placed via
+     * objectRegistry.create (no named id) and then serialized.
+     */
+    function saveLevelLikeEditorPanel() {
+        const fixedBucket = objectRegistry.create('bucket', 700, 480, { isFixed: true });
+        const fixedObjects = [fixedBucket.serialize()]; // EditorPanel splits fixed/placed
+
+        return {
+            id: `custom-${Date.now()}`,
+            name: 'Custom Level',
+            difficulty: 1,
+            goal: {
+                type: 'object_in_zone',
+                targetType: 'ball',
+                zoneId: DEFAULT_GOAL_ZONE_ID, // what EditorPanel hard-codes
+            },
+            fixedObjects: stampGoalZoneIds(fixedObjects), // the parity step under test
+            availableParts: { ball: 10 },
+            hints: [],
+        };
+    }
+
+    it('stamps save-shaped buckets with the goal zone id, never overwriting named ids or non-buckets', () => {
+        const bucketData = objectRegistry.create('bucket', 700, 480, { isFixed: true }).serialize();
+        expect('id' in bucketData).toBe(false); // editor-placed buckets carry no named id
+
+        const [stampedBucket] = stampGoalZoneIds([bucketData]);
+        expect(stampedBucket.id).toBe('bucket-goal');
+
+        // Named ids survive the stamp (e.g. a bucket loaded from an official level)
+        const namedData = { ...level01.fixedObjects[0], id: 'my-bucket' };
+        expect(stampGoalZoneIds([{ ...namedData }])[0].id).toBe('my-bucket');
+
+        // Non-bucket objects are left untouched
+        const ballData = objectRegistry.create('ball', 400, 300).serialize();
+        const [stampedBall] = stampGoalZoneIds([ballData]);
+        expect('id' in stampedBall).toBe(false);
+    });
+
+    it('a reloaded editor-saved level with the hard-coded zone id is winnable the same way', () => {
+        const reached = vi.fn();
+        const failed = vi.fn();
+        eventBus.on('goal:reached', reached);
+        eventBus.on('goal:failed', failed);
+
+        const level = saveLevelLikeEditorPanel();
+        eventBus.emit('level:loaded', level); // what _applyLoadedLevel does for custom levels
+
+        // Reload path (main.js _setupLevel / EditorPanel._applyLoadedLevel)
+        const bucket = objectRegistry.deserialize(level.fixedObjects[0]);
+        expect(bucket.customId).toBe(level.goal.zoneId); // checker convention matches the editor
+
+        eventBus.emit('bucket:caught', { bucket, object: objectRegistry.create('ball', 700, 450), totalCaught: 1 });
+        eventBus.emit('loop:frame', { dt: 16.67, elapsed: 16.67 });
+
+        expect(reached).toHaveBeenCalledWith({ levelId: level.id });
+        expect(failed).not.toHaveBeenCalled();
     });
 });
