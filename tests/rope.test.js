@@ -5,7 +5,7 @@
  * draw agrees with the physics.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Matter from 'matter-js';
 
 const { Composite } = Matter;
@@ -98,4 +98,55 @@ describe('Rope severing — physical detachment', () => {
 
         physics.dispose();
     });
+
+    it('should draw an intact rope attached to its anchor', () => {
+        const rope = new Rope(200, 100);
+
+        const ctx = makeRecordingCtx();
+        rope.draw(ctx);
+
+        // Attached curve starts at the anchor position
+        expect(ctx.moveTo.mock.calls[0]).toEqual([200, 100]);
+
+        rope.dispose();
+    });
+
+    it('should draw a severed rope detached from its anchor', () => {
+        const rope = new Rope(200, 100);
+        const anchor = rope.bodies[0];       // public body order: anchor first
+        const firstSegment = rope.bodies[1];
+
+        rope.sever();
+
+        const ctx = makeRecordingCtx();
+        rope.draw(ctx);
+
+        // Physics has no constraint to the anchor after severing, so the
+        // polyline must start on the first segment, never on the anchor
+        expect(ctx.moveTo.mock.calls[0]).toEqual([firstSegment.position.x, firstSegment.position.y]);
+        for (const call of ctx.moveTo.mock.calls) {
+            expect(call).not.toEqual([anchor.position.x, anchor.position.y]);
+        }
+        // Gray tone marks the severed rope
+        expect(ctx.strokeStyles).toContain('#aaa');
+    });
 });
+
+/** Minimal canvas 2D-context stub that records calls (no DOM/canvas in Node). */
+function makeRecordingCtx() {
+    const ctx = {};
+    const strokeStyleLog = [];
+    for (const fn of [
+        'save', 'restore', 'beginPath', 'moveTo', 'lineTo', 'quadraticCurveTo',
+        'arc', 'ellipse', 'closePath', 'fill', 'stroke', 'fillRect', 'strokeRect',
+    ]) {
+        ctx[fn] = vi.fn();
+    }
+    // draw() assigns strokeStyle several times per frame; keep the history
+    Object.defineProperty(ctx, 'strokeStyle', {
+        set(v) { strokeStyleLog.push(v); },
+        get() { return strokeStyleLog[strokeStyleLog.length - 1]; },
+    });
+    ctx.strokeStyles = strokeStyleLog;
+    return ctx;
+}

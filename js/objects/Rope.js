@@ -133,8 +133,13 @@ export default class Rope extends BaseObject {
     draw(ctx) {
         ctx.save();
 
-        // Draw the rope as a smooth curve through segment positions
-        const points = [this._anchor.position, ...this._segments.map(s => s.position)];
+        // Draw the rope as a smooth curve through segment positions.
+        // After severing, no constraint connects the rope to the anchor
+        // (they were removed from the physics world) — so the polyline is
+        // drawn through the free segments only; the anchor stays as a nail.
+        const points = this._severed
+            ? this._segments.map(s => s.position)
+            : [this._anchor.position, ...this._segments.map(s => s.position)];
 
         ctx.strokeStyle = this._severed ? '#aaa' : ROPE_COLOR;
         ctx.lineWidth = 3;
