@@ -28,8 +28,6 @@ const MIN_SIDE_REST = 14;        // px — a side's rope can't shorten past the 
 const MAX_COUPLE_SPEED = 0.9;    // px per 60fps step at full weight imbalance
 const IMBALANCE_EPS = 0.02;      // weight imbalance below this = balanced, no transfer
 const SUPPORT_DEPTH = 2;         // riders of riders (covers 2-ball stacks)
-const TELEPORT_EPS = 0.1;        // px per step — platform jump = snapshot restore/reset
-const WINCH_SLACK = 0.35;        // px — platform motion matching the last rest change is the winch, not a teleport
 
 export default class Pulley extends BaseObject {
     /**
@@ -95,6 +93,12 @@ export default class Pulley extends BaseObject {
         this._prevLeftPos = { ...this._leftPlatform.position };
         this._prevRightPos = { ...this._rightPlatform.position };
         this._lastRestDelta = 0;
+        /**
+         * One-shot rope re-sync flag: set by restoreState() when a snapshot
+         * restore invalidates this pulley's cached pose/rope state; consumed
+         * by the next onBeforeUpdate step.
+         */
+        this._pendingResync = false;
     }
 
     get type() { return 'pulley'; }
@@ -123,10 +127,12 @@ export default class Pulley extends BaseObject {
         const leftPos = this._leftPlatform.position;
         const rightPos = this._rightPlatform.position;
 
-        // A platform teleported between steps (snapshot restore / reset):
-        // re-derive the rope split from the restored geometry so play/reset
-        // cycles always start from the same rope state.
-        if (this._isTeleport(leftPos, rightPos)) {
+        // Snapshot restore or reset (restoreState() seam): re-derive the
+        // rope split from the current geometry exactly once, then resume the
+        // normal coupling. Explicitly latched — no pose-jump heuristic here,
+        // since hard rider impacts can legitimately jolt a platform mid-play.
+        if (this._pendingResync) {
+            this._pendingResync = false;
             this._syncRopeToGeometry(leftPos, rightPos);
             this._lastRestDelta = 0;
         } else {
@@ -160,19 +166,6 @@ export default class Pulley extends BaseObject {
 
         this._prevLeftPos = { x: leftPos.x, y: leftPos.y };
         this._prevRightPos = { x: rightPos.x, y: rightPos.y };
-    }
-
-    /** True when a platform jumped by more than the winch could have moved it. */
-    _isTeleport(leftPos, rightPos) {
-        if (!this._prevLeftPos || !this._prevRightPos) return false;
-        const dl = Math.hypot(leftPos.x - this._prevLeftPos.x, leftPos.y - this._prevLeftPos.y);
-        const dr = Math.hypot(rightPos.x - this._prevRightPos.x, rightPos.y - this._prevRightPos.y);
-        // During length exchange the platforms legitimately move by ~|rate|/frame
-        // (they chase their freshly shifted rest lengths) — only motion the winch
-        // can't explain is an external teleport (snapshot restore / reset).
-        const lTele = dl > TELEPORT_EPS && Math.abs(dl - this._lastRestDelta) > WINCH_SLACK;
-        const rTele = dr > TELEPORT_EPS && Math.abs(dr + this._lastRestDelta) > WINCH_SLACK;
-        return lTele || rTele;
     }
 
     /** Make the rope split consistent with where the platforms currently hang. */
@@ -351,6 +344,24 @@ export default class Pulley extends BaseObject {
         };
     }
 
+    /**
+     * Snapshot-restore seam (PhysicsEngine.restoreSnapshot() applies poses,
+     * then calls this per matching object for behavior state).
+     *
+     * The cached previous poses and the rope split are only valid for the
+     * pre-restore world — after a restore the platforms may sit anywhere
+     * with a stale split, so clear the pose cache and flag a one-shot
+     * re-derivation on the next step instead of relying on mid-play
+     * "teleport" detection (which misreads hard rider impacts as restores).
+     * @param {object} _data - per-object snapshot entry (poses applied by the engine)
+     */
+    restoreState(_data) {
+        this._prevLeftPos = null;
+        this._prevRightPos = null;
+        this._lastRestDelta = 0;
+        this._pendingResync = true;
+    }
+
     static deserialize(data) {
         return new Pulley(data.x, data.y, {
             angle: data.angle,
@@ -368,5 +379,6 @@ export default class Pulley extends BaseObject {
         this._rightConstraint = null;
         this._prevLeftPos = null;
         this._prevRightPos = null;
+        this._pendingResync = false;
     }
 }
