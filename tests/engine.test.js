@@ -121,6 +121,67 @@ describe('PhysicsEngine', () => {
         engine.dispose();
     });
 
+    it('never moves objects added after the snapshot and re-baselines for them', async () => {
+        const engine = new PhysicsEngine(800, 600);
+        const { default: Ball } = await import('../js/objects/Ball.js');
+        const { eventBus } = await import('../js/EventBus.js');
+
+        const a = new Ball(200, 150);
+        engine.addObject(a);
+        engine.takeSnapshot();
+
+        const mismatches = [];
+        const unsubscribe = eventBus.on('physics:snapshot-mismatch', (payload) => mismatches.push(payload));
+
+        // Add another object AFTER the snapshot was taken, then run and reset.
+        const b = new Ball(400, 150);
+        engine.addObject(b);
+        const snapshotA = { x: a.bodies[0].position.x, y: a.bodies[0].position.y };
+        for (let i = 0; i < 12; i++) engine.step(16.67);
+        const midPlayB = { x: b.bodies[0].position.x, y: b.bodies[0].position.y };
+
+        engine.restoreSnapshot();
+
+        // The snapshotted object still returns to its own pose.
+        expect({ x: a.bodies[0].position.x, y: a.bodies[0].position.y }).toEqual(snapshotA);
+        // The late addition is untouched (pose is left as-is, not zeroed/teleported).
+        expect({ x: b.bodies[0].position.x, y: b.bodies[0].position.y }).toEqual(midPlayB);
+        // Drift is reported in the other direction too.
+        expect(mismatches.length).toBe(1);
+        expect(mismatches[0].unmatchedLiveBodyIds).toEqual([b.bodies[0].id]);
+        expect(mismatches[0].unmatchedSnapshotBodyIds).toEqual([]);
+
+        unsubscribe();
+        engine.dispose();
+    });
+
+    it('restores cleanly without flagging a mismatch when the world matches the snapshot', async () => {
+        const engine = new PhysicsEngine(800, 600);
+        const { default: Ball } = await import('../js/objects/Ball.js');
+        const { eventBus } = await import('../js/EventBus.js');
+
+        const mismatches = [];
+        const unsubscribe = eventBus.on('physics:snapshot-mismatch', (payload) => mismatches.push(payload));
+
+        const a = new Ball(300, 100);
+        const b = new Ball(500, 100);
+        engine.addObject(a);
+        engine.addObject(b);
+        engine.takeSnapshot();
+        const snapshotA = { x: a.bodies[0].position.x, y: a.bodies[0].position.y };
+        const snapshotB = { x: b.bodies[0].position.x, y: b.bodies[0].position.y };
+        for (let i = 0; i < 12; i++) engine.step(16.67);
+
+        engine.restoreSnapshot();
+
+        expect({ x: a.bodies[0].position.x, y: a.bodies[0].position.y }).toEqual(snapshotA);
+        expect({ x: b.bodies[0].position.x, y: b.bodies[0].position.y }).toEqual(snapshotB);
+        expect(mismatches.length).toBe(0);
+        expect(engine.hasSnapshot()).toBe(true);
+
+        unsubscribe();
+        engine.dispose();
+    });
 
     it('should set time scale', () => {
         const engine = new PhysicsEngine(800, 600);
