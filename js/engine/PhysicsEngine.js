@@ -1,5 +1,5 @@
-﻿/**
- * PhysicsEngine ΓÇö Matter.js wrapper
+/**
+ * PhysicsEngine — Matter.js wrapper
  *
  * Manages the Matter.js world, object lifecycle, collision events,
  * snapshot/restore for reset, boundary walls, and hit-testing.
@@ -12,8 +12,8 @@ const { Engine, World, Bodies, Body, Composite, Events, Query, Sleeping } = Matt
 
 export class PhysicsEngine {
     /**
-     * @param {number} width   ΓÇö playfield width in px
-     * @param {number} height  ΓÇö playfield height in px
+     * @param {number} width   — playfield width in px
+     * @param {number} height  — playfield height in px
      * @param {object} [opts]
      * @param {number} [opts.gravityX=0]
      * @param {number} [opts.gravityY=1]
@@ -50,7 +50,7 @@ export class PhysicsEngine {
         this._setupCollisionEvents();
     }
 
-    // ΓöÇΓöÇ Object Lifecycle ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Object Lifecycle ──────────────────────────
 
     /**
      * Add a game object to the physics world.
@@ -106,11 +106,11 @@ export class PhysicsEngine {
         }
     }
 
-    // ΓöÇΓöÇ Simulation ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Simulation ────────────────────────────────
 
     /**
      * Advance the physics simulation by dt milliseconds.
-     * @param {number} dt ΓÇö delta time in ms
+     * @param {number} dt — delta time in ms
      */
     step(dt) {
         // Pre-update hooks on all objects
@@ -138,7 +138,7 @@ export class PhysicsEngine {
         this.engine.timing.timeScale = scale;
     }
 
-    // ΓöÇΓöÇ Snapshot / Restore ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Snapshot / Restore ────────────────────────
 
     /** Save the current state for later reset. */
     takeSnapshot() {
@@ -190,7 +190,7 @@ export class PhysicsEngine {
         return this._snapshot !== null;
     }
 
-    // ΓöÇΓöÇ Queries ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Queries ───────────────────────────────────
 
     /** @returns {Set<import('../objects/BaseObject.js').default>} */
     getObjects() {
@@ -220,7 +220,7 @@ export class PhysicsEngine {
         return this._bodyToObject.get(body.id) ?? null;
     }
 
-    // ΓöÇΓöÇ Boundaries ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Boundaries ────────────────────────────────
 
     /** @private */
     _addBoundaries() {
@@ -238,7 +238,7 @@ export class PhysicsEngine {
         Composite.add(this.world, walls);
     }
 
-    // ΓöÇΓöÇ Collision Events ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Collision Events ──────────────────────────
 
     /** @private */
     _setupCollisionEvents() {
@@ -256,7 +256,7 @@ export class PhysicsEngine {
         });
     }
 
-    // ΓöÇΓöÇ Cleanup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── Cleanup ───────────────────────────────────
 
     /** Tear down the engine completely. */
     dispose() {
