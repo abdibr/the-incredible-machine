@@ -152,6 +152,23 @@ describe('Rope severing — physical detachment', () => {
 
         physics.dispose();
     });
+    it('should not resurrect a severed rope\u2019s constraints when it is re-added to a physics world', () => {
+        const physics = new PhysicsEngine(800, 600);
+        const rope = new Rope(200, 100);
+        physics.addObject(rope);
+        physics.dispose();
+
+        const rope2 = new Rope(200, 100);
+        rope2.sever();
+        expect(rope2.constraints).toEqual([]);
+
+        const physics2 = new PhysicsEngine(800, 600);
+        physics2.addObject(rope2);
+        expect(Composite.allConstraints(physics2.world)).toEqual([]);
+
+        physics2.dispose();
+        rope2.dispose();
+    });
 });
 
 /** Minimal canvas 2D-context stub that records calls (no DOM/canvas in Node). */

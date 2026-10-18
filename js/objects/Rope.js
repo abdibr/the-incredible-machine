@@ -120,11 +120,15 @@ export default class Rope extends BaseObject {
         }
     }
 
-    /** Sever the rope (e.g., by candle flame). */
+    /** Sever the rope (e.g., by candle flame or scissors). */
     sever() {
         if (this._severed) return;
         this._severed = true;
+        // Synchronous emit: the physics engine consumes this and removes
+        // the constraints from the world. Then drop the dead references so
+        // re-adding the rope never resurrects them (isSevered/draw agree).
         eventBus.emit('rope:severed', { rope: this });
+        this._constraints = [];
     }
 
     get isSevered() {
