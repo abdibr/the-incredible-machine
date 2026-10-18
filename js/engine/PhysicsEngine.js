@@ -48,6 +48,9 @@ export class PhysicsEngine {
 
         // Forward collision events
         this._setupCollisionEvents();
+
+        // Consume severing so a severed rope is physically detached
+        this._setupSeveredEvents();
     }
 
     // ── Object Lifecycle ──────────────────────────
@@ -257,11 +260,35 @@ export class PhysicsEngine {
         });
     }
 
+    /** @private */
+    _setupSeveredEvents() {
+        this._onRopeSevered = ({ rope }) => this._detachRopeConstraints(rope);
+        eventBus.on('rope:severed', this._onRopeSevered);
+    }
+
+    /**
+     * Physically detach a severed rope: drop its Matter constraints from the
+     * world (mirroring the severed flag/visual), then wake its bodies so the
+     * freed piece falls in the next step.
+     * @param {import('../objects/Rope.js').default} rope
+     * @private
+     */
+    _detachRopeConstraints(rope) {
+        for (const constraint of rope.constraints) {
+            Composite.remove(this.world, constraint);
+        }
+        // A rope held by constraints can be asleep; release it so it falls
+        for (const body of rope.bodies) {
+            Sleeping.set(body, false);
+        }
+    }
+
     // ── Cleanup ───────────────────────────────────
 
     /** Tear down the engine completely. */
     dispose() {
         Events.off(this.engine);
+        eventBus.off('rope:severed', this._onRopeSevered);
         this.clear();
         World.clear(this.world);
         Engine.clear(this.engine);

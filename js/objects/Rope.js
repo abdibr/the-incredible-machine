@@ -114,16 +114,21 @@ export default class Rope extends BaseObject {
     }
 
     onCollision(other, pair) {
-        if (other.type === 'candle' && !this._severed) {
+        // Scissors and candle flame both sever the rope (cf. Balloon.pop)
+        if ((other.type === 'scissors' || other.type === 'candle') && !this._severed) {
             this.sever();
         }
     }
 
-    /** Sever the rope (e.g., by candle flame). */
+    /** Sever the rope (e.g., by candle flame or scissors). */
     sever() {
         if (this._severed) return;
         this._severed = true;
+        // Synchronous emit: the physics engine consumes this and removes
+        // the constraints from the world. Then drop the dead references so
+        // re-adding the rope never resurrects them (isSevered/draw agree).
         eventBus.emit('rope:severed', { rope: this });
+        this._constraints = [];
     }
 
     get isSevered() {
@@ -133,8 +138,13 @@ export default class Rope extends BaseObject {
     draw(ctx) {
         ctx.save();
 
-        // Draw the rope as a smooth curve through segment positions
-        const points = [this._anchor.position, ...this._segments.map(s => s.position)];
+        // Draw the rope as a smooth curve through segment positions.
+        // After severing, no constraint connects the rope to the anchor
+        // (they were removed from the physics world) — so the polyline is
+        // drawn through the free segments only; the anchor stays as a nail.
+        const points = this._severed
+            ? this._segments.map(s => s.position)
+            : [this._anchor.position, ...this._segments.map(s => s.position)];
 
         ctx.strokeStyle = this._severed ? '#aaa' : ROPE_COLOR;
         ctx.lineWidth = 3;
