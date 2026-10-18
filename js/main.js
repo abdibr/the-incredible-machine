@@ -97,13 +97,11 @@ function init() {
     }
 
     // Size canvas to fill the game area
+    // (`canvas:resized` was pruned — no listener; the renderer reads canvas
+    // dimensions per frame, so resize needs no fan-out.)
     function resizeCanvas() {
         canvas.width = gameArea.clientWidth;
         canvas.height = gameArea.clientHeight;
-        eventBus.emit('canvas:resized', {
-            width: canvas.width,
-            height: canvas.height,
-        });
     }
 
     window.addEventListener('resize', resizeCanvas);

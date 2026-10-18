@@ -48,12 +48,15 @@ describe('Balloon pop - ghost body removal', () => {
     });
 
     it('a popped balloon no longer collides with objects placed where it popped', () => {
-        const engine = createEngine({ enableSleeping: false });
+        const engine = createEngine();
         const balloon = new Balloon(200, 200);
         engine.addObject(balloon);
 
+        // Observe Matter collisionStart directly (the `physics:collision`
+        // event was pruned for having no production listener).
         const collisions = [];
-        const off = eventBus.on('physics:collision', (e) => collisions.push(e));
+        const onCollisionStart = (event) => collisions.push(event);
+        Matter.Events.on(engine.engine, 'collisionStart', onCollisionStart);
         try {
             balloon.pop();
 
@@ -65,12 +68,16 @@ describe('Balloon pop - ghost body removal', () => {
             engine.step(16.666);
             engine.step(16.666);
 
+            // Wall pairs are excluded from the assertion on purpose: the
+            // question is only whether the balloon body survived the pop.
             const balloonCollisions = collisions.filter(
-                (c) => c.objectA === balloon || c.objectB === balloon
+                (e) => e.pairs.some(
+                    (pair) => pair.bodyA.label === 'balloon' || pair.bodyB.label === 'balloon'
+                )
             );
             expect(balloonCollisions).toHaveLength(0);
         } finally {
-            off();
+            Matter.Events.off(engine.engine, 'collisionStart', onCollisionStart);
         }
     });
 

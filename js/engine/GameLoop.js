@@ -117,8 +117,8 @@ export class GameLoop {
 
         // One final render to show restored state
         this._renderCallback(this.physics.getObjects(), this.physics);
-
-        eventBus.emit('loop:reset');
+        // (`loop:reset` was pruned — no listener; reset side-effects happen
+        // inline above: snapshot restore + final render.)
     }
 
     /** Toggle between 1× and 2× speed. */

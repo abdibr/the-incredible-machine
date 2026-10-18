@@ -77,8 +77,6 @@ export class PhysicsEngine {
                 Composite.add(this.world, constraint);
             }
         }
-
-        eventBus.emit('physics:object-added', gameObject);
     }
 
     /**
@@ -102,8 +100,6 @@ export class PhysicsEngine {
 
         this._objects.delete(gameObject);
         if (gameObject.dispose) gameObject.dispose();
-
-        eventBus.emit('physics:object-removed', gameObject);
     }
 
     /** Remove all game objects (keeps boundaries). */
@@ -349,7 +345,8 @@ export class PhysicsEngine {
                 if (objA && objB) {
                     if (objA.onCollision) objA.onCollision(objB, pair);
                     if (objB.onCollision) objB.onCollision(objA, pair);
-                    eventBus.emit('physics:collision', { objectA: objA, objectB: objB, pair });
+                    // (`physics:collision` was pruned — no production
+                    // listener; objects receive contacts via onCollision.)
                 }
             }
         });

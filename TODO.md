@@ -51,16 +51,16 @@ Legend: [ ] = todo, [~] = in progress, [x] = done.
 - Acceptance: clicking fast-forward during play visibly cycles 0.5x / 1x / 2x motion. ✅ (`ticket/04-speed`)
 
 ### 2.2 Dead events - wire or prune (document decision per event)
-- [ ] `loop:frame` (GameLoop) - candidate: goal checker per-step polling (wire) else prune.
-- [ ] `physics:collision` (PhysicsEngine) - candidate: debug logging only -> prune.
-- [ ] `physics:object-added` / `physics:object-removed` (`js/engine/PhysicsEngine.js:75,99`) - candidate: EditorPanel/object-count display, else prune.
-- [ ] `canvas:resized` (`js/main.js:88`) - candidates: Renderer/GhostLayer re-snap; prune if unused.
-- [ ] `loop:reset` (`js/engine/GameLoop.js:121`) - prune, or hook animation-state resets.
-- [ ] `bucket:caught` - wired in 1.1.
-- [ ] `balloon:popped` - used by 1.4, else prune after fix.
-- [ ] `rope:severed` - used by 1.3, else prune after fix.
-- [ ] `controls:speed` - wired in 2.1.
-- Acceptance: every emitted event has at least one listener, or its emit is removed.
+- [x] `loop:frame` (GameLoop) - WIRED: GoalChecker per-frame fail detection (issue #11).
+- [x] `physics:collision` (PhysicsEngine) - PRUNED: its only consumer was the balloon ghost test, which now observes Matter `collisionStart` directly.
+- [x] `physics:object-added` / `physics:object-removed` (`js/engine/PhysicsEngine.js:75,99`) - PRUNED: no listener anywhere.
+- [x] `canvas:resized` (`js/main.js:88`) - PRUNED: renderer reads canvas dimensions per frame.
+- [x] `loop:reset` (`js/engine/GameLoop.js:121`) - PRUNED: no listener; reset side-effects happen inline.
+- [x] `bucket:caught` - WIRED in 1.1 (GoalChecker).
+- [x] `balloon:popped` - WIRED in 1.4 (PhysicsEngine removes the body).
+- [x] `rope:severed` - WIRED in 1.3 (PhysicsEngine detaches constraints).
+- [x] `controls:speed` - WIRED in 2.1 (main.js -> GameLoop.cycleSpeed; GameLoop also emits `loop:speed`).
+- Acceptance: every emitted event has at least one listener, or its emit is removed. ✅ (`ticket/12-dead-events` sweep)
 
 ---
 
