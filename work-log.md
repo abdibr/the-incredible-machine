@@ -1,4 +1,13 @@
 # Work Log — The Incredible Machine (Web Clone)
+## 2026-10-21 — Discovery seam phase 2: object-level queries, overlap zones, impulse field (issue #16)
+
+- **Object-level seam queries**: `queryObjectsByType(type)` / `queryObjectsByBodyLabel(label)` return registered game objects (owner registry) filtered by type, or by owning any body with that label — replaces the hand-rolled world scan Scissors did for its blade-snap target discovery. Pure reads, same discovery policy as the body-level probes they wrap.
+- **Overlap zones**: `queryZoneOverlap(referenceBody, zone)` — `queryZone` semantics with bounds-based matching (a body whose centre is outside the rect but whose bounds reach in still matches); ordering, policy and return shape identical to `queryZone`.
+- **Impulse-field primitive**: `applyImpulseField(sourceBody, { zone, range, force, direction?, match? })` — one engine-side law for directional per-frame fields: candidates in a source-local rect zone (position-inside, or `match: 'overlap'` for bounds), `force = direction · field.force · (1 − dist/range) · body.mass` with `direction` in the source frame (default local "up"; 90° maps local −y to +x), wake-on-act folded into the same call, dist-0 and beyond-range candidates excluded, returns the acted bodies.
+- **Fan is now a thin wrapper**: `onBeforeUpdate` supplies the zone/range/force dials and blade animation to `applyImpulseField`; all fan regression tests pass unchanged (discovery had already been the seam's `queryZone` since the original migration).
+- **Tests**: `tests/engine-query.test.js` → 34 (5 object-level incl. pure-read + removed-object rules; 4 zone-overlap precision vs position-inside on unrotated + 90° zones; 6 impulse-field: law values at 0.75/0.25 falloff, 90° rotation, statics/own-body skips, wake-on-act with outsiders asleep, zone-corner/degenerate-distance bounds, overlap-match pillar case). Full suite: 17 files / **221 tests, all green**.
+- **Docs**: ADR 0002 gained an amendment section (decisions 1–4); glossary "Discovery & wake" extended with object-level query, overlap zone, impulse field.
+
 ## 2026-10-18 — Lifecycle contract & restore parity (candidate C3, ADR 0003)
 
 - **Dead hook removed**: `PhysicsEngine.step()` no longer dispatches `onAfterUpdate` (zero implementers anywhere — contract noise); the step is pre-hooks + `Engine.update` only.

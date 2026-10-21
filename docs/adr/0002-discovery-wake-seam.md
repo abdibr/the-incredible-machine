@@ -38,3 +38,18 @@ The scanning code also reached past the engine into Matter internals (`Matter.Qu
 
 - ADR 0001 (interaction matrix; discovery for collision reactions stays in `_setupCollisionEvents`, this ADR covers `onBeforeUpdate` scanning).
 - `tests/engine-query.test.js` — the policy's executable contract.
+
+## Amendment (2026-10-21) — object-level discovery, overlap zones, impulse field
+
+Extends the seam for the field-effect/scannability families (issue #16) without changing any decision above: the original four methods and the shared policy are untouched. The extensions wrap the same body-level machinery and owner registry.
+
+1. **Object-level queries** — `queryObjectsByType(type)` and `queryObjectsByBodyLabel(label)` return registered game objects (the `addObject` registry) filtered by their `type` string, or by owning any body with that `label`, in discovery order. They scan the registry directly — a **pure read** (never wakes) — and only registered objects are visible to object-level discovery; a caller may exclude its own object instance via the opt-in `excludeOwner`, so an object can scan the world for others without matching itself.
+2. **Overlap zones** — `queryZoneOverlap(referenceBody, zone)` is `queryZone` with bounds-based matching: a body matches when its **bounds** intersect the rect's world-space shape, not only when its centre is inside — large bodies (tall pillars, long ramps) whose centre sits outside a narrow zone are still discoverable. Ordering, policy and return shape are identical to `queryZone`; `queryZone` remains the default where centre-inside is the contract (pinned by tests).
+3. **Impulse-field primitive** — `applyImpulseField(sourceBody, { zone, range, force, direction?, match? })` is the shared force delivery behind directional per-frame fields. It discovers candidates in `zone` (a rect in the source body's local frame — queryZone convention, `{cx: 0, cy: -height/2}` for a cone out of the face) via position-inside or, with `match: 'overlap'`, the bounds test, then applies:
+
+       force = direction · field.force · (1 − dist/range) · body.mass
+
+   with `direction` expressed in the source's local frame (default local "up", rotating with the body) and `dist` from the source centre. Bodies exactly on the source centre (dist 0) and inside the zone but beyond `range` receive nothing. Wake-on-act is folded into the same call — a field wakes every body it acts on, right before applying the force. Returns the acted bodies in discovery order.
+4. **Fan migrated to the primitive** — `Fan.onBeforeUpdate` is now a thin wrapper that supplies its dial settings (`zone` out of the face, `range`, `force`) plus the blade animation; the falloff-force law lives entirely in the engine. Fan regression tests pass unchanged (discovery had already been the seam's `queryZone` since the original migration). Future field-effect objects (airflow, explosions) reuse the same tested law.
+
+Test surface: `tests/engine-query.test.js` grew to 34 tests — 5 object-level (registry return shape, pure-read, removed-object rules), 4 zone-overlap (bounds matching vs centre-inside on unrotated and rotated zones), 6 impulse-field (law values at 0.75/0.25 falloff, 90° rotation, statics/own-body skips, wake-on-act with outsiders asleep, zone-corner/degenerate-distance bounds, overlap-match pillar case). Full suite at amendment time: 17 files / 221 tests, all green.

@@ -37,6 +37,9 @@ Single-context domain vocabulary. Architecture decisions live in `docs/adr/`; th
 - **Wake-on-act** — an object wakes (`wakeBodies()`) exactly the bodies it acts on, right before applying a force/constraint: asleep bodies skip force integration in Matter, so acting without waking silently does nothing.
 - **Discovery never wakes** — the query methods are pure reads; sleeping candidates come back asleep. Sleep state has a single writer: `wakeBodies()`.
 - **Movable-non-wall-non-own policy** — default discovery matches dynamic bodies only; boundary walls (`wall-*` labels) and statics are opt-ins per call (`includeWalls` / `includeStatic`), and a caller never discovers its own bodies.
+- **Object-level query** — `queryObjectsByType(type)` / `queryObjectsByBodyLabel(label)` (ADR 0002 amendment): discovery returning registered game objects instead of raw bodies, filtered by `type` or by owning a labeled body; a pure read over the registry, with opt-in self-exclusion (`excludeOwner`).
+- **Overlap zone** — `queryZoneOverlap(referenceBody, zone)` (ADR 0002 amendment): zone matching by bounds intersection instead of centre-inside, so large bodies whose centre is outside a narrow zone are still discovered; ordering/policy/shape identical to `queryZone`.
+- **Impulse field** — `applyImpulseField(sourceBody, {zone, range, force, direction?, match?})` (ADR 0002 amendment): the engine's shared directional-force law — source-local rect zone (position-inside or bounds match), linear distance falloff from the source centre, mass-scaled force along a source-local direction (default "up"), wake-on-act in the same call. Fan wind is the first consumer.
 
 ## Lifecycle & restore (ADR 0003)
 
