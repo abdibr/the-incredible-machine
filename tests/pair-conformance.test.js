@@ -244,7 +244,7 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         expect(bucket.caughtCount).toBe(1);
     });
 
-    it('gear-gear: two same-sign meshed gears flip both drive signs once and stay flipped', () => {
+    it('gear-gear: touching gears counter-rotate — the receiver turns opposite its driver and stays steady', () => {
         const engine = makeEngine();
         const a = new Gear(400, 300);
         const b = new Gear(450, 300);
@@ -265,14 +265,14 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         // their per-step mesh scan (Gear._updateMeshContacts) and dispatch
         // the row through the engine's single dispatch seam themselves.
         stepUntil(engine, () => fired >= 1, 30, 'live mesh dispatch');
-        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03);
         expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03);
 
         for (let i = 0; i < 30; i += 1) engine.step(DT);
         // One dispatch per contact episode: the pin keeps the touching pair
-        // from re-firing every step, and the flipped speeds are steady.
+        // from re-firing every step, and the counter-rotating speeds are steady.
         expect(fired).toBe(1);
-        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03);
         expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03);
     });
 
@@ -291,14 +291,15 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         });
 
         stepUntil(engine, () => fired >= 1, 30, 'live mesh dispatch');
-        // Actor keeps its magnitude; the counterpart adopts it scaled by the
-        // crossed ratio — equal rim speeds: 0.03 * 28 = 0.015 * 56 px/step.
-        expect(small.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+        // Actor keeps its own spin; the counterpart adopts it scaled by the
+        // crossed ratio, turning opposite it — equal rim speeds:
+        // 0.03 * 28 = 0.015 * 56 px/step.
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(0.03);
         expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015);
 
         for (let i = 0; i < 30; i += 1) engine.step(DT);
         expect(fired).toBe(1);
-        expect(small.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(0.03);
         expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015);
     });
 

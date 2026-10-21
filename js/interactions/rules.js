@@ -109,7 +109,9 @@ export const DEFAULT_INTERACTION_ROWS = [
         test: 'gear ✕ gear meshes mutually through the public mesh seam',
         // BUG-FIX: Gear.onCollision reached through to `other._angularSpeed`.
         // meshWith()/applyGearDrive() is the public seam; firing both
-        // directions here reproduces the old double-dispatch outcome exactly.
+        // directions converges: the actor keeps its spin, the receiver ends
+        // up opposite it at equal rim speed — identical either way the row
+        // is claimed, and stable across re-touches.
         // Feeder: both gears are static bodies, so Matter never pairs
         // static × static — in live play each gear's per-step mesh discovery
         // (Gear._updateMeshContacts) dispatches this row through the same

@@ -215,24 +215,26 @@ describe('Row gear-gear', () => {
         const fired = matrix.resolve(a, b, { bodyA: a.bodies[0], bodyB: b.bodies[0] });
         expect(fired).toContain('gear-gear');
 
-        // Same outcome as the old mutual double-dispatch: both gears
-        // counter-rotate at their own speed magnitude.
-        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+        // True counter-rotation: the actor keeps its spin; the receiver
+        // turns opposite the actor at equal rim speed.
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
         expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
 
-        // Asymmetric speeds: d (−0.02) is driven to +0.03 by c, then drives
-        // c to −0.03 — exactly the pre-matrix call order.
+        // Asymmetric speeds: the drive anchors to the driver — d is driven
+        // to −0.03 (opposite c at c's magnitude, its own −0.02 irrelevant);
+        // the second leg re-drives c and lands exactly on its own spin, so
+        // the mutual dispatch converges instead of compounding.
         const c = new Gear(450, 300, { angularSpeed: 0.03 });
         const d = new Gear(500, 300, { angularSpeed: -0.02 });
         matrix.resolve(c, d, { bodyA: c.bodies[0], bodyB: d.bodies[0] });
-        expect(c.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
-        expect(d.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(c.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(d.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
     });
 
     it('the mesh seam is public state, not a reach-through', () => {
         const g = new Gear(400, 300, { angularSpeed: 0.05 });
-        g.applyGearDrive(-0.02); // receiving a drive reverses sign, adopts magnitude
-        expect(g.serialize().options.angularSpeed).toBeCloseTo(-0.02, 10);
+        g.applyGearDrive(-0.02); // receiving a drive: opposite the driver, at its magnitude
+        expect(g.serialize().options.angularSpeed).toBeCloseTo(0.02, 10);
     });
 
     it('unequal radii exchange drive by the radius ratio (equal rim speeds)', () => {
@@ -242,10 +244,11 @@ describe('Row gear-gear', () => {
         expect(fired).toContain('gear-gear');
 
         // Both drive directions fire with the crossed ratio: the large gear
-        // adopts 0.03 * (28 / 56) = 0.015; the small gear is then re-driven
-        // by the large gear's new speed at ratio 56 / 28 — its own magnitude
-        // preserved. Equal rim speeds: 0.03 * 28 = 0.015 * 56 px/step.
-        expect(small.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+        // adopts 0.03 * (28 / 56) = 0.015 opposite the small gear; the second
+        // leg re-drives the small gear but lands exactly on its own spin —
+        // the mutual dispatch converges. Equal rim speeds:
+        // 0.03 * 28 = 0.015 * 56 px/step.
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
         expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015, 10);
     });
 });

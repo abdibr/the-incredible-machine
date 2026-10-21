@@ -122,12 +122,13 @@ describe('Gear live mesh discovery', () => {
 
         engine.step(STEP_MS);
         expect(fired).toBe(1); // discovered and dispatched on the first step
-        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+        // True counter-rotation: equal magnitudes, opposite signs.
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
         expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
 
         for (let i = 0; i < 29; i++) engine.step(STEP_MS);
         expect(fired).toBe(1); // one dispatch per contact episode, not per step
-        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
         expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
 
         // Separation ends the episode; a re-touch may fire the row again.
@@ -148,9 +149,9 @@ describe('Gear live mesh discovery', () => {
         engine.addObject(large);
 
         engine.step(STEP_MS);
-        // Actor (small) keeps its magnitude; the large gear adopts
-        // 0.03 * (28 / 56) = 0.015. Equal rim speeds: 0.03 * 28 = 0.015 * 56.
-        expect(small.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+        // Actor (small) keeps its own spin; the large gear counter-rotates
+        // at 0.03 * (28 / 56) = 0.015. Equal rim speeds: 0.03 * 28 = 0.015 * 56.
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
         expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015, 10);
 
         engine.dispose();
@@ -167,8 +168,8 @@ describe('Gear live mesh discovery', () => {
         engine.addObject(b);
 
         engine.step(STEP_MS);
-        // Mutual dispatch, same outcome as a rim-overlapping pair.
-        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+        // Same counter-rotating pair as a rim-overlapping placement.
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
         expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
 
         engine.dispose();
@@ -180,6 +181,41 @@ describe('Gear live mesh discovery', () => {
         // Tip circles touch only at centre gap 33 + 33 = 66; gap 68 leaves a
         // 2px air gap between tooth tips, so nothing must fire.
         const b = new Gear(188, 200);
+        engine.addObject(a);
+        engine.addObject(b);
+
+        engine.step(STEP_MS);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+
+        engine.dispose();
+    });
+
+    it('tooth tips exactly touching fire the mesh — kissing teeth couple', () => {
+        const engine = new PhysicsEngine(400, 400);
+        const a = new Gear(120, 200);          // tooth tip reach 28 + 5 = 33
+        // Centre gap 66 = tip reach + tip reach: the tooth tip circles touch
+        // exactly. Touching teeth are meshed teeth — the pair must fire here
+        // (was broken: the trigger sat 2px deeper, silently ignoring every
+        // just-touching placement).
+        const b = new Gear(186, 200);
+        engine.addObject(a);
+        engine.addObject(b);
+
+        engine.step(STEP_MS);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+
+        engine.dispose();
+    });
+
+    it('a hairline air gap between the tooth tips keeps the pair silent', () => {
+        const engine = new PhysicsEngine(400, 400);
+        const a = new Gear(120, 200);          // tooth tip reach 33
+        // Centre gap 67 = touch distance 66 + 1: a visible air gap between
+        // the tip circles — that is separation, not contact. Pins the upper
+        // boundary so no extra slop can creep past the kiss point.
+        const b = new Gear(187, 200);
         engine.addObject(a);
         engine.addObject(b);
 

@@ -20,11 +20,6 @@ const GEAR_TOOTH_TIP = 5;
 const GEAR_COLOR = '#a0a0b0';
 const TOOTH_COLOR = '#8888a0';
 const HUB_COLOR = '#606070';
-// Touch slop (px) for gear ✕ gear mesh discovery: two gears count as meshed
-// when their teeth touch. Tooth tips reach GEAR_TOOTH_TIP beyond the rim
-// circle, so the trigger distance is (rA + tip) + (rB + tip) - eps, keeping
-// the same 2px "touching" tolerance as a bare contact.
-const GEAR_MESH_TOUCH_EPS = 2;
 
 export default class Gear extends BaseObject {
     constructor(x, y, options = {}) {
@@ -183,9 +178,12 @@ export default class Gear extends BaseObject {
     /**
      * Is this gear's teeth touching `otherBody` (another gear's static
      * circle)? Judged on the teeth, not the bare rim: tooth tips reach
-     * GEAR_TOOTH_TIP beyond the physics circle (mirrors draw()), so centre
-     * distance within (rA + tip) + (rB + tip) - GEAR_MESH_TOUCH_EPS counts
-     * as touching — tooth bands kissing or slightly interpenetrating.
+     * GEAR_TOOTH_TIP beyond the physics circle (mirrors draw()), so the two
+     * tip circles first meet exactly at centre distance (rA + tip) + (rB +
+     * tip). That kiss is contact — it counts as touching, as does any
+     * deeper interlock; a centre distance above it leaves a visible air
+     * gap between the tips and keeps the pair apart. Boundary gaps 66
+     * (fires) / 67 (silent) are pinned in tests/gear.test.js.
      * @param {Matter.Body} otherBody - the other gear's physics body
      * @returns {boolean}
      * @private
@@ -194,7 +192,7 @@ export default class Gear extends BaseObject {
         const dx = otherBody.position.x - this._body.position.x;
         const dy = otherBody.position.y - this._body.position.y;
         const otherRadius = otherBody.circleRadius || 0;
-        const reach = GEAR_TOOTH_TIP * 2 - GEAR_MESH_TOUCH_EPS;
+        const reach = GEAR_TOOTH_TIP * 2;
         return Math.hypot(dx, dy) <= this._radius + otherRadius + reach;
     }
 
@@ -203,14 +201,11 @@ export default class Gear extends BaseObject {
      * speed, scaled by the crossed radius ratio (equal rim speeds across
      * the mesh: |omega_a| * r_a = |omega_b| * r_b). The gear ✕ gear row
      * fires meshWith() in both directions for a touching pair
-     * (js/interactions/rules.js), reproducing the old mutual
-     * double-dispatch outcome without reaching into the other gear's
-     * private state. Equal radii give ratio 1 — byte-identical to the
-     * original behavior.
-     *
-     * Mutual-dispatch semantics: the actor side of the row keeps its speed
-     * magnitude; the counterpart adopts it scaled by the ratio, so the
-     * outcome is order-deterministic for a given dispatch orientation.
+     * (js/interactions/rules.js); because applyGearDrive anchors the sign
+     * to the driving gear, the two legs converge — this gear's second-leg
+     * re-drive lands exactly on its own current spin, so the touching pair
+     * ends counter-rotating and the outcome is identical whichever gear
+     * claims the contact episode (and stable across re-touches).
      * @param {Gear} other - the adjacent gear
      */
     meshWith(other) {
@@ -218,16 +213,20 @@ export default class Gear extends BaseObject {
     }
 
     /**
-     * Receive a meshing drive from the other gear: reverse direction and
-     * adopt the driving gear's speed magnitude scaled by the crossed
-     * radius ratio (ratio = r_driver / r_receiver ⇒ equal rim speeds, the
-     * r_small / r_large exchange the original game documents). The receiving
-     * gear's sign flips; the driving gear is untouched.
+     * Receive a meshing drive from the other gear: adopt the driving gear's
+     * speed magnitude scaled by the crossed radius ratio (ratio = r_driver /
+     * r_receiver ⇒ equal rim speeds, the r_small / r_large exchange the
+     * original game documents), turning OPPOSITE the driver's current
+     * direction (interactions.csv I010: "adjacent meshed gear rotates in
+     * opposite direction"). The sign anchors to the driving gear, not to
+     * this gear's prior spin, so meshing a pair (or a train of meshed
+     * gears) converges to the consistent alternating state instead of
+     * accumulating flips per episode.
      * @param {number} speed - the driving gear's angular speed (rad/step)
      * @param {number} [ratio=1] - radius ratio r_driver / r_receiver
      */
     applyGearDrive(speed, ratio = 1) {
-        this._angularSpeed = -Math.sign(this._angularSpeed) * Math.abs(speed) * ratio;
+        this._angularSpeed = -Math.sign(speed) * Math.abs(speed) * ratio;
     }
 
     /**
