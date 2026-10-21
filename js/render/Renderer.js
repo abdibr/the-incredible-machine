@@ -9,6 +9,7 @@
 import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
+import { ROPE_SNAP_RADIUS } from '../objects/Rope.js';
 
 class Renderer {
     constructor() {
@@ -158,6 +159,16 @@ class Renderer {
             this._ghostObj.setPosition(gpos.x, gpos.y);
             this._ghostObj.draw(ctx);
             ctx.restore();
+        }
+
+        // 5.5. Rope snap hints (issue 04): while a rope hangs on the cursor,
+        // every board attachment point shows a marker; points this ghost's
+        // endpoints would tie (same clamped layout a drop will lay, within
+        // ROPE_SNAP_RADIUS) glow bright with a tie-line to that endpoint.
+        if (this._ghostObj?.type === 'rope'
+            && this.ghostState
+            && (this._mode === 'EDITING' || this._mode === 'SANDBOX')) {
+            this._drawRopeSnapHints(ctx, objs, this._ghostObj);
         }
     }
 
@@ -357,12 +368,73 @@ class Renderer {
                 const world = ref.target.getAttachmentWorldPoint?.(ref.pointId);
                 if (!world) continue;
                 ctx.beginPath();
-                ctx.arc(world.x, world.y, 6, 0, Math.PI * 2);
+                ctx.arc(world.x, world.y, 7, 0, Math.PI * 2);
                 ctx.fillStyle = 'rgba(184, 134, 11, 0.35)';
                 ctx.fill();
-                ctx.strokeStyle = '#b8860b';
+                ctx.strokeStyle = '#8a6508';
                 ctx.lineWidth = 2;
                 ctx.stroke();
+                // Solid core — the ring reads as a knot, not a decoration
+                ctx.beginPath();
+                ctx.arc(world.x, world.y, 2, 0, Math.PI * 2);
+                ctx.fillStyle = '#8a6508';
+                ctx.fill();
+            }
+        }
+        ctx.restore();
+    }
+
+    /**
+     * Rope-placement hints (issue 04): while a rope ghost hangs on the
+     * cursor, mark every board attachment point. Points within
+     * ROPE_SNAP_RADIUS of one of the ghost's two endpoints — the same
+     * clamped layout a drop will lay, because the ghost received the
+     * placement clamp — get a bright filled ring and a tie-line from that
+     * endpoint; the rest stay faint dashed. The drop will then knot exactly
+     * what glows (see DragDropManager._snapRopeEndpoints).
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {BaseObject[]} objs
+     * @param {import('../objects/Rope.js').default} ghost — rope object on the cursor
+     * @private
+     */
+    _drawRopeSnapHints(ctx, objs, ghost) {
+        const bodies = ghost.bodies;
+        if (!bodies.length) return;
+        const endpoints = [bodies[0].position, bodies[bodies.length - 1].position];
+
+        ctx.save();
+        for (const target of objs) {
+            if (target === ghost) continue;
+            for (const point of target.attachmentPoints ?? []) {
+                const world = target.getAttachmentWorldPoint(point.id);
+                if (!world) continue;
+
+                let tiesThrough = null;
+                for (const end of endpoints) {
+                    if (Math.hypot(world.x - end.x, world.y - end.y) <= ROPE_SNAP_RADIUS) {
+                        tiesThrough = end;
+                        break;
+                    }
+                }
+
+                ctx.beginPath();
+                ctx.arc(world.x, world.y, tiesThrough ? 7 : 4, 0, Math.PI * 2);
+                if (tiesThrough) {
+                    ctx.fillStyle = 'rgba(64, 192, 64, 0.35)';
+                    ctx.fill();
+                }
+                ctx.strokeStyle = tiesThrough ? '#2f9e2f' : 'rgba(122, 106, 38, 0.8)';
+                ctx.setLineDash(tiesThrough ? [] : [3, 3]);
+                ctx.lineWidth = tiesThrough ? 2 : 1.5;
+                ctx.stroke();
+                ctx.setLineDash([]);
+                if (tiesThrough) {
+                    ctx.beginPath();
+                    ctx.moveTo(tiesThrough.x, tiesThrough.y);
+                    ctx.lineTo(world.x, world.y);
+                    ctx.strokeStyle = '#2f9e2f';
+                    ctx.stroke();
+                }
             }
         }
         ctx.restore();

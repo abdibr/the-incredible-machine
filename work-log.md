@@ -159,3 +159,13 @@ User-report wave (same day — scissors rework; logged after the fact):
   - ADR 0001 decision 6 extended to record the load-bearing consequence of the decision: wall contacts are invisible to the matrix **by construction**, so the two deliberate wall consumers live outside it — Mouse's ground/wall static probes and `GoalChecker._checkOffWorld` (below-canvas target, e.g. tunneled past a wall → `goal:failed`), the two compensations the C4 card cites. GLOSSARY "Boundary walls" entry updated to match.
 - Behavior unchanged — tests/docs only. Suite **14 files / 157 tests, all green** (`cmd /c npm test`). The adapter alternative (registering a lightweight `Boundary` object so wall pairs become dispatchable) stays rejected per ADR 0001; revisiting it means reopening that ADR.
 
+## 2026-10-19 — Rope tying made visible (issue 04 placement UX)
+
+The placement-time rope tying shipped in `833fe4c` (ADR 0005 decision 7) was real but invisible: the 24 px snap was silent, no drag-time markers existed, and the post-drop ring was a hair-thin 5 px circle — a player had no way to see tying happen or aim for it.
+
+- **Drag-time snap hints** (`Renderer._drawRopeSnapHints`, driven by a live drag-state window the renderer reads each frame): while a tool-ghost rope hangs on the cursor, every board attachment point renders — a faint dashed marker when beyond reach, and a bright marker with a tie-line when a clamped drop of the current mouse position would tie (ghost endpoint within radius of the point). Hints use the same body positions the placement snap matches on, so green always means "yes".
+- **One constant, two consumers:** `ROPE_SNAP_RADIUS` moved to a `Rope.js` export; `DragDropManager` imports it instead of carrying its own copy (no import cycle — hints render straight off DragDropManager's drag state).
+- **Knot ring strengthened** (`_drawRopeKnots`): r 5→7, darker stroke, solid core — the tie is a visible structure, not a hairline.
+- **Toolbox copy:** rope/balloon/bucket descriptions now explain tying ("drop an end on the knot / the rim / ties to ropes").
+- New `tests/rope-snap-hints.test.js` (9 tests): the drop-tie seam in DragDropManager (tie on a 22 px drop, out-of-range 40 px stays free, nearest-wins, re-lay after anchor ties) + hint rendering (ghost-rope gating, bright-within/faint-beyond, knot ring, hint suppression in play modes) + the strengthened knot ring. Full suite: **22 files / 282 tests, all green** (`cmd /c npm test`). Verified in-browser via Playwright (Sandbox drag flow: faint marker far, green tie ring within radius, gold knot ring after the drop; no console errors).
+

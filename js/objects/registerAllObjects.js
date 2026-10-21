@@ -109,13 +109,13 @@ export function registerAllObjects() {
     objectRegistry.register('balloon', Balloon, {
         displayName: 'Balloon',
         category: 'triggers',
-        description: 'Floats upward — pop with scissors or flame.',
+        description: 'Floats upward — its knot ties a rope end; pop with scissors or flame.',
     });
 
     objectRegistry.register('bucket', Bucket, {
         displayName: 'Bucket',
         category: 'triggers',
-        description: 'Goal container — catch objects inside.',
+        description: 'Goal container — its rim ties a rope end; catch objects inside.',
     });
 
     objectRegistry.register('candle', Candle, {
@@ -127,7 +127,7 @@ export function registerAllObjects() {
     objectRegistry.register('rope', Rope, {
         displayName: 'Rope',
         category: 'triggers',
-        description: 'Flexible connector — attach objects together.',
+        description: 'Each end ties to balloon knots and bucket rims — drop it right up close to one.',
     });
 
     objectRegistry.register('scissors', Scissors, {

@@ -11,6 +11,15 @@ import { eventBus } from '../EventBus.js';
 
 const { Bodies, Body, Constraint } = Matter;
 
+/**
+ * How close (px) a placed rope endpoint must land to an attachment point
+ * for the two to tie (issue 04). Shared by the placement snap
+ * (DragDropManager._snapRopeEndpoints) and the drag-time hint marks
+ * (Renderer._drawRopeSnapHints) — one number, one meaning.
+ * @type {number}
+ */
+export const ROPE_SNAP_RADIUS = 24;
+
 const ROPE_COLOR = '#8B6914';
 const SEGMENTS = 6;
 const SEGMENT_RADIUS = 3;

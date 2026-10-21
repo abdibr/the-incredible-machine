@@ -16,14 +16,16 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { renderer } from '../render/Renderer.js';
 import { toolbox } from './Toolbox.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
+import { ROPE_SNAP_RADIUS } from '../objects/Rope.js';
 
 class DragDropManager {
     constructor() {
         /** @type {BaseObject[]} — the live objects list (shared with renderer) */
         this._objects = [];
 
-        /** Snap distance (px) for tying a placed rope endpoint to an attachment point (issue 04). */
-        this.ROPE_SNAP_RADIUS = 24;
+        /** Snap distance (px) for tying a placed rope endpoint to an attachment
+         * point (issue 04) — shared with the renderer's drag-time hints. */
+        this.ROPE_SNAP_RADIUS = ROPE_SNAP_RADIUS;
 
         /** Current edit mode */
         this._mode = 'MENU';
