@@ -47,3 +47,9 @@ Single-context domain vocabulary. Architecture decisions live in `docs/adr/`; th
 - **restoreState** — the snapshot-restore seam: `PhysicsEngine.restoreSnapshot()` re-apposes bodies by body id, then calls `restoreState` on body-id-matched objects for behavioral state only (never positions). Transient state resets "cycles start clean" (Bucket catches, Spring trigger, Trampoline stretch, Mouse cooldowns); Gear is snapshot-faithful (drive from the serialize ride-along).
 - **Dual restore paths** — *physics restore* (`GameLoop.reset()`): same instances, body-id matched, `restoreState` seam. *Placed restore* (`js/reset/levelReset.js`): fresh deserialize from the placed snapshot — construction IS the restore, new ids.
 - **loadCustom** — the only seam for ad-hoc level data (editor JSON import): installs `LevelManager._currentLevel` and emits `level:loaded` exactly like `loadLevel(id)`; UI never emits `level:loaded` directly.
+## Runtime constraint links (ADR 0004)
+
+- **Constraint link** — a Matter constraint created and managed by `PhysicsEngine` (`attachConstraint`/`detachConstraint`/`getAttachedConstraints`) between two registered objects' bodies; individually detachable at runtime.
+- **Object-owned constraint** — a constraint a game object builds for its own structure (rope segment chains); never registered by the engine, not detachable through the link seam, removed wholesale with its object.
+- **Co-termination** — the engine policy that removing an object detaches every link endpoined at its bodies: an orphaned endpoint would drag the survivor toward a dead body forever.
+- **Link record** — the plain-data capture of a link's effective parameters (body ids, anchor points, stiffness, damping, length) that rides the snapshot seam (ADR 0003).

@@ -8,7 +8,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] Engine API attaches a constraint between two live registered objects
-- [ ] Per-constraint detach: bodies keep existing, object state stays consistent
-- [ ] Attached links survive snapshot capture/restore (restore-by-id path respected)
-- [ ] Unit tests for attach/detach/restore; full suite green
+- [x] Engine API attaches a constraint between two live registered objects
+- [x] Per-constraint detach: bodies keep existing, object state stays consistent
+- [x] Attached links survive snapshot capture/restore (restore-by-id path respected)
+- [x] Unit tests for attach/detach/restore; full suite green
