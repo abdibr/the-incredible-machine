@@ -1,0 +1,40 @@
+id,source_object,relation,target_object,preconditions,result,evidence_level,source_ids
+I001,falling_object,activates,scissors,Object strikes scissors from above or below,Scissors close,documented,S1
+I002,scissors,cuts,rope,Rope passes through cutting area as scissors close,Rope is severed,documented,S1 ; S2
+I003,scissors,pops,balloon,Balloon contacts the scissors' effective cutting/contact area,Balloon pops,documented,S1
+I004,rope,pulls,gun_trigger,Rope attached to trigger and pulled from appropriate direction,Gun fires in its facing direction,documented,S1
+I005,pulley,redirects,rope_force,Rope is routed through pulley,Direction of transmitted pull changes,documented,S1
+I006,teeter_totter,moves,opposite_end,One end is pressed or pulled,"Opposite end moves, potentially moving an object or pulling attached rope",documented,S1 ; S2
+I007,boxing_glove_button,activates,boxing_glove_punch,Button is pressed; target is in front,Glove punches target,documented,S1 ; S2
+I008,moving_object,bounces,trampoline,Object lands on trampoline,Object rebounds and retains horizontal movement,documented,S1 ; S2
+I009,powered_rotator,powers,fan_belt,Belt connects compatible parts and distance is within limit,Rotational power transmitted,documented,S1 ; S2
+I010,gear,rotates,adjacent_gear,Gears are correctly adjacent/meshed; one receives rotation,Neighboring gear rotates in opposite direction,documented,S1
+I011,rotational_power,powers,conveyor_belt,Belt receives rotational power; object physically touches moving surface,Object moves along belt; underside direction is opposite to upper surface,documented,S1 ; S2
+I012,rotational_power,activates,jack_in_the_box,Sufficient rotation delivered through fan belt,Jack pops up and launches object above it,documented,S1 ; S2
+I013,fan_or_bellows_airflow,powers,windmill,Windmill is within effective airflow,Windmill generates rotational power,documented,S1 ; S2
+I014,windmill,powers,fan_belt_connected_rotator,Windmill is connected by belt to compatible rotating part,Rotational power transferred,demonstrated,S2
+I015,switched_outlet,powers,electrical_appliance,Switch on; appliance connected and close enough,Appliance receives electricity,documented,S1
+I016,rotational_power,powers,generator,Generator connected through fan belt,Generator produces electricity,documented,S1 ; S2
+I017,solar_outlet,powers,electrical_appliance,Suitable light reaches solar outlet; appliance connected,Electricity is supplied,documented,S1
+I018,electrical_power,powers,electric_motor,Motor electrically connected to power source,Motor generates rotational power,documented,S1 ; S2
+I019,electrical_power,powers,fan,Fan connected to powered outlet,Airflow pushes movable objects and can drive windmills,documented,S1 ; S2
+I020,fan_airflow,extinguishes,lit_candle,Airflow reaches lit candle,Candle goes out,documented,S1
+I021,light_source,illuminates,magnifying_glass_and_fuse,"Light source, magnifier and fuse aligned and close enough",Magnified light ignites fuse,documented,S1 ; S2
+I022,rope,pulls,drawstring_light,Rope attached to drawstring and pulled,Light turns on,documented,S1
+I023,lit_fuse,ignites,cannon,Fuse is successfully lit,Cannon launches cannonball,documented,S1 ; S2
+I024,lit_fuse,ignites,dynamite,Fuse is successfully lit,Explosion pushes objects and may destroy weaker barriers,documented,S1 ; S2
+I025,lit_fuse,ignites,rocket,Fuse is successfully lit,Rocket travels upward and may strike switch or ignite another fuse,documented,S1 ; S2
+I026,object_or_rope,activates,dynamite_plunger,Object or rope presses plunger,Dynamite detonates,documented,S1
+I027,moving_object,breaks,fishbowl,Moving object contacts fishbowl,Fishbowl shatters; nearby cat may approach,documented,S1 ; S2
+I028,fishbowl_shattered,attracts,pokey_cat,Cat is nearby and can reach bowl area,Cat attempts to reach broken bowl,documented,S1
+I029,visible_mort_mouse,attracts,pokey_cat,Mouse visible and nearby,Cat chases mouse; may eat it within reach,documented,S1 ; S2
+I030,pokey_cat,frightens,mort_mouse,Cat approaches / mouse detects cat,Mouse runs away and may pass through a gap too small for cat,documented,S1 ; S2
+I031,object,activates,mouse_motor,Any object bumps motor,Motor generates rotational power temporarily,documented,S1 ; S2
+I032,rope_pull,activates,monkey_bike,Rope pull opens curtains; banana visible and reachable,"Monkey approaches banana and pedals bike, producing rotation",documented,S1 ; S2
+I033,explosion,breaks,brick_or_wood_barrier,Explosion reaches destructible barrier,Barrier destroyed,documented,S1
+I034,explosion,fails_to_break,metal_pipe_or_christmas_tree,Explosion reaches listed explosion-resistant barrier,Barrier remains,documented,S1
+I035,cannonball,hits,scissors,Cannonball trajectory intersects scissors,Scissors close; can cut a rope placed in blades,demonstrated,S1 ; S2
+I036,bowling_ball,activates,mouse_motor,Ball trajectory intersects motor,Motor runs temporarily; connected conveyor can move,demonstrated,S2
+I037,balloon,moves,windmill_or_scissors,Airflow moves balloon into target,"Balloon can contact gear and pop, or hit scissors and pop",demonstrated,S2
+I038,released_bucket,hits,teeter_totter,Bucket released and positioned so its fall intersects lever,Lever moves and may pull a connected rope,inferred,S1
+I039,rope_cut,releases,bucket_or_balloon,Cut rope was restraining object,Object becomes unrestrained and responds to gravity/inverted gravity,inferred,S1
