@@ -164,9 +164,11 @@ export default class Scissors extends BaseObject {
         const cosB = Math.cos(this._angle);
         const sinB = Math.sin(this._angle);
         const tip = BLADE_CENTER_OFFSET + BLADE_LENGTH / 2 + ROPE_CUT_PAD;
-        for (const obj of this._engine.getObjects()) {
-            if (obj.type !== 'rope' || obj.isSevered) continue;
-            for (const body of obj.bodies) {
+        // Object-level discovery through the engine seam (ADR 0002): ropes by
+        // canonical type, replacing the hand-rolled getObjects() + filter scan.
+        for (const rope of this._engine.queryObjectsByType('rope')) {
+            if (rope.isSevered) continue; // already cut apart
+            for (const body of rope.bodies) {
                 if (!body || body.isStatic) continue; // skip the anchor nail
                 const dx = body.position.x - this._x;
                 const dy = body.position.y - this._y;
@@ -177,7 +179,7 @@ export default class Scissors extends BaseObject {
                     BLADE_THICKNESS / 2 + ROPE_CUT_PAD;
                 if (along > -(ROPE_CUT_PAD + BLADE_THICKNESS / 2) &&
                     along <= tip && Math.abs(across) <= reach) {
-                    obj.sever();
+                    rope.sever();
                     break;
                 }
             }
