@@ -24,13 +24,24 @@ export default class Rope extends BaseObject {
      * @param {{x:number, y:number}} [options.endPoint] - End anchor point (default: straight down)
      */
     constructor(x, y, options = {}) {
-        super(x, y, options);
+        // Attachment tokens (issue 04) are consumed here and never land in
+        // _options: they are relational restore data (target ordinals into
+        // the board snapshot) injected by the annotator — serialize never
+        // emits them.
+        const { attachments, ...behaviorOptions } = options;
+        super(x, y, behaviorOptions);
         this._length = options.length || 100;
         this._endPoint = options.endPoint || { x, y: y + this._length };
-        this._severed = false;
+        this._severed = options.severed ?? false;
 
         this._segments = [];
         this._constraints = [];
+
+        // Rope→payload knots (issue 04): live refs only, one list per
+        // endpoint (several knots may share an endpoint). Tokens live in
+        // serialized data only and bind through bindAttachment().
+        this._attachments = [[], []];
+        this._pendingAttachments = [];
 
         // Build rope as chain of small circle segments
         const segLength = this._length / SEGMENTS;
@@ -60,25 +71,11 @@ export default class Rope extends BaseObject {
             collisionFilter: { group: -1 },
         });
 
-        // Connect anchor to first segment
-        this._constraints.push(Constraint.create({
-            bodyA: this._anchor,
-            bodyB: this._segments[0],
-            stiffness: 0.8,
-            damping: 0.1,
-            length: segLength * 0.5,
-        }));
+        this._constraints = this._severed ? [] : this._buildChainConstraints(this._length);
 
-        // Connect consecutive segments
-        for (let i = 0; i < SEGMENTS - 1; i++) {
-            this._constraints.push(Constraint.create({
-                bodyA: this._segments[i],
-                bodyB: this._segments[i + 1],
-                stiffness: 0.8,
-                damping: 0.1,
-                length: segLength * 0.6,
-            }));
-        }
+        // Passive restore tokens (issue 04): a severed rope cannot hold a
+        // payload, so it binds nothing.
+        this._pendingAttachments = this._severed ? [] : (attachments ?? []);
     }
 
     get type() { return 'rope'; }
@@ -89,6 +86,207 @@ export default class Rope extends BaseObject {
 
     get constraints() {
         return this._constraints;
+    }
+
+    /**
+     * Build the chain constraints along the current layout (anchor→first
+     * segment, then consecutive segments). Extracted so construction, the
+     * severed→intact rewind and setEndpoints re-lays all build identical
+     * chains for a given span.
+     * @param {number} [spanLength] - end-to-end span the chain is built for
+     * @returns {Matter.Constraint[]}
+     * @private
+     */
+    _buildChainConstraints(spanLength = this._length) {
+        const segLength = spanLength / SEGMENTS;
+        const chain = [Constraint.create({
+            bodyA: this._anchor,
+            bodyB: this._segments[0],
+            stiffness: 0.8,
+            damping: 0.1,
+            length: segLength * 0.5,
+        })];
+        for (let i = 0; i < SEGMENTS - 1; i++) {
+            chain.push(Constraint.create({
+                bodyA: this._segments[i],
+                bodyB: this._segments[i + 1],
+                stiffness: 0.8,
+                damping: 0.1,
+                length: segLength * 0.6,
+            }));
+        }
+        return chain;
+    }
+
+    /**
+     * The body a given endpoint ties through (issue 04): 0 = the start's
+     * static anchor, 1 = the free-chain last segment.
+     * @param {number} endpoint
+     * @returns {Matter.Body|null}
+     * @private
+     */
+    _endpointBody(endpoint) {
+        if (endpoint !== 0 && endpoint !== 1) return null;
+        return endpoint === 0 ? (this._anchor ?? null) : (this._segments[this._segments.length - 1] ?? null);
+    }
+
+    // ── Attachments (issue 04: rope as a connector) ────────
+
+    /**
+     * Tie endpoint `endpoint` (0 = anchored start, 1 = free end) to a named
+     * attachment point on a live target. Several knots may share an
+     * endpoint. The rope stores only live refs — the physical engine link
+     * is realized on the next step (see onBeforeUpdate).
+     * @param {number} endpoint
+     * @param {import('./BaseObject.js').default} target
+     * @param {string} pointId
+     */
+    attachEndpoint(endpoint, target, pointId) {
+        if (endpoint !== 0 && endpoint !== 1) {
+            throw new Error(`[Rope] attachEndpoint: endpoint must be 0 or 1, got ${endpoint}`);
+        }
+        const known = target?.attachmentPoints?.some((p) => p.id === pointId);
+        if (!known) {
+            throw new Error(`[Rope] attachEndpoint: target ${target?.type ?? target} offers no attachment point "${pointId}"`);
+        }
+        this._attachments[endpoint].push({ target, pointId });
+    }
+
+    /**
+     * Live knots in ref form for serialization (issue 04): the board
+     * annotator (levelReset.serializePlacedBoard) maps each target to its
+     * board ordinal and writes `attachments` onto the rope's serialized
+     * entry — rope.serialize() itself intentionally emits no tokens.
+     * @returns {Array<{endpoint: number, target: import('./BaseObject.js').default, pointId: string}>}
+     */
+    getAttachmentRefs() {
+        return [
+            ...this._attachments[0].map((knot) => ({ endpoint: 0, ...knot })),
+            ...this._attachments[1].map((knot) => ({ endpoint: 1, ...knot })),
+        ];
+    }
+
+    /**
+     * Untie every knot of this rope (edit-time: the player moved the rope
+     * or a target left the board). The physical links are dropped by the
+     * next reconcile step — or earlier by the engine's co-termination on
+     * removal.
+     */
+    clearAttachments() {
+        this._attachments = [[], []];
+    }
+
+    /**
+     * Resolve pending attachment tokens (from deserialize) against a board
+     * array — the full beginPlay snapshot whose order the tokens'
+     * `targetOrdinal`s index into. Unresolvable tokens are dropped with a
+     * warning; the pending list always ends empty. A severed rope binds
+     * nothing.
+     * @param {import('./BaseObject.js').default[]|null} board
+     */
+    bindAttachment(board) {
+        const pending = this._pendingAttachments;
+        this._pendingAttachments = [];
+        if (this._severed) return;
+        for (const token of pending) {
+            const target = board?.[token.targetOrdinal];
+            if (!target || target.type !== token.targetType) {
+                console.warn(`[Rope] Dropping attachment token: no ${token.targetType} at board ordinal ${token.targetOrdinal}`);
+                continue;
+            }
+            try {
+                this.attachEndpoint(token.endpoint, target, token.pointId);
+            } catch (e) {
+                console.warn(`[Rope] Dropping attachment token: ${e.message}`);
+            }
+        }
+    }
+
+    /**
+     * Issue 04: realize/reconcile knot links each step before the world
+     * updates (BaseObject lifecycle seam — PhysicsEngine.step calls this).
+     * @param {import('../engine/PhysicsEngine.js').PhysicsEngine} engine
+     */
+    onBeforeUpdate(engine) {
+        if (this._severed) return;
+        this._reconcileAttachments(engine);
+    }
+
+    /**
+     * Converge the engine's link set to this rope's knot state: one link
+     * per live knot (realized lazily on the first step after attach/bind,
+     * and re-realized after each snapshot rewind), stale links dropped,
+     * dead targets (popped/disposed/no longer registered) pruned from the
+     * knot refs. A severed rope realizes nothing (its payload links were
+     * already co-terminated by the sever consumer).
+     * @param {import('../engine/PhysicsEngine.js').PhysicsEngine} engine
+     * @private
+     */
+    _reconcileAttachments(engine) {
+        const desired = new Map();
+        const linkBodies = [];
+        for (let endpoint = 0; endpoint < 2; endpoint++) {
+            // Endpoint bodies feed the stale-link drop scan regardless of
+            // whether any knot remains (an emptied slot must still release
+            // its former links on the next step).
+            const linkBody = this._endpointBody(endpoint);
+            if (linkBody) linkBodies.push(linkBody);
+            const knots = this._attachments[endpoint];
+            if (!knots || knots.length === 0) continue;
+            if (!linkBody) {
+                this._attachments[endpoint] = [];
+                continue;
+            }
+            // Keep only knots whose target is still a live, registered object
+            const alive = knots.filter((knot) =>
+                knot.target
+                && engine.getObjects().has(knot.target)
+                && knot.target.bodies.some(Boolean)
+                && knot.target.attachmentPoints.some((p) => p.id === knot.pointId)
+            );
+            this._attachments[endpoint] = alive;
+            for (const knot of alive) {
+                const ap = knot.target.attachmentPoints.find((p) => p.id === knot.pointId);
+                const targetBody = ap?.body ?? null;
+                if (!targetBody) continue; // the point's body is currently unavailable
+                desired.set(`${linkBody.id}|${targetBody.id}`, {
+                    linkBody,
+                    targetBody,
+                    offset: { x: ap.offset.x, y: ap.offset.y },
+                });
+            }
+        }
+
+        // Drop engine-attached links at this rope's endpoints that no longer
+        // match a live knot (untied, moved, or dead target).
+        if (linkBodies.length > 0) {
+            for (const link of engine.getAttachedConstraints()) {
+                const touches = linkBodies.includes(link.bodyA) || linkBodies.includes(link.bodyB);
+                if (!touches) continue;
+                const keyForward = `${link.bodyA.id}|${link.bodyB.id}`;
+                const keyReverse = `${link.bodyB.id}|${link.bodyA.id}`;
+                if (!desired.has(keyForward) && !desired.has(keyReverse)) {
+                    engine.detachConstraint(link);
+                }
+            }
+        }
+
+        // Realize missing links (length 0: the knot point is pinned at the
+        // rope body's center with a soft link, so the knot follows strain).
+        for (const { linkBody, targetBody, offset } of desired.values()) {
+            const exists = engine.getAttachedConstraints().some((link) =>
+                (link.bodyA === linkBody || link.bodyB === linkBody)
+                && (link.bodyA === targetBody || link.bodyB === targetBody)
+            );
+            if (!exists) {
+                engine.attachConstraint(linkBody, targetBody, {
+                    pointB: { x: offset.x, y: offset.y },
+                    length: 0,
+                    stiffness: 0.9,
+                    damping: 0.1,
+                });
+            }
+        }
     }
 
     get bounds() {
@@ -126,6 +324,64 @@ export default class Rope extends BaseObject {
 
     get isSevered() {
         return this._severed;
+    }
+
+    /**
+     * Re-lay the rope between two points (edit-time placement seam, issue
+     * 04): the anchor lands on `start`, the segments re-line up along the
+     * straight line to `end`, and the chain is rebuilt for the new span.
+     * Call while the rope is OUT of the physics world (before/at
+     * placement) — the recreated constraint objects must not be stale
+     * members of any world.
+     * @param {{x: number, y: number}} start
+     * @param {{x: number, y: number}} end
+     */
+    setEndpoints(start, end) {
+        this._x = start.x;
+        this._y = start.y;
+        this._endPoint = { x: end.x, y: end.y };
+        this._length = Math.hypot(end.x - start.x, end.y - start.y);
+        Body.setPosition(this._anchor, { x: start.x, y: start.y });
+        const dx = (end.x - start.x) / SEGMENTS;
+        const dy = (end.y - start.y) / SEGMENTS;
+        for (let i = 0; i < SEGMENTS; i++) {
+            Body.setPosition(this._segments[i], {
+                x: start.x + dx * (i + 0.5),
+                y: start.y + dy * (i + 0.5),
+            });
+        }
+        if (!this._severed) {
+            this._constraints = this._buildChainConstraints(this._length);
+        }
+    }
+
+    /**
+     * Snapshot-restore seam (BaseObject lifecycle, ADR 0003 + issue 04):
+     * converge this rope to the snapshot-time severed state.
+     *
+     * Intact-at-snapshot + severed-live  → rebuild the chain and announce
+     *   `rope:chain-converge { rope, previous }` (the physics engine
+     *   re-adds the chain to the world; the rewind revives it).
+     * Severed-at-snapshot + intact-live → sever() (drops the live chain
+     *   and co-terminates its payload links).
+     * Matching states → no-op (the chain keeps its identity).
+     *
+     * @param {object} [data] - serialized snapshot entry (serialize() shape)
+     */
+    restoreState(data) {
+        super.restoreState(data);
+        const snapshotSevered = data?.options?.severed ?? false;
+        if (snapshotSevered === this._severed) return;
+
+        if (snapshotSevered) {
+            this.sever();
+            return;
+        }
+
+        const previous = this._constraints;
+        this._severed = false;
+        this._constraints = this._buildChainConstraints(this._length);
+        eventBus.emit('rope:chain-converge', { rope: this, previous });
     }
 
     draw(ctx) {
@@ -191,6 +447,7 @@ export default class Rope extends BaseObject {
                 ...this._options,
                 length: this._length,
                 endPoint: this._endPoint,
+                severed: this._severed,
             },
         };
     }
@@ -202,10 +459,14 @@ export default class Rope extends BaseObject {
             customId: data.id,
             length: data.options?.length || 100,
             endPoint: data.options?.endPoint,
+            severed: data.options?.severed ?? false,
+            attachments: data.attachments ?? [],
         });
     }
 
     dispose() {
+        this._attachments = [[], []];
+        this._pendingAttachments = [];
         this._anchor = null;
         this._segments = [];
         this._constraints = [];

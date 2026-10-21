@@ -206,6 +206,31 @@ export default class BaseObject {
         // Default: no behavioral state to restore
     }
 
+    // ── Attachment points (issue 04: rope as a connector) ─────────
+
+    /**
+     * Named points where a rope endpoint can tie to this object. Each
+     * entry carries the body that bears the point plus the offset from
+     * that body's center (in its local frame — it follows the body).
+     * Default: no attachment points.
+     * @returns {Array<{id: string, body: Matter.Body|null, offset: {x: number, y: number}}>}
+     */
+    get attachmentPoints() {
+        return [];
+    }
+
+    /**
+     * World position of a named attachment point right now.
+     * @param {string} id
+     * @returns {{x: number, y: number}|null} null if unknown or currently unavailable (e.g. popped balloon)
+     */
+    getAttachmentWorldPoint(id) {
+        const ap = this.attachmentPoints.find((p) => p.id === id);
+        const body = ap ? (ap.body ?? this.bodies[0]) : null;
+        if (!ap || !body) return null;
+        return { x: body.position.x + ap.offset.x, y: body.position.y + ap.offset.y };
+    }
+
     // ── Rendering ─────────────────────────────────
 
     /**

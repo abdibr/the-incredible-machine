@@ -16,6 +16,43 @@
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 
 /**
+ * Serialize the placed board with rope attachment tokens (issue 04).
+ *
+ * Each row is the object's own serialize() — ropes intentionally emit no
+ * attachment data of their own — and the annotator then writes live knot
+ * refs onto each rope's row as ordinal tokens:
+ * `{ endpoint, targetType, targetOrdinal, pointId }`. The ordinal indexes
+ * THIS array; board order is stable across play/reset cycles (fixed
+ * objects rebuilt from level JSON first, placed parts restored in snapshot
+ * order), which is what makes an ordinal restorable.
+ *
+ * @param {import('../objects/BaseObject.js').default[]} board — shared live board (fixed + placed, board order)
+ * @returns {object[]} serialized rows (rope rows may carry `attachments`)
+ */
+export function serializePlacedBoard(board) {
+    const entries = board.map((o) => o.serialize());
+    const ordinalByObject = new Map(board.map((obj, index) => [obj, index]));
+    for (let index = 0; index < board.length; index++) {
+        const obj = board[index];
+        if (obj.type !== 'rope' || typeof obj.getAttachmentRefs !== 'function') continue;
+        const tokens = [];
+        for (const ref of obj.getAttachmentRefs()) {
+            // Target no longer on the board → the knot dies with it
+            const ordinal = ordinalByObject.get(ref.target);
+            if (ordinal === undefined) continue;
+            tokens.push({
+                endpoint: ref.endpoint,
+                targetType: ref.target.type,
+                targetOrdinal: ordinal,
+                pointId: ref.pointId,
+            });
+        }
+        if (tokens.length > 0) entries[index].attachments = tokens;
+    }
+    return entries;
+}
+
+/**
  * Enter play: serialize the placed board, then rebuild the physics world
  * from the live placed objects.
  *
@@ -27,7 +64,7 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
  * @returns {object[]} Placed snapshot entries (what serialize() wrote at play start).
  */
 export function beginPlay(physics, placedObjects) {
-    const snapshot = placedObjects.map((o) => o.serialize());
+    const snapshot = serializePlacedBoard(placedObjects);
     if (physics) {
         physics.clear();
         for (const obj of placedObjects) {
@@ -53,7 +90,8 @@ export function beginPlay(physics, placedObjects) {
  */
 export function restorePlacedFromSnapshot(placedObjects, snapshot, registry = objectRegistry) {
     const restored = [];
-    for (const data of snapshot ?? []) {
+    const rows = snapshot ?? [];
+    for (const data of rows) {
         if (!data || data.isFixed) continue; // fixed objects are rebuilt from level data
         try {
             restored.push(registry.deserialize(data));
@@ -62,6 +100,24 @@ export function restorePlacedFromSnapshot(placedObjects, snapshot, registry = ob
         }
     }
     placedObjects.push(...restored);
+
+    // Two-phase bind (issue 04): rope attachment tokens only resolve once
+    // every row has come back — they index the full snapshot order, and the
+    // rebuilt board (fixed from level JSON first, restored placed in
+    // snapshot order) mirrors it one-to-one. On any count disagreement the
+    // ordinals cannot be trusted: bind with no board so every token drops
+    // with a warning, instead of tying across a shifted layout.
+    const aligned = rows.length > 0 && placedObjects.length === rows.length;
+    if (!aligned) {
+        console.warn(
+            `[App] Placed snapshot/board size mismatch (${rows.length} rows vs ${placedObjects.length} objects) — dropping attachment tokens.`
+        );
+    }
+    for (const obj of restored) {
+        if (typeof obj.bindAttachment === 'function') {
+            obj.bindAttachment(aligned ? placedObjects : null);
+        }
+    }
     return restored;
 }
 

@@ -986,6 +986,14 @@ export class PhysicsEngine {
     _setupSeveredEvents() {
         this._onRopeSevered = ({ rope }) => this._detachRopeConstraints(rope);
         eventBus.on('rope:severed', this._onRopeSevered);
+
+        // Chain convergence (issue 04): Rope.restoreState rewinding a
+        // severed live rope to an intact snapshot rebuilds its chain — the
+        // rope owns the constraints, but only this engine can put them
+        // back into the world (addObject won't run again for a registered
+        // rope).
+        this._onRopeChainConverge = ({ rope }) => this._restoreRopeConstraints(rope);
+        eventBus.on('rope:chain-converge', this._onRopeChainConverge);
     }
 
     /**
@@ -999,7 +1007,31 @@ export class PhysicsEngine {
         for (const constraint of rope.constraints) {
             Composite.remove(this.world, constraint);
         }
+        // Co-terminate engine-attached links at the rope (issue 04): a
+        // payload tied to a cut point is released the moment the chain
+        // parts.
+        this._detachConstraintsTouching(
+            new Set(rope.bodies.filter(Boolean).map((body) => body.id))
+        );
         // A rope held by constraints can be asleep; release it so it falls
+        this.wakeBodies(rope.bodies);
+    }
+
+    /**
+     * Re-add a restored rope's chain constraints to the world. Consumes
+     * 'rope:chain-converge' — Rope.restoreState rewinding a severed live
+     * rope to an intact snapshot rebuilds the chain; this puts it back
+     * (and wakes the rope so the rebuilt chain integrates immediately).
+     * @param {import('../objects/Rope.js').default} rope
+     * @private
+     */
+    _restoreRopeConstraints(rope) {
+        // Register guard: the bus is global, so a converge from a rope
+        // living in ANOTHER engine must not leak its chain into this world.
+        if (!rope.bodies.some((body) => body && this._bodyToObject.has(body.id))) return;
+        for (const constraint of rope.constraints) {
+            Composite.add(this.world, constraint);
+        }
         this.wakeBodies(rope.bodies);
     }
 
@@ -1028,8 +1060,9 @@ export class PhysicsEngine {
         this._attachedConstraints.clear();
         this._snapshotConstraintRecords = [];
         eventBus.off('balloon:popped', this._onBalloonPopped);
-        Events.off(this.engine);
         eventBus.off('rope:severed', this._onRopeSevered);
+        eventBus.off('rope:chain-converge', this._onRopeChainConverge);
+        Events.off(this.engine);
         this.clear();
         World.clear(this.world);
         Engine.clear(this.engine);

@@ -9,10 +9,11 @@ import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
 import { eventBus } from '../EventBus.js';
 
-const { Bodies, Body, Composite } = Matter;
+const { Bodies, Body, Composite, Constraint } = Matter;
 
 const BUCKET_WIDTH = 50;
 const BUCKET_HEIGHT = 40;
+const WALL_THICKNESS = 5;
 const BUCKET_COLOR = '#8B4513';
 const BUCKET_INNER = '#6B3310';
 const RIM_COLOR = '#a0a0a0';
@@ -24,31 +25,34 @@ export default class Bucket extends BaseObject {
         this._height = options.height || BUCKET_HEIGHT;
         this._catchType = options.catchType || null; // null = catch anything
 
-        const wallThickness = 5;
+        const wallThickness = WALL_THICKNESS;
         const hw = this._width / 2;
         const hh = this._height / 2;
 
-        // Build bucket from three static bodies: left wall, right wall, floor
+        // Build bucket from three bodies: left wall, right wall, floor.
+        // Unfixed buckets are dynamic (issue 04 — a bucket can be lowered,
+        // hoisted or dropped by ropes and payloads); fixed buckets stay
+        // static exactly as before.
         this._leftWall = Bodies.rectangle(
             x - hw + wallThickness / 2, y, wallThickness, this._height, {
-            isStatic: true, label: 'bucket-wall', friction: 0.3,
+            isStatic: this._isFixed, label: 'bucket-wall', friction: 0.3,
         }
         );
         this._rightWall = Bodies.rectangle(
             x + hw - wallThickness / 2, y, wallThickness, this._height, {
-            isStatic: true, label: 'bucket-wall', friction: 0.3,
+            isStatic: this._isFixed, label: 'bucket-wall', friction: 0.3,
         }
         );
         this._floor = Bodies.rectangle(
             x, y + hh - wallThickness / 2, this._width - wallThickness * 2, wallThickness, {
-            isStatic: true, label: 'bucket-floor', friction: 0.3,
+            isStatic: this._isFixed, label: 'bucket-floor', friction: 0.3,
         }
         );
 
         // Sensor zone inside the bucket (detects objects landing inside)
         this._sensor = Bodies.rectangle(
             x, y + 5, this._width - wallThickness * 2 - 4, this._height * 0.5, {
-            isStatic: true,
+            isStatic: this._isFixed,
             isSensor: true,
             label: 'bucket-sensor',
         }
@@ -56,6 +60,12 @@ export default class Bucket extends BaseObject {
 
         /** @type {Set<string>} IDs of objects that have been caught */
         this._caught = new Set();
+
+        // Weld the container together for dynamic buckets (issue 04):
+        // distance constraints at stiffness 1 along the construction
+        // layout. Skipped when fixed — static bodies never move and the
+        // goal bucket's zone must stay put.
+        this._welds = this._isFixed ? [] : this._buildWelds();
     }
 
     get type() { return 'bucket'; }
@@ -71,6 +81,59 @@ export default class Bucket extends BaseObject {
             width: this._width,
             height: this._height,
         };
+    }
+
+    /**
+     * @returns {Matter.Constraint[]} object-owned weld constraints holding
+     * the container together (empty for fixed buckets — static bodies never
+     * need joints). Removed/re-added wholesale by PhysicsEngine's generic
+     * lifecycle seam.
+     */
+    get constraints() {
+        return this._welds;
+    }
+
+    /**
+     * Welds binding the bucket's four bodies into one rigid container
+     * (issue 04). Distance constraints with stiffness 1 and lengths taken
+     * from the construction layout: a triangle over wall-wall-floor plus
+     * the sensor pinned to the floor. They hold the shape under a dropped
+     * ball load — see tests/bucket.test.js.
+     * @private
+     * @returns {Matter.Constraint[]}
+     */
+    _buildWelds() {
+        const weld = (bodyA, bodyB) => Constraint.create({
+            bodyA,
+            bodyB,
+            length: Math.hypot(
+                bodyA.position.x - bodyB.position.x,
+                bodyA.position.y - bodyB.position.y,
+            ),
+            stiffness: 1,
+        });
+        return [
+            weld(this._leftWall, this._rightWall),
+            weld(this._leftWall, this._floor),
+            weld(this._rightWall, this._floor),
+            weld(this._sensor, this._floor),
+        ];
+    }
+
+    /**
+     * Rope anchor seam (issue 04): the bucket offers its rim — the mouth's
+     * top edge — as a tying point. Tied to a fixed bucket the rope is
+     * nailed in place; tied to a falling one, the payload is dragged along.
+     * The offset is floor-local: from the floor body's center up to the
+     * bucket's top edge (it follows any motion of the carried floor).
+     * @returns {Array<{id: string, body: Matter.Body, offset: {x: number, y: number}}>}
+     */
+    get attachmentPoints() {
+        return [{
+            id: 'rim',
+            body: this._floor,
+            offset: { x: 0, y: -(this._height - WALL_THICKNESS / 2) },
+        }];
     }
 
     setPosition(x, y) {
@@ -99,6 +162,11 @@ export default class Bucket extends BaseObject {
     isCatchContact(other, pair) {
         // Only the sensor zone catches; wall/floor contacts don't count
         if (pair.bodyA !== this._sensor && pair.bodyB !== this._sensor) return false;
+        // Never catch itself (issue 04): with dynamic buckets the sensor
+        // sits flush against the floor body and its own walls brush it —
+        // the resulting self-pairs previously made a falling bucket
+        // register itself as caught.
+        if (other === this) return false;
         // Catch type filter (null = catch anything)
         return !this._catchType || other.type === this._catchType;
     }

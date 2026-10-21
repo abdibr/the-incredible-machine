@@ -229,7 +229,11 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
 
     it('bucket-catch: a dropped ball is caught exactly once and settles inside', () => {
         const engine = makeEngine();
-        const bucket = new Bucket(400, 325);
+        // The conformance scenario pins the bucket: a goal bucket in real
+        // levels is fixed (bucket mobility itself is covered by
+        // tests/bucket.test.js). The ball drops in through the mouth,
+        // bounces once, and settles inside the sensor walls.
+        const bucket = new Bucket(400, 325, { isFixed: true });
         const ball = new Ball(400, 250, { variant: 'tennis' });
         engine.addObject(bucket);
         engine.addObject(ball);

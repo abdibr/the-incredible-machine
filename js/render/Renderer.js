@@ -138,6 +138,13 @@ class Renderer {
             this._drawSelectionHandles(ctx, this.selectedObject);
         }
 
+        // 4.5. Rope knot markers (issue 04, edit modes only): a small ring
+        // on every attachment point a rope is tied to, so ties survive as
+        // visible machine structure between play cycles.
+        if (this._mode === 'EDITING' || this._mode === 'SANDBOX') {
+            this._drawRopeKnots(ctx, objs);
+        }
+
         // 5. Draw drag ghost
         if (this._ghostObj && this.ghostState) {
             ctx.save();
@@ -332,6 +339,33 @@ class Renderer {
             ['rotate', b.x + b.width + 14, b.y + b.height / 2],
             ['delete', b.x - 14, b.y + b.height / 2],
         ];
+    }
+
+    /**
+     * Draw a small ring on every attachment point a rope is tied to
+     * (issue 04, edit modes only): knots show as machine structure while
+     * editing and are realized physically by the engine at play.
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {BaseObject[]} objs
+     * @private
+     */
+    _drawRopeKnots(ctx, objs) {
+        ctx.save();
+        for (const obj of objs) {
+            if (obj.type !== 'rope' || typeof obj.getAttachmentRefs !== 'function') continue;
+            for (const ref of obj.getAttachmentRefs()) {
+                const world = ref.target.getAttachmentWorldPoint?.(ref.pointId);
+                if (!world) continue;
+                ctx.beginPath();
+                ctx.arc(world.x, world.y, 6, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(184, 134, 11, 0.35)';
+                ctx.fill();
+                ctx.strokeStyle = '#b8860b';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+        }
+        ctx.restore();
     }
 }
 

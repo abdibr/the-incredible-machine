@@ -61,6 +61,22 @@ export default class Balloon extends BaseObject {
         if (!this._popped) Body.setAngle(this._body, angle);
     }
 
+    /**
+     * Rope anchor seam (issue 04): a balloon ties by its knot — the little
+     * triangle at the bottom of the drawn oval. The offset follows the
+     * balloon's own body, so a tethered balloon strains and bobs naturally.
+     * A popped balloon offers nothing to tie to.
+     * @returns {Array<{id: string, body: Matter.Body|null, offset: {x: number, y: number}}>}
+     */
+    get attachmentPoints() {
+        if (this._popped) return [];
+        return [{
+            id: 'knot',
+            body: this._body,
+            offset: { x: 0, y: this._radius * 1.2 + 4 },
+        }];
+    }
+
     /** Apply upward buoyancy force each frame. */
     onBeforeUpdate(engine) {
         if (this._popped) return;
