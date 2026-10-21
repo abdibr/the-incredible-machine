@@ -14,12 +14,16 @@ const { Bodies, Body } = Matter;
 
 const GEAR_RADIUS = 28;
 const GEAR_TEETH = 10;
+// Tooth tips extend this far beyond the physics circle (px) — mirrors
+// draw()'s outerR; gear ✕ gear meshing is judged on the teeth, not the rim.
+const GEAR_TOOTH_TIP = 5;
 const GEAR_COLOR = '#a0a0b0';
 const TOOTH_COLOR = '#8888a0';
 const HUB_COLOR = '#606070';
-// Touch slop (px) for gear ✕ gear mesh discovery: two rims count as meshed
-// when their centre distance is within rA + rB - eps, the same 2px
-// "touching" tolerance the tooth-traction rig applies at rim contacts.
+// Touch slop (px) for gear ✕ gear mesh discovery: two gears count as meshed
+// when their teeth touch. Tooth tips reach GEAR_TOOTH_TIP beyond the rim
+// circle, so the trigger distance is (rA + tip) + (rB + tip) - eps, keeping
+// the same 2px "touching" tolerance as a bare contact.
 const GEAR_MESH_TOUCH_EPS = 2;
 
 export default class Gear extends BaseObject {
@@ -138,7 +142,7 @@ export default class Gear extends BaseObject {
      * Determinism: when both gears are stepped in one batch (registration
      * order), the pair's first onBeforeUpdate claims the episode and pins
      * both sides; the second sees the pin and skips. Episodes end when the
-     * rims separate (pruned here), on dispose (cross-cleared both ways) or
+     * teeth separate (pruned here), on dispose (cross-cleared both ways) or
      * on snapshot restore.
      * @param {object} engine - PhysicsEngine instance
      * @private
@@ -146,8 +150,8 @@ export default class Gear extends BaseObject {
     _updateMeshContacts(engine) {
         if (!engine?.interactions || !engine?.queryObjectsByType) return;
 
-        // Episode bookkeeping first: a pinned partner whose rim no longer
-        // touches ends the episode so a future re-touch fires the row again.
+        // Episode bookkeeping first: a pinned partner whose teeth no longer
+        // touch ends the episode so a future re-touch fires the row again.
         for (const partner of this._meshedPartners) {
             if (!partner.bodies[0] || !this._isMeshTouching(partner.bodies[0])) {
                 this._meshedPartners.delete(partner);
@@ -177,8 +181,11 @@ export default class Gear extends BaseObject {
     }
 
     /**
-     * Is this gear's rim touching `otherBody` (another gear's static
-     * circle)? Centre distance within rA + rB - GEAR_MESH_TOUCH_EPS.
+     * Is this gear's teeth touching `otherBody` (another gear's static
+     * circle)? Judged on the teeth, not the bare rim: tooth tips reach
+     * GEAR_TOOTH_TIP beyond the physics circle (mirrors draw()), so centre
+     * distance within (rA + tip) + (rB + tip) - GEAR_MESH_TOUCH_EPS counts
+     * as touching — tooth bands kissing or slightly interpenetrating.
      * @param {Matter.Body} otherBody - the other gear's physics body
      * @returns {boolean}
      * @private
@@ -187,7 +194,8 @@ export default class Gear extends BaseObject {
         const dx = otherBody.position.x - this._body.position.x;
         const dy = otherBody.position.y - this._body.position.y;
         const otherRadius = otherBody.circleRadius || 0;
-        return Math.hypot(dx, dy) <= this._radius + otherRadius - GEAR_MESH_TOUCH_EPS;
+        const reach = GEAR_TOOTH_TIP * 2 - GEAR_MESH_TOUCH_EPS;
+        return Math.hypot(dx, dy) <= this._radius + otherRadius + reach;
     }
 
     /**
@@ -259,7 +267,7 @@ export default class Gear extends BaseObject {
             const halfTooth = Math.PI / this._teethCount * 0.5;
 
             const innerR = r - 4;
-            const outerR = r + 5;
+            const outerR = r + GEAR_TOOTH_TIP;
 
             ctx.lineTo(Math.cos(a - halfTooth) * innerR, Math.sin(a - halfTooth) * innerR);
             ctx.lineTo(Math.cos(a - halfTooth * 0.6) * outerR, Math.sin(a - halfTooth * 0.6) * outerR);

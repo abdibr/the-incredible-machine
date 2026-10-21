@@ -155,4 +155,38 @@ describe('Gear live mesh discovery', () => {
 
         engine.dispose();
     });
+
+    it('teeth touching alone fires the mesh — bare rims need not overlap', () => {
+        const engine = new PhysicsEngine(400, 400);
+        const a = new Gear(120, 200);          // r = 28, tooth tip reach 33
+        // Centre gap 61 = rA + rB + 5: tooth tip bands (r + 5 = 33) interlock
+        // by 5px while the bare rims (28 + 28 = 56) are still 5px apart —
+        // meshing is judged on the teeth, not the rims (old trigger: 54).
+        const b = new Gear(181, 200);
+        engine.addObject(a);
+        engine.addObject(b);
+
+        engine.step(STEP_MS);
+        // Mutual dispatch, same outcome as a rim-overlapping pair.
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+
+        engine.dispose();
+    });
+
+    it('tooth tips just short of contact leave the gears unmeshed', () => {
+        const engine = new PhysicsEngine(400, 400);
+        const a = new Gear(120, 200);          // r = 28, tooth tip reach 33
+        // Tip circles touch only at centre gap 33 + 33 = 66; gap 68 leaves a
+        // 2px air gap between tooth tips, so nothing must fire.
+        const b = new Gear(188, 200);
+        engine.addObject(a);
+        engine.addObject(b);
+
+        engine.step(STEP_MS);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+
+        engine.dispose();
+    });
 });
