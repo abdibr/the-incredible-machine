@@ -12,10 +12,12 @@
  *  - scenarios: each row must fire through the REAL engine — Matter gravity,
  *    collisionStart dispatch, eventBus consumers — not synthetic resolve()
  *    calls. Sole exception: gear ✕ gear — both gears are static bodies and
- *    Matter never generates static×static collision pairs, so that row is
- *    driven through the engine's public resolve seam, the exact call its own
- *    collision feed makes. Geometry matches the proven rigs from the object
- *    suites.
+ *    Matter never generates static×static collision pairs, so the row is fed
+ *    live by the gears' own per-step mesh discovery (Gear._updateMeshContacts
+ *    makes the engine's single dispatch seam, the exact call its collision
+ *    feed would make). Its scenarios prove that live feeder end-to-end and
+ *    pin the radius-ratio drive exchange. Geometry matches the proven rigs
+ *    from the object suites.
  *
  * Silent types (ball variants, ramp, conveyor, fan, domino, pulley, candle
  * wax…) intentionally have no scenario: the `silent-objects-null` doc-only
@@ -248,23 +250,56 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         const b = new Gear(450, 300);
         engine.addObject(a);
         engine.addObject(b);
+        let fired = 0;
+        engine.interactions.define({
+            id: 'test-gear-gear-spy',
+            actor: { type: 'gear' },
+            target: { type: 'gear' },
+            handler: () => { fired += 1; },
+        });
 
         expect(a.serialize().options.angularSpeed).toBe(0.03);
         expect(b.serialize().options.angularSpeed).toBe(0.03);
 
-        // Both gears are static, and Matter never generates collision pairs
-        // between two static bodies — real contact dispatch cannot fire the
-        // row. Drive it through the engine's public seam (the exact resolve
-        // call its collision feed makes) with a Matter-style pair fixture.
-        engine.interactions.resolve(a, b, {
-            bodyA: a.bodies[0],
-            bodyB: b.bodies[0],
-            normal: { x: 1, y: 0 },
-        });
-
-        for (let i = 0; i < 30; i += 1) engine.step(DT);
+        // No scripted push: the gears discover each other mid-step through
+        // their per-step mesh scan (Gear._updateMeshContacts) and dispatch
+        // the row through the engine's single dispatch seam themselves.
+        stepUntil(engine, () => fired >= 1, 30, 'live mesh dispatch');
         expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03);
         expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+
+        for (let i = 0; i < 30; i += 1) engine.step(DT);
+        // One dispatch per contact episode: the pin keeps the touching pair
+        // from re-firing every step, and the flipped speeds are steady.
+        expect(fired).toBe(1);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+    });
+
+    it('gear-gear: unequal radii exchange drive by the radius ratio (equal rim speeds)', () => {
+        const engine = makeEngine();
+        const small = new Gear(400, 300, { radius: 28 }); // ω = 0.03, added first → row actor
+        const large = new Gear(470, 300, { radius: 56 }); // centre gap 70 → rims overlap 14px
+        engine.addObject(small);
+        engine.addObject(large);
+        let fired = 0;
+        engine.interactions.define({
+            id: 'test-gear-gear-spy',
+            actor: { type: 'gear' },
+            target: { type: 'gear' },
+            handler: () => { fired += 1; },
+        });
+
+        stepUntil(engine, () => fired >= 1, 30, 'live mesh dispatch');
+        // Actor keeps its magnitude; the counterpart adopts it scaled by the
+        // crossed ratio — equal rim speeds: 0.03 * 28 = 0.015 * 56 px/step.
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+        expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015);
+
+        for (let i = 0; i < 30; i += 1) engine.step(DT);
+        expect(fired).toBe(1);
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+        expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015);
     });
 
     it('scissors-snap: a ball onto the handle snaps the scissors closed once', () => {

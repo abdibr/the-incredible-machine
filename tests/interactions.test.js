@@ -234,6 +234,20 @@ describe('Row gear-gear', () => {
         g.applyGearDrive(-0.02); // receiving a drive reverses sign, adopts magnitude
         expect(g.serialize().options.angularSpeed).toBeCloseTo(-0.02, 10);
     });
+
+    it('unequal radii exchange drive by the radius ratio (equal rim speeds)', () => {
+        const small = new Gear(400, 300, { radius: 28 }); // ω = 0.03 (default)
+        const large = new Gear(560, 300, { radius: 56 }); // ω = 0.03 (default)
+        const fired = matrix.resolve(small, large, { bodyA: small.bodies[0], bodyB: large.bodies[0] });
+        expect(fired).toContain('gear-gear');
+
+        // Both drive directions fire with the crossed ratio: the large gear
+        // adopts 0.03 * (28 / 56) = 0.015; the small gear is then re-driven
+        // by the large gear's new speed at ratio 56 / 28 — its own magnitude
+        // preserved. Equal rim speeds: 0.03 * 28 = 0.015 * 56 px/step.
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+        expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015, 10);
+    });
 });
 
 describe('Row scissors-snap', () => {

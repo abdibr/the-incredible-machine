@@ -99,7 +99,7 @@ export const DEFAULT_INTERACTION_ROWS = [
     // ── Gear reaction ──────────────────────────────────────────
     {
         id: 'gear-gear',
-        summary: 'Two touching gears mesh: each drives the other to counter-rotate at its own speed.',
+        summary: 'Two touching gears mesh live: they counter-rotate at equal rim speeds (drive scales by the radius ratio).',
         actor: { type: 'gear', match: 'gear' },
         target: { type: 'gear', match: 'gear' },
         handler: (a, b) => {
@@ -110,6 +110,10 @@ export const DEFAULT_INTERACTION_ROWS = [
         // BUG-FIX: Gear.onCollision reached through to `other._angularSpeed`.
         // meshWith()/applyGearDrive() is the public seam; firing both
         // directions here reproduces the old double-dispatch outcome exactly.
+        // Feeder: both gears are static bodies, so Matter never pairs
+        // static × static — in live play each gear's per-step mesh discovery
+        // (Gear._updateMeshContacts) dispatches this row through the same
+        // resolve seam, once per contact episode.
     },
 
     // ── Scissors reaction ──────────────────────────────────────

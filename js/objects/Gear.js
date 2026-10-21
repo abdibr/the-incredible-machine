@@ -17,6 +17,10 @@ const GEAR_TEETH = 10;
 const GEAR_COLOR = '#a0a0b0';
 const TOOTH_COLOR = '#8888a0';
 const HUB_COLOR = '#606070';
+// Touch slop (px) for gear ✕ gear mesh discovery: two rims count as meshed
+// when their centre distance is within rA + rB - eps, the same 2px
+// "touching" tolerance the tooth-traction rig applies at rim contacts.
+const GEAR_MESH_TOUCH_EPS = 2;
 
 export default class Gear extends BaseObject {
     constructor(x, y, options = {}) {
@@ -24,6 +28,10 @@ export default class Gear extends BaseObject {
         this._radius = options.radius || GEAR_RADIUS;
         this._angularSpeed = options.angularSpeed ?? 0.03;
         this._teethCount = options.teeth || GEAR_TEETH;
+        // Gear objects whose mesh episode already dispatched for this
+        // contact window (run-time discovery state, see _updateMeshContacts;
+        // never serialized and cleared on restore/dispose).
+        this._meshedPartners = new Set();
 
         // Create gear body — use a circle for physics, draw teeth visually
         this._body = Bodies.circle(x, y, this._radius, {
@@ -56,6 +64,12 @@ export default class Gear extends BaseObject {
     }
 
     onBeforeUpdate(engine, dt) {
+        // Live gear ✕ gear mesh discovery (ADR 0002 amendment): both gears
+        // are static bodies, so Matter's collision feed never pairs them
+        // (static × static is suppressed) — each gear discovers its touching
+        // neighbours itself and dispatches the row through the engine.
+        this._updateMeshContacts(engine);
+
         // Maintain constant rotation (static body doesn't rotate on its own)
         Body.setAngle(this._body, this._body.angle + this._angularSpeed);
 
@@ -112,24 +126,100 @@ export default class Gear extends BaseObject {
     }
 
     /**
+     * Live gear ✕ gear mesh discovery (ADR 0002 object-level scan). Gears
+     * are static bodies, so Matter's collision feed never yields gear ✕
+     * gear pairs and the matrix row would only fire under scripted
+     * resolve() calls. This scan substitutes the missing feeder: each gear
+     * discovers touching neighbours every step and dispatches the row
+     * through the engine's single dispatch seam
+     * (`engine.interactions.resolve`) — the same call the collision feed
+     * makes for a dynamic pair — exactly once per contact episode.
+     *
+     * Determinism: when both gears are stepped in one batch (registration
+     * order), the pair's first onBeforeUpdate claims the episode and pins
+     * both sides; the second sees the pin and skips. Episodes end when the
+     * rims separate (pruned here), on dispose (cross-cleared both ways) or
+     * on snapshot restore.
+     * @param {object} engine - PhysicsEngine instance
+     * @private
+     */
+    _updateMeshContacts(engine) {
+        if (!engine?.interactions || !engine?.queryObjectsByType) return;
+
+        // Episode bookkeeping first: a pinned partner whose rim no longer
+        // touches ends the episode so a future re-touch fires the row again.
+        for (const partner of this._meshedPartners) {
+            if (!partner.bodies[0] || !this._isMeshTouching(partner.bodies[0])) {
+                this._meshedPartners.delete(partner);
+            }
+        }
+
+        for (const other of engine.queryObjectsByType('gear', { excludeOwner: this })) {
+            const otherBody = other.bodies[0];
+            if (!otherBody || this._meshedPartners.has(other)) continue;
+            if (!this._isMeshTouching(otherBody)) continue;
+
+            // Dispatch the gear ✕ gear row exactly the way the collision
+            // feed would for a dynamic pair, then pin both sides so the
+            // pair fires once per contact episode no matter which gear
+            // steps first.
+            engine.interactions.resolve(this, other, {
+                bodyA: this._body,
+                bodyB: otherBody,
+                normal: {
+                    x: otherBody.position.x - this._body.position.x,
+                    y: otherBody.position.y - this._body.position.y,
+                },
+            });
+            this._meshedPartners.add(other);
+            other._meshedPartners?.add(this);
+        }
+    }
+
+    /**
+     * Is this gear's rim touching `otherBody` (another gear's static
+     * circle)? Centre distance within rA + rB - GEAR_MESH_TOUCH_EPS.
+     * @param {Matter.Body} otherBody - the other gear's physics body
+     * @returns {boolean}
+     * @private
+     */
+    _isMeshTouching(otherBody) {
+        const dx = otherBody.position.x - this._body.position.x;
+        const dy = otherBody.position.y - this._body.position.y;
+        const otherRadius = otherBody.circleRadius || 0;
+        return Math.hypot(dx, dy) <= this._radius + otherRadius - GEAR_MESH_TOUCH_EPS;
+    }
+
+    /**
      * Mesh seam: drive an adjacent gear to counter-rotate at this gear's
-     * speed. The gear ✕ gear interaction row fires meshWith() in both
-     * directions for a touching pair (js/interactions/rules.js), which
-     * reproduces the old mutual double-dispatch outcome without reaching
-     * into the other gear's private state.
+     * speed, scaled by the crossed radius ratio (equal rim speeds across
+     * the mesh: |omega_a| * r_a = |omega_b| * r_b). The gear ✕ gear row
+     * fires meshWith() in both directions for a touching pair
+     * (js/interactions/rules.js), reproducing the old mutual
+     * double-dispatch outcome without reaching into the other gear's
+     * private state. Equal radii give ratio 1 — byte-identical to the
+     * original behavior.
+     *
+     * Mutual-dispatch semantics: the actor side of the row keeps its speed
+     * magnitude; the counterpart adopts it scaled by the ratio, so the
+     * outcome is order-deterministic for a given dispatch orientation.
      * @param {Gear} other - the adjacent gear
      */
     meshWith(other) {
-        other.applyGearDrive(this._angularSpeed);
+        other.applyGearDrive(this._angularSpeed, this._radius / other._radius);
     }
 
     /**
      * Receive a meshing drive from the other gear: reverse direction and
-     * adopt the driving gear's speed magnitude.
-     * @param {number} speed - the driving gear's angular speed
+     * adopt the driving gear's speed magnitude scaled by the crossed
+     * radius ratio (ratio = r_driver / r_receiver ⇒ equal rim speeds, the
+     * r_small / r_large exchange the original game documents). The receiving
+     * gear's sign flips; the driving gear is untouched.
+     * @param {number} speed - the driving gear's angular speed (rad/step)
+     * @param {number} [ratio=1] - radius ratio r_driver / r_receiver
      */
-    applyGearDrive(speed) {
-        this._angularSpeed = -Math.sign(this._angularSpeed) * Math.abs(speed);
+    applyGearDrive(speed, ratio = 1) {
+        this._angularSpeed = -Math.sign(this._angularSpeed) * Math.abs(speed) * ratio;
     }
 
     /**
@@ -147,6 +237,10 @@ export default class Gear extends BaseObject {
         this._angularSpeed = (typeof speed === 'number' && Number.isFinite(speed))
             ? speed
             : (this._options.angularSpeed ?? 0.03);
+        // Mesh episodes are run-time discovery state, not snapshot payload
+        // (ADR 0003): a restored pose may no longer touch a former partner,
+        // and a re-touch must fire the gear ✕ gear row exactly once again.
+        this._meshedPartners.clear();
     }
 
     draw(ctx) {
@@ -271,6 +365,13 @@ export default class Gear extends BaseObject {
     }
 
     dispose() {
+        // Release mesh episodes both ways: a disposed partner must never
+        // leave its neighbours pinned, or a later re-touch would never
+        // re-fire the gear ✕ gear row.
+        for (const partner of this._meshedPartners) {
+            partner._meshedPartners?.delete(this);
+        }
+        this._meshedPartners.clear();
         this._body = null;
     }
 }
