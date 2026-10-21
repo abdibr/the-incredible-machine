@@ -468,6 +468,91 @@ export class PhysicsEngine {
     }
 
     /**
+     * Region-grade discovery, overlap semantics (ADR 0002 amendment): every
+     * world body whose BOUNDS overlap `zone` — the rect convention, frame
+     * rotation, enclosing-AABB broadphase, discovery policy and ordering of
+     * queryZone, but the exact test is bounds-vs-rotated-rect overlap (SAT on
+     * the four candidate axes), so a large body whose CENTRE sits outside the
+     * zone still matches when the body itself reaches in. Bounds-grade: a
+     * candidate merely grazing the zone with its bounds counts.
+     *
+     * queryZone (position-inside) is kept unchanged for centre-grade
+     * semantics; pick the variant that matches the interaction's sense:
+     * "what is inside this region" → queryZone, "what does this region
+     * reach" → queryZoneOverlap.
+     *
+     * Same discovery policy and ordering as queryZone.
+     *
+     * @param {Matter.Body} referenceBody - the zone lives in this body's frame
+     * @param {{ cx: number, cy: number, width: number, height: number }} zone
+     * @param {object} [opts] - { includeStatic: boolean, includeWalls: boolean }
+     * @returns {Matter.Body[]}
+     */
+    queryZoneOverlap(referenceBody, zone, opts = {}) {
+        const pos = referenceBody.position;
+        const cos = Math.cos(referenceBody.angle);
+        const sin = Math.sin(referenceBody.angle);
+        const halfW = zone.width / 2;
+        const halfH = zone.height / 2;
+
+        // Rect centre in world space (rotate the local offset by body angle)
+        const worldCx = pos.x + zone.cx * cos - zone.cy * sin;
+        const worldCy = pos.y + zone.cx * sin + zone.cy * cos;
+
+        // Exact enclosing AABB of the rotated rectangle (broadphase)
+        const extentX = halfW * Math.abs(cos) + halfH * Math.abs(sin);
+        const extentY = halfW * Math.abs(sin) + halfH * Math.abs(cos);
+        const rect = {
+            min: { x: worldCx - extentX, y: worldCy - extentY },
+            max: { x: worldCx + extentX, y: worldCy + extentY },
+        };
+
+        const owner = this._ownerOf(referenceBody);
+        const results = [];
+
+        for (const body of Query.region(Composite.allBodies(this.world), rect)) {
+            if (body === referenceBody) continue;
+            if (!opts.includeStatic && body.isStatic) continue;
+            if (!opts.includeWalls && this._isWallBody(body)) continue;
+            if (owner && this._bodyToObject.get(body.id) === owner) continue;
+
+            if (this._boundsOverlapZoneRect(body.bounds, worldCx, worldCy, cos, sin, halfW, halfH)) {
+                results.push(body);
+            }
+        }
+        return results;
+    }
+
+    /**
+     * Exact bounds-vs-rotated-rect overlap test (SAT). The candidate axes
+     * for an AABB and a rotated rectangle are the AABB's x/y axes plus the
+     * rectangle's two rotated local axes; the pair overlaps iff no axis
+     * separates them — the same separation relation Matter's Bounds.overlaps
+     * applies in the axis-aligned case, generalized to rotated rect axes.
+     * @private
+     */
+    _boundsOverlapZoneRect(bounds, cx, cy, cos, sin, halfW, halfH) {
+        const bx = (bounds.min.x + bounds.max.x) / 2;
+        const by = (bounds.min.y + bounds.max.y) / 2;
+        const ex = (bounds.max.x - bounds.min.x) / 2;
+        const ey = (bounds.max.y - bounds.min.y) / 2;
+
+        const axes = [
+            { x: 1, y: 0 }, { x: 0, y: 1 },          // AABB axes
+            { x: cos, y: sin }, { x: -sin, y: cos }, // rotated rect local axes
+        ];
+
+        for (const a of axes) {
+            const centreDelta = (cx - bx) * a.x + (cy - by) * a.y;
+            const boundsRadius = Math.abs(a.x) * ex + Math.abs(a.y) * ey;
+            const rectRadius = halfW * Math.abs(a.x * cos + a.y * sin) +
+                halfH * Math.abs(-a.x * sin + a.y * cos);
+            if (Math.abs(centreDelta) > boundsRadius + rectRadius) return false; // separated
+        }
+        return true;
+    }
+
+    /**
      * Probe-grade discovery (ADR 0002): every world body containing the
      * point (Matter Query.point — bounds pass, then per-part vertices test),
      * minus bodies owned by `opts.excludeOwner` so an actor never probes
@@ -503,6 +588,132 @@ export class PhysicsEngine {
         for (const body of list) {
             if (body) Sleeping.set(body, false);
         }
+    }
+
+    // ── Impulse-field primitive (ADR 0002 amendment: the shared force
+    //    delivery behind directional per-frame fields) ─────────────────────
+
+    /**
+     * Impulse-field primitive (ADR 0002 amendment): discover the movable
+     * bodies inside `field.zone` (a rect in `sourceBody`'s local frame, the
+     * queryZone convention — a fan's wind cone out of the face is
+     * {cx: 0, cy: -height/2, width, height}) and apply a linear
+     * distance-falloff force toward `field.direction` (expressed in the
+     * source body's local frame — default local "up", which rotates with the
+     * body), scaled by each candidate's mass:
+     *
+     *     force = direction * field.force * (1 − dist/range) * body.mass
+     *
+     * `dist` measures from the source body's centre (euclidean); candidates
+     * at or beyond `range`, or exactly on the source centre (degenerate
+     * direction), receive nothing. Every acted body is woken first — wake-on-
+     * act in the same seam call, so a field can never forget the wake while
+     * a sleeping body would skip force integration anyway.
+     *
+     * Zone matching is queryZone's position-inside semantics by default;
+     * `field.match: 'overlap'` switches to queryZoneOverlap's bounds-based
+     * test (bodies whose centre is outside but bounds reach in still act).
+     * Same discovery policy, ordering and return shape as the query methods:
+     * the list of acted bodies, in discovery order.
+     *
+     * @param {Matter.Body} sourceBody - anchor of the field (position + frame)
+     * @param {object} field
+     * @param {{ cx: number, cy: number, width: number, height: number }} field.zone
+     * @param {number} field.range - falloff radius from the source centre (px)
+     * @param {number} field.force - peak force magnitude at zero distance
+     * @param {{ x?: number, y?: number }} [field.direction] - source-local, default {x: 0, y: -1}
+     * @param {'position'|'overlap'} [field.match] - zone test, default 'position'
+     * @returns {Matter.Body[]} the bodies the field acted on
+     */
+    applyImpulseField(sourceBody, field) {
+        const { zone, range, force } = field;
+        const cos = Math.cos(sourceBody.angle);
+        const sin = Math.sin(sourceBody.angle);
+
+        // World direction: rotate the source-local direction by the body angle
+        const localDir = field.direction ?? { x: 0, y: -1 };
+        const dirX = localDir.x * cos - localDir.y * sin;
+        const dirY = localDir.x * sin + localDir.y * cos;
+
+        const candidates = field.match === 'overlap'
+            ? this.queryZoneOverlap(sourceBody, zone)
+            : this.queryZone(sourceBody, zone);
+
+        const pos = sourceBody.position;
+        const acted = [];
+        for (const body of candidates) {
+            const dx = body.position.x - pos.x;
+            const dy = body.position.y - pos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (!(dist < range) || dist === 0) continue;
+            const falloff = 1 - dist / range;
+            this.wakeBodies(body);
+            Body.applyForce(body, body.position, {
+                x: dirX * force * falloff * body.mass,
+                y: dirY * force * falloff * body.mass,
+            });
+            acted.push(body);
+        }
+        return acted;
+    }
+
+    // ── Object-level discovery (ADR 0002 amendment: registered game
+    //    objects, by canonical type / by Matter body label) ────────────────
+
+    /**
+     * Object-level discovery (ADR 0002 amendment): every REGISTERED game
+     * object whose canonical `type` matches. One level above the body-grade
+     * queries above — callers that reason in whole objects (per-type sweeps,
+     * handler dispatch) never hand-roll getObjects() + type filters.
+     *
+     * Pure read over the registered set like every query method: never
+     * wakes, registration order, empty for unknown types. `opts.excludeOwner`
+     * keeps an object from fetching itself (the same opt-in queryPoint uses —
+     * there is no scanned actor here whose owner could be resolved
+     * automatically).
+     *
+     * @param {string} type - canonical type string (e.g. 'rope', 'candle')
+     * @param {object} [opts] - { excludeOwner: BaseObject|null }
+     * @returns {import('../objects/BaseObject.js').default[]}
+     */
+    queryObjectsByType(type, opts = {}) {
+        const excluded = opts.excludeOwner ?? null;
+        const results = [];
+        for (const obj of this._objects) {
+            if (obj.type !== type) continue;
+            if (excluded && obj === excluded) continue;
+            results.push(obj);
+        }
+        return results;
+    }
+
+    /**
+     * Object-level discovery (ADR 0002 amendment): every registered game
+     * object owning at least one body labeled `label` — the per-family body
+     * discriminator the interaction matrix keys on ('candle-flame',
+     * 'scissors-blade', 'bucket-sensor'). The label query reaches across one
+     * object's bodies where the canonical type alone cannot discriminate;
+     * it returns whole objects, never individual bodies.
+     *
+     * Same policy and shape as queryObjectsByType.
+     *
+     * @param {string} label - Matter body label (e.g. 'candle-flame')
+     * @param {object} [opts] - { excludeOwner: BaseObject|null }
+     * @returns {import('../objects/BaseObject.js').default[]}
+     */
+    queryObjectsByBodyLabel(label, opts = {}) {
+        const excluded = opts.excludeOwner ?? null;
+        const results = [];
+        for (const obj of this._objects) {
+            if (excluded && obj === excluded) continue;
+            for (const body of obj.bodies) {
+                if (body && body.label === label) {
+                    results.push(obj);
+                    break;
+                }
+            }
+        }
+        return results;
     }
 
     // ── Boundaries ────────────────────────────────
