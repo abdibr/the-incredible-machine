@@ -10,7 +10,7 @@ import { eventBus } from '../EventBus.js';
 import { InteractionMatrix } from '../interactions/InteractionMatrix.js';
 import { DEFAULT_INTERACTION_ROWS } from '../interactions/rules.js';
 
-const { Engine, World, Bodies, Body, Composite, Events, Query, Bounds, Collision, Sleeping, Pairs } = Matter;
+const { Engine, World, Bodies, Body, Composite, Events, Query, Bounds, Collision, Sleeping, Pairs, Constraint } = Matter;
 
 export class PhysicsEngine {
     /**
@@ -44,6 +44,12 @@ export class PhysicsEngine {
 
         /** @type {object|null} Serialized snapshot for reset */
         this._snapshot = null;
+
+        /** @type {Map<Matter.Constraint, object>} Engine-attached runtime constraint links (ADR 0004) */
+        this._attachedConstraints = new Map();
+
+        /** @type {object[]} Link records captured by takeSnapshot (ADR 0004 ride-along) */
+        this._snapshotConstraintRecords = [];
 
         // The single registry of object-to-object reactions (see
         // js/interactions/rules.js); collisionStart pairs route through it.
@@ -109,6 +115,11 @@ export class PhysicsEngine {
             this._bodyToObject.delete(body.id);
         }
 
+        // Co-terminate engine-attached links (ADR 0004): a link endpoined at
+        // a departing body would keep dragging its survivor toward a dead body.
+        this._detachConstraintsTouching(
+            new Set(gameObject.bodies.filter(Boolean).map((body) => body.id))
+        );
         this._objects.delete(gameObject);
         if (gameObject.dispose) gameObject.dispose();
     }
@@ -155,6 +166,10 @@ export class PhysicsEngine {
 
     /** Save the current state for later reset. */
     takeSnapshot() {
+        // Ride-along capture (ADR 0004): every snapshot carries the current
+        // engine-attached link set; the next take overwrites, so no clearing
+        // is needed anywhere.
+        this._captureConstraintRecords();
         this._snapshot = [];
         for (const obj of this._objects) {
             this._snapshot.push({
@@ -186,6 +201,11 @@ export class PhysicsEngine {
      */
     restoreSnapshot() {
         if (!this._snapshot) return;
+
+        // Converge engine-attached links to snapshot-time state (ADR 0004):
+        // links attached after the snapshot are dropped; snapshot-time links
+        // re-attach by body id only when both endpoints are still alive.
+        this._restoreConstraintLinks();
 
         // Reset the pair cache so contacts re-form cold after teleporting
         // bodies: Matter warm-starts the solver from accumulated contact
@@ -299,11 +319,218 @@ export class PhysicsEngine {
     /** Clear the stored snapshot. */
     clearSnapshot() {
         this._snapshot = null;
+        this._snapshotConstraintRecords = [];
     }
 
     /** @returns {boolean} */
     hasSnapshot() {
         return this._snapshot !== null;
+    }
+
+    // ── Runtime constraint links (ADR 0004) ─────────────────────
+
+    /**
+     * Attaches a Matter constraint between two already-registered, live game
+     * object bodies at runtime. Unlike object-owned constraints (e.g. rope
+     * chains), engine-attached links are managed by the engine: they can be
+     * detached individually, they co-terminate when an endpoint object
+     * leaves, and they ride the snapshot/restore seam (ADR 0003).
+     *
+     * Both endpoints are woken on attach (wake-on-act, ADR 0002): sleeping
+     * bodies skip force integration, so a link attached to a sleeper would
+     * otherwise leave both bodies frozen.
+     *
+     * @param {Matter.Body} bodyA - body of a registered game object
+     * @param {Matter.Body} bodyB - body of a registered game object
+     * @param {object} [options] - Matter constraint options: { pointA,
+     *   pointB, length, stiffness, damping } (Matter defaults apply per key)
+     * @returns {Matter.Constraint} the created constraint instance (added to
+     *   the world and tracked by getAttachedConstraints())
+     * @throws {Error} if either endpoint is not a body of a registered game
+     *   object (boundary walls and raw bodies are not attachable)
+     */
+    attachConstraint(bodyA, bodyB, options = {}) {
+        this._assertAttachEndpoint(bodyA, 'bodyA');
+        this._assertAttachEndpoint(bodyB, 'bodyB');
+
+        // Build link options WITHOUT undefined keys: Matter's Constraint.create
+        // extends defaults unconditionally, so an explicit `length: undefined`
+        // would clobber the Matter-computed default instead of deferring to it.
+        const linkOptions = { bodyA, bodyB };
+        if (options.pointA !== undefined) linkOptions.pointA = options.pointA;
+        if (options.pointB !== undefined) linkOptions.pointB = options.pointB;
+        if (options.stiffness !== undefined) linkOptions.stiffness = options.stiffness;
+        if (options.damping !== undefined) linkOptions.damping = options.damping;
+        if (options.length !== undefined) linkOptions.length = options.length;
+
+        return this._registerAttachedConstraint(linkOptions);
+    }
+
+    /**
+     * Detaches one engine-attached constraint link. The endpointed objects
+     * and their bodies stay registered and in the world — only the link is
+     * removed. Both endpoints are woken on detach (wake-on-act): a freed
+     * sleeping body would otherwise float forever with force integration
+     * skipped.
+     *
+     * @param {Matter.Constraint} constraint - instance previously returned by
+     *   attachConstraint() or consumed from getAttachedConstraints()
+     * @returns {void}
+     * @throws {Error} if the constraint is not engine-attached — object-owned
+     *   constraints (e.g. rope chains) are managed by their objects, not by
+     *   this seam
+     */
+    detachConstraint(constraint) {
+        if (!this._attachedConstraints.has(constraint)) {
+            throw new Error('[PhysicsEngine] detachConstraint: constraint is not attached by this engine');
+        }
+        this._removeConstraint(constraint);
+    }
+
+    /**
+     * All engine-attached runtime constraint links, in attach order.
+     * Object-owned constraints (rope chains) are NOT included — they remain
+     * owned and managed by their game objects.
+     *
+     * @returns {Matter.Constraint[]}
+     */
+    getAttachedConstraints() {
+        return [...this._attachedConstraints.keys()];
+    }
+    /**
+     * @private
+     * @param {Matter.Body} body - candidate endpoint
+     * @param {string} name - parameter name for the error message
+     */
+    _assertAttachEndpoint(body, name) {
+        if (!body || !this._bodyToObject.has(body.id)) {
+            throw new Error(`[PhysicsEngine] attachConstraint: ${name} is not a body of a registered game object`);
+        }
+    }
+
+    /**
+     * @private
+     * Creates the Matter constraint and records its EFFECTIVE parameters
+     * (pointA/pointB/length read back after Constraint.create, so Matter-
+     * computed defaults capture faithfully for the snapshot seam), wakes the
+     * endpoints, adds to the world and registers.
+     *
+     * @param {object} linkOptions - { bodyA, bodyB, pointA?, pointB?,
+     *   length?, stiffness?, damping? }
+     * @returns {Matter.Constraint}
+     */
+    _registerAttachedConstraint(linkOptions) {
+        const constraint = Constraint.create(linkOptions);
+        const record = {
+            bodyAId: linkOptions.bodyA.id,
+            bodyBId: linkOptions.bodyB.id,
+            pointA: { x: constraint.pointA.x, y: constraint.pointA.y },
+            pointB: { x: constraint.pointB.x, y: constraint.pointB.y },
+            stiffness: constraint.stiffness,
+            damping: constraint.damping,
+            length: constraint.length,
+        };
+        // Wake-on-act (ADR 0002): asleep endpoints skip force integration.
+        this.wakeBodies([linkOptions.bodyA, linkOptions.bodyB]);
+        Composite.add(this.world, constraint);
+        this._attachedConstraints.set(constraint, record);
+        return constraint;
+    }
+
+    /**
+     * @private
+     * Removes one link from the world and the registry (endpoints untouched).
+     *
+     * @param {Matter.Constraint} constraint
+     */
+    _removeConstraint(constraint) {
+        const endpoints = [constraint.bodyA, constraint.bodyB].filter(Boolean);
+        // Wake-on-act (ADR 0002): a body losing its constraint force must
+        // integrate again, or it hangs/floats frozen.
+        this.wakeBodies(endpoints);
+        Composite.remove(this.world, constraint);
+        this._attachedConstraints.delete(constraint);
+    }
+    /**
+     * @private
+     * Detaches every engine-attached link endpointed at any of the given body
+     * ids (co-termination). Used when a body leaves the world — an orphaned
+     * endpoint would keep dragging its survivor toward a dead body.
+     *
+     * @param {Set<number>} bodyIds - Matter body ids of departing bodies
+     */
+    _detachConstraintsTouching(bodyIds) {
+        if (!bodyIds || bodyIds.size === 0 || this._attachedConstraints.size === 0) {
+            return;
+        }
+        for (const constraint of [...this._attachedConstraints.keys()]) {
+            const record = this._attachedConstraints.get(constraint);
+            if (bodyIds.has(record.bodyAId) || bodyIds.has(record.bodyBId)) {
+                this._removeConstraint(constraint);
+            }
+        }
+    }
+
+    /**
+     * @private
+     * Captures the current link set as plain records for the snapshot seam.
+     * Called from takeSnapshot() so every (re)snapshot carries the current
+     * link state; no explicit clearing needed — the next take overwrites.
+     */
+    _captureConstraintRecords() {
+        this._snapshotConstraintRecords = [...this._attachedConstraints.values()].map((record) => ({
+            bodyAId: record.bodyAId,
+            bodyBId: record.bodyBId,
+            pointA: { x: record.pointA.x, y: record.pointA.y },
+            pointB: { x: record.pointB.x, y: record.pointB.y },
+            stiffness: record.stiffness,
+            damping: record.damping,
+            length: record.length,
+        }));
+    }
+
+    /**
+     * @private
+     * Converges the live link set to snapshot-time state (ADR 0004): links
+     * attached after the snapshot are dropped, and snapshot-time links
+     * re-attach through the restore-by-id seam whenever BOTH endpoint bodies
+     * are still alive — a mid-play object removal never resurrects a dangling
+     * link. Called from restoreSnapshot() only when a snapshot is present.
+     */
+    _restoreConstraintLinks() {
+        // Detach every live link first: the world converges to snapshot state.
+        for (const constraint of [...this._attachedConstraints.keys()]) {
+            this._removeConstraint(constraint);
+        }
+        const linkRecords = this._snapshotConstraintRecords ?? [];
+        if (linkRecords.length === 0) {
+            return;
+        }
+        // Resolve current bodies by Matter body id (restore-by-id, ADR 0003).
+        const bodyById = new Map();
+        for (const gameObject of this._objects) {
+            for (const body of gameObject.bodies) {
+                if (body) {
+                    bodyById.set(body.id, body);
+                }
+            }
+        }
+        for (const record of linkRecords) {
+            const bodyA = bodyById.get(record.bodyAId);
+            const bodyB = bodyById.get(record.bodyBId);
+            if (!bodyA || !bodyB) {
+                continue; // an endpoint left mid-play — never resurrect a dangling link
+            }
+            this._registerAttachedConstraint({
+                bodyA,
+                bodyB,
+                pointA: { x: record.pointA.x, y: record.pointA.y },
+                pointB: { x: record.pointB.x, y: record.pointB.y },
+                stiffness: record.stiffness,
+                damping: record.damping,
+                length: record.length,
+            });
+        }
     }
 
     // ── Queries ───────────────────────────────────
@@ -785,6 +1012,10 @@ export class PhysicsEngine {
             if (!body || !this._bodyToObject.has(body.id)) return;
             Composite.remove(this.world, body);
             this._bodyToObject.delete(body.id);
+            // Co-termination (ADR 0004): the evicted body takes its runtime
+            // links with it — its survivor would otherwise hang from a body
+            // that is no longer in the world.
+            this._detachConstraintsTouching(new Set([body.id]));
         };
 
         eventBus.on('balloon:popped', this._onBalloonPopped);
@@ -794,6 +1025,8 @@ export class PhysicsEngine {
 
     /** Tear down the engine completely. */
     dispose() {
+        this._attachedConstraints.clear();
+        this._snapshotConstraintRecords = [];
         eventBus.off('balloon:popped', this._onBalloonPopped);
         Events.off(this.engine);
         eventBus.off('rope:severed', this._onRopeSevered);
