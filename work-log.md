@@ -1,4 +1,14 @@
 # Work Log — The Incredible Machine (Web Clone)
+## 2026-10-21 — Rope↔payload tying: pull-to-tie (near-miss drops now tie, no play-start yank)
+
+Manual playtest found the object-side tie seam's blind spot: dropping a bucket near a hanging rope's free end never wrote a knot — the bucket's `rim` point (an invisible mouth-edge offset) sat ~54 px from the rope end, outside the 24 px tie radius — so on play the bucket free-fell past the rope; and even an in-radius tie left a ≤ 24 px residual for the length-0 link to yank closed on the first play step.
+
+- **`js/objects/Rope.js`** — new shared constant **`ROPE_ATTRACT_RADIUS = 64`** beside `ROPE_SNAP_RADIUS` (one number, one meaning across the placement pull and the glow hints).
+- **`js/ui/DragDropManager._snapObjectToRopes`** — pull-to-tie: the nearest board rope endpoint (anchor or free end) within the attract reach translates the whole fresh drop (`setPosition`, boundary re-clamped) so its attachment point lands **exactly** on that endpoint; then the existing nearest-wins ≤ `ROPE_SNAP_RADIUS` tie pass runs (winner at 0 px ties exactly; the rigid translation preserves every other candidate's distance, so multi-rope/multi-knot boards are untouched). Rope-side tying/re-lay unchanged (decision 10 contract intact).
+- **`js/render/Renderer._drawRopeEndpointHints`** — the glow rule now mirrors the seam: bright = within tie range, or the single global attract winner (the drop is pulled only onto that one); the rest stay faint dashed — green still means yes.
+- **`tests/rope-snap-hints.test.js`** — pull-to-tie cases: bucket pulled onto the end from 40 px (rim lands exactly on it), out-of-reach drop left unmoved/unattached, two-rope nearest-wins pull with the farther in-range knot surviving the move, attract-ring glow + tie-line preview; the old "graze" geometries were inside the new reach and moved beyond it. 21 → 25 tests; full suite **27 files / 318 tests green** (`cmd /c npm test`).
+- **Docs**: `docs/adr/0005-rope-as-connector.md` decision 11 records pull-to-tie (and supersedes decision 10's residual-closes-on-play claim for placement-time tying).
+
 ## 2026-10-21 — Agent play interface, phase 1 landed (observation layer, action API, solver)
 
 Per `docs/plans/agent-play-interface-phase-1.md` — the game is now drivable headlessly by a program. New top-level `agent/` directory (Node ESM, sibling of `js/`; the browser bundle does NOT import it — zero changes to `js/**`):

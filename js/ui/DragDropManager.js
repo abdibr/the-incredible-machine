@@ -16,7 +16,7 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { renderer } from '../render/Renderer.js';
 import { toolbox } from './Toolbox.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
-import { ROPE_SNAP_RADIUS } from '../objects/Rope.js';
+import { ROPE_SNAP_RADIUS, ROPE_ATTRACT_RADIUS } from '../objects/Rope.js';
 
 class DragDropManager {
     constructor() {
@@ -26,6 +26,11 @@ class DragDropManager {
         /** Snap distance (px) for tying a placed rope endpoint to an attachment
          * point (issue 04) — shared with the renderer's drag-time hints. */
         this.ROPE_SNAP_RADIUS = ROPE_SNAP_RADIUS;
+
+        /** Pull-to-tie reach (px, ADR 0005 decision 11): a knot-bearing drop
+         * this close to a rope endpoint is pulled onto it and tied exactly
+         * there — shared with the renderer's endpoint glow hints. */
+        this.ROPE_ATTRACT_RADIUS = ROPE_ATTRACT_RADIUS;
 
         /** Current edit mode */
         this._mode = 'MENU';
@@ -335,25 +340,31 @@ class DragDropManager {
     /**
      * Object placement snap (issue 04, the object-side mirror of
      * _snapRopeEndpoints): when an object that offers attachment points
-     * (balloon knot, bucket rim, …) is dropped within ROPE_SNAP_RADIUS of
-     * a board rope's endpoint (endpoint 0 = its anchor, endpoint 1 = its
-     * free end), that endpoint ties itself to the new object's point —
-     * tying works whichever part is placed last, including re-tying a rope
-     * after its payload was deleted. The laid rope is not re-layed
-     * (rope-side placement re-lays a fresh, knotless rope; re-spanning here
-     * could drag away its other endpoint's knots): the length-0 / 0.9
-     * stiffness knot link closes the remaining ≤ ROPE_SNAP_RADIUS gap on
-     * the first play step (Rope._reconcileAttachments).
+     * (balloon knot, bucket rim, …) is dropped near a board rope endpoint
+     * (endpoint 0 = its anchor, endpoint 1 = its free end), that endpoint
+     * ties itself to the new object's point — tying works whichever part is
+     * placed last, including re-tying a rope after its payload was deleted.
+     * The nearest endpoint inside ROPE_ATTRACT_RADIUS first pulls the whole
+     * fresh drop onto itself (pull-to-tie, ADR 0005 decision 11), so the
+     * knot lands exactly on the endpoint and no residual is left for the
+     * first play step (Rope._reconcileAttachments) to close; endpoints
+     * inside ROPE_SNAP_RADIUS tie without moving anything beyond that pull.
+     * The laid rope is not re-layed (rope-side placement re-lays a fresh,
+     * knotless rope; re-spanning here could drag away its other endpoint's
+     * knots). The pull is a single rigid translation, which preserves every
+     * other candidate's endpoint distance — nothing already in tie range is
+     * pulled out of it.
      * @param {import('../objects/BaseObject.js').default} obj — fresh object, out of the physics world
      * @private
      */
     _snapObjectToRopes(obj) {
-        const points = (obj.attachmentPoints ?? []).map((point) => ({
-            id: point.id,
-            world: obj.getAttachmentWorldPoint(point.id),
-        })).filter((point) => point.world);
+        let points = this._readAttachmentPoints(obj);
         if (points.length === 0) return;
 
+        // Pull-to-tie scan: the nearest (rope, endpoint, point) candidate
+        // within the attract reach wins the pull.
+        let best = null;
+        const spotsByRope = new Map();
         for (const rope of this._objects) {
             if (rope === obj || rope.type !== 'rope') continue;
             if (rope.isSevered) continue; // a severed rope cannot hold a payload
@@ -361,6 +372,37 @@ class DragDropManager {
             if (!bodies[0]) continue; // disposed rope
 
             const spots = [bodies[0].position, bodies[bodies.length - 1].position];
+            spotsByRope.set(rope, spots);
+            for (const endpoint of [0, 1]) {
+                for (const point of points) {
+                    const dist = Math.hypot(
+                        point.world.x - spots[endpoint].x,
+                        point.world.y - spots[endpoint].y
+                    );
+                    if (dist > this.ROPE_ATTRACT_RADIUS) continue;
+                    if (!best || dist < best.dist) best = { rope, endpoint, point, dist };
+                }
+            }
+        }
+        if (!best) return;
+
+        if (best.dist > 0) {
+            const reach = spotsByRope.get(best.rope)[best.endpoint];
+            let px = obj.x + reach.x - best.point.world.x;
+            let py = obj.y + reach.y - best.point.world.y;
+            if (renderer.canvas) {
+                // The pull must not shove the fresh drop into a boundary wall.
+                const clamped = clampObjectToPlayfield(
+                    obj, px, py, renderer.canvas.width, renderer.canvas.height
+                );
+                px = clamped.x;
+                py = clamped.y;
+            }
+            obj.setPosition(px, py);
+            points = this._readAttachmentPoints(obj); // re-read: the drop moved
+        }
+
+        for (const [rope, spots] of spotsByRope) {
             for (const endpoint of [0, 1]) {
                 let match = null;
                 for (const point of points) {
@@ -374,6 +416,14 @@ class DragDropManager {
                 if (match) rope.attachEndpoint(endpoint, obj, match.id);
             }
         }
+    }
+
+    /** World-space snapshot of a knot-bearing part's attachment points. */
+    _readAttachmentPoints(obj) {
+        return (obj.attachmentPoints ?? []).map((point) => ({
+            id: point.id,
+            world: obj.getAttachmentWorldPoint(point.id),
+        })).filter((point) => point.world);
     }
 
     _deleteSelected() {

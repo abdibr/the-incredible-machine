@@ -9,7 +9,7 @@
 import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
-import { ROPE_SNAP_RADIUS } from '../objects/Rope.js';
+import { ROPE_SNAP_RADIUS, ROPE_ATTRACT_RADIUS } from '../objects/Rope.js';
 
 class Renderer {
     constructor() {
@@ -450,12 +450,14 @@ class Renderer {
     /**
      * Object-placement hints (issue 04, the mirror of _drawRopeSnapHints):
      * while a knot-bearing part (balloon knot, bucket rim, …) hangs on the
-     * cursor, mark every board rope's tying endpoints. An endpoint within
-     * ROPE_SNAP_RADIUS of one of the ghost's attachment points — the same
-     * clamped layout a drop will land, because the ghost received the
-     * placement clamp — gets a bright filled ring and a tie-line to that
-     * point; the rest stay faint dashed. The drop will then knot exactly
-     * what glows (see DragDropManager._snapObjectToRopes).
+     * cursor, mark every board rope's tying endpoints — the same clamped
+     * layout a drop will land, because the ghost received the placement
+     * clamp. With the pull-to-tie seam (ADR 0005 decision 11) an endpoint
+     * glows bright (filled ring + tie-line) when the drop will tie it: it
+     * sits within ROPE_SNAP_RADIUS of a knot, or it is the one endpoint the
+     * drop gets pulled onto from within ROPE_ATTRACT_RADIUS. The rest stay
+     * faint dashed. The drop will then knot exactly what glows (see
+     * DragDropManager._snapObjectToRopes).
      * @param {CanvasRenderingContext2D} ctx
      * @param {BaseObject[]} objs
      * @param {import('../objects/BaseObject.js').default} ghost — knot-bearing object on the cursor
@@ -468,39 +470,57 @@ class Renderer {
         if (!knots.length) return;
 
         ctx.save();
+        // Board endpoints are collected first: the pull-to-tie attract is
+        // chosen globally (one winner per drop), so the bright/faint
+        // decision must see every candidate, not one rope at a time.
+        const ends = [];
         for (const obj of objs) {
             if (obj === ghost || obj.type !== 'rope' || obj.isSevered) continue;
             const bodies = obj.bodies;
             if (!bodies[0]) continue; // disposed rope
+            ends.push(bodies[0].position, bodies[bodies.length - 1].position);
+        }
 
-            const endpoints = [bodies[0].position, bodies[bodies.length - 1].position];
-            for (const end of endpoints) {
-                let tiesTo = null;
-                for (const knot of knots) {
-                    if (Math.hypot(knot.x - end.x, knot.y - end.y) <= ROPE_SNAP_RADIUS) {
-                        tiesTo = knot;
-                        break;
-                    }
+        // The drop knots exactly what glows (DragDropManager._snapObjectToRopes):
+        // an endpoint within ROPE_SNAP_RADIUS of a knot ties as laid, and the
+        // single nearest endpoint within ROPE_ATTRACT_RADIUS is the one the
+        // drop will be pulled onto — both glow bright.
+        let best = null;
+        for (const end of ends) {
+            for (const knot of knots) {
+                const dist = Math.hypot(knot.x - end.x, knot.y - end.y);
+                if (dist > ROPE_ATTRACT_RADIUS) continue;
+                if (!best || dist < best.dist) best = { end, knot, dist };
+            }
+        }
+
+        for (const end of ends) {
+            let tiesTo = null;
+            for (const knot of knots) {
+                if (Math.hypot(knot.x - end.x, knot.y - end.y) <= ROPE_SNAP_RADIUS) {
+                    tiesTo = knot;
+                    break;
                 }
+            }
+            if (!tiesTo && best && best.end === end) tiesTo = best.knot;
 
+            ctx.beginPath();
+            ctx.arc(end.x, end.y, tiesTo ? 7 : 4, 0, Math.PI * 2);
+            if (tiesTo) {
+                ctx.fillStyle = 'rgba(64, 192, 64, 0.35)';
+                ctx.fill();
+            }
+            ctx.strokeStyle = tiesTo ? '#2f9e2f' : 'rgba(122, 106, 38, 0.8)';
+            ctx.setLineDash(tiesTo ? [] : [3, 3]);
+            ctx.lineWidth = tiesTo ? 2 : 1.5;
+            ctx.stroke();
+            ctx.setLineDash([]);
+            if (tiesTo) {
                 ctx.beginPath();
-                ctx.arc(end.x, end.y, tiesTo ? 7 : 4, 0, Math.PI * 2);
-                if (tiesTo) {
-                    ctx.fillStyle = 'rgba(64, 192, 64, 0.35)';
-                    ctx.fill();
-                }
-                ctx.strokeStyle = tiesTo ? '#2f9e2f' : 'rgba(122, 106, 38, 0.8)';
-                ctx.setLineDash(tiesTo ? [] : [3, 3]);
-                ctx.lineWidth = tiesTo ? 2 : 1.5;
+                ctx.moveTo(end.x, end.y);
+                ctx.lineTo(tiesTo.x, tiesTo.y);
+                ctx.strokeStyle = '#2f9e2f';
                 ctx.stroke();
-                ctx.setLineDash([]);
-                if (tiesTo) {
-                    ctx.beginPath();
-                    ctx.moveTo(end.x, end.y);
-                    ctx.lineTo(tiesTo.x, tiesTo.y);
-                    ctx.strokeStyle = '#2f9e2f';
-                    ctx.stroke();
-                }
             }
         }
         ctx.restore();
