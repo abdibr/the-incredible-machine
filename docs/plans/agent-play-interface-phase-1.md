@@ -1,6 +1,6 @@
 # Agent Play Interface — Phase 1: observation layer, action API, scripted solver
 
-Status: **planned, not started** (2026-10-21). The earlier design discussion lived in conversation only; this file is the record.
+Status: **implemented** (2026-10-21). All three deliverables landed under `agent/` + `tests/agent/`: `describeWorld()`, the never-throw actions, and the scripted solver — which beats `level-01` in 1 trial (`place(ball, 700, 500)`); `node agent/cli.js --level level-01 --solve` is the executable proof. 27 files / 314 tests green.
 
 ## Goal
 
