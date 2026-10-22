@@ -165,10 +165,17 @@ class Renderer {
         // every board attachment point shows a marker; points this ghost's
         // endpoints would tie (same clamped layout a drop will lay, within
         // ROPE_SNAP_RADIUS) glow bright with a tie-line to that endpoint.
-        if (this._ghostObj?.type === 'rope'
+        // The object-side mirror: while a knot-bearing part (balloon knot,
+        // bucket rim, …) hangs on the cursor, every board rope endpoint
+        // shows the same reach markers.
+        if (this._ghostObj
             && this.ghostState
             && (this._mode === 'EDITING' || this._mode === 'SANDBOX')) {
-            this._drawRopeSnapHints(ctx, objs, this._ghostObj);
+            if (this._ghostObj.type === 'rope') {
+                this._drawRopeSnapHints(ctx, objs, this._ghostObj);
+            } else if (this._ghostObj.attachmentPoints?.length) {
+                this._drawRopeEndpointHints(ctx, objs, this._ghostObj);
+            }
         }
     }
 
@@ -432,6 +439,65 @@ class Renderer {
                     ctx.beginPath();
                     ctx.moveTo(tiesThrough.x, tiesThrough.y);
                     ctx.lineTo(world.x, world.y);
+                    ctx.strokeStyle = '#2f9e2f';
+                    ctx.stroke();
+                }
+            }
+        }
+        ctx.restore();
+    }
+
+    /**
+     * Object-placement hints (issue 04, the mirror of _drawRopeSnapHints):
+     * while a knot-bearing part (balloon knot, bucket rim, …) hangs on the
+     * cursor, mark every board rope's tying endpoints. An endpoint within
+     * ROPE_SNAP_RADIUS of one of the ghost's attachment points — the same
+     * clamped layout a drop will land, because the ghost received the
+     * placement clamp — gets a bright filled ring and a tie-line to that
+     * point; the rest stay faint dashed. The drop will then knot exactly
+     * what glows (see DragDropManager._snapObjectToRopes).
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {BaseObject[]} objs
+     * @param {import('../objects/BaseObject.js').default} ghost — knot-bearing object on the cursor
+     * @private
+     */
+    _drawRopeEndpointHints(ctx, objs, ghost) {
+        const knots = (ghost.attachmentPoints ?? []).map((point) => (
+            ghost.getAttachmentWorldPoint(point.id)
+        )).filter(Boolean);
+        if (!knots.length) return;
+
+        ctx.save();
+        for (const obj of objs) {
+            if (obj === ghost || obj.type !== 'rope' || obj.isSevered) continue;
+            const bodies = obj.bodies;
+            if (!bodies[0]) continue; // disposed rope
+
+            const endpoints = [bodies[0].position, bodies[bodies.length - 1].position];
+            for (const end of endpoints) {
+                let tiesTo = null;
+                for (const knot of knots) {
+                    if (Math.hypot(knot.x - end.x, knot.y - end.y) <= ROPE_SNAP_RADIUS) {
+                        tiesTo = knot;
+                        break;
+                    }
+                }
+
+                ctx.beginPath();
+                ctx.arc(end.x, end.y, tiesTo ? 7 : 4, 0, Math.PI * 2);
+                if (tiesTo) {
+                    ctx.fillStyle = 'rgba(64, 192, 64, 0.35)';
+                    ctx.fill();
+                }
+                ctx.strokeStyle = tiesTo ? '#2f9e2f' : 'rgba(122, 106, 38, 0.8)';
+                ctx.setLineDash(tiesTo ? [] : [3, 3]);
+                ctx.lineWidth = tiesTo ? 2 : 1.5;
+                ctx.stroke();
+                ctx.setLineDash([]);
+                if (tiesTo) {
+                    ctx.beginPath();
+                    ctx.moveTo(end.x, end.y);
+                    ctx.lineTo(tiesTo.x, tiesTo.y);
                     ctx.strokeStyle = '#2f9e2f';
                     ctx.stroke();
                 }

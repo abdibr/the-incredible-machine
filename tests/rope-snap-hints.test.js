@@ -5,9 +5,16 @@
  * - DragDropManager._snapRopeEndpoints — a dropped rope ties each endpoint
  *   to the nearest attachment point within ROPE_SNAP_RADIUS (re-laying it
  *   exactly onto the point); farther endpoints stay unattached and unmoving.
+ * - DragDropManager._snapObjectToRopes — a dropped knot-bearing object
+ *   (balloon knot, bucket rim) ties any board rope endpoint within
+ *   ROPE_SNAP_RADIUS to itself; the laid rope is not re-layed, making tying
+ *   order-independent and letting a deleted payload be replaced.
  * - Renderer._drawRopeSnapHints — while a rope hangs on the cursor, every
  *   board attachment point is marked: bright + tie-line when a clamped drop
  *   would tie it, faint dashed otherwise.
+ * - Renderer._drawRopeEndpointHints — the object-side mirror: while a
+ *   knot-bearing part hangs on the cursor, every board rope endpoint is
+ *   marked the same way.
  * - Renderer._drawRopeKnots — post-drop ties stay visible (strengthened ring).
  */
 
@@ -171,6 +178,236 @@ describe('Post-drop knot ring (Renderer._drawRopeKnots)', () => {
         const ctx = makeRecordingCtx();
 
         _renderer._drawRopeKnots(ctx, [rope, balloon]);
+
+        expect(ctx.arc).not.toHaveBeenCalled();
+        rope.dispose();
+    });
+});
+
+describe('Object-side placement tying (DragDropManager._snapObjectToRopes)', () => {
+    // A balloon's knot rides (0, r · 1.2 + 4) below its body (r = 18 → 25.6):
+    // this helper positions a balloon whose knot lands exactly on (x, y).
+    const balloonKnotAt = (x, y) => new Balloon(x, y - 25.6);
+
+    let ddm;
+
+    beforeEach(() => {
+        ddm = new DragDropManager();
+    });
+
+    it('ties a dropped balloon to the free end of an already-placed rope', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const balloon = balloonKnotAt(end.x, end.y); // rope placed first, balloon lands on its end
+        ddm._objects = [rope, balloon];
+
+        ddm._snapObjectToRopes(balloon);
+
+        expect(rope.getAttachmentRefs()).toEqual([
+            { endpoint: 1, target: balloon, pointId: 'knot' },
+        ]);
+        // The drop does not re-lay the laid rope (the length-0 knot link
+        // closes the ≤ ROPE_SNAP_RADIUS residual at the first play step):
+        // balloon and rope end stay exactly where they were laid. The knot
+        // lands dead-on, so they are coincident here.
+        expect(balloon.bodies[0].position).toEqual({
+            x: end.x, y: end.y - 25.6,
+        });
+        rope.dispose();
+    });
+
+    it('ties a dropped balloon to the anchor end of an already-placed rope', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const anchor = rope.bodies[0].position;
+        const balloon = balloonKnotAt(anchor.x, anchor.y);
+        ddm._objects = [rope, balloon];
+
+        ddm._snapObjectToRopes(balloon);
+
+        expect(rope.getAttachmentRefs()).toEqual([
+            { endpoint: 0, target: balloon, pointId: 'knot' },
+        ]);
+        rope.dispose();
+    });
+
+    it('works the other way round for a dropped bucket rim too', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const probe = new Bucket(0, 0);
+        const rimOff = probe.getAttachmentWorldPoint('rim');
+        probe.dispose();
+        const bucket = new Bucket(end.x - rimOff.x, end.y - rimOff.y); // rim lands on the rope end
+        ddm._objects = [rope, bucket];
+
+        ddm._snapObjectToRopes(bucket);
+
+        expect(rope.getAttachmentRefs()).toEqual([
+            { endpoint: 1, target: bucket, pointId: 'rim' },
+        ]);
+        rope.dispose();
+    });
+
+    it('leaves rope ends beyond the snap radius untouched', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const anchor = rope.bodies[0].position;
+        // Well below the span's midpoint: out of range of BOTH the anchor
+        // and the free end (a rope's ends sit within its own length of each
+        // other, so a near-miss of one end can still graze the other).
+        const balloon = balloonKnotAt(anchor.x + 20, anchor.y + 60);
+        ddm._objects = [rope, balloon];
+
+        ddm._snapObjectToRopes(balloon);
+
+        expect(rope.getAttachmentRefs()).toEqual([]);
+        rope.dispose();
+    });
+
+    it('skips severed ropes — they cannot hold a payload', () => {
+        const rope = new Rope(300, 100, { severed: true });
+        const anchor = rope.bodies[0].position;
+        const balloon = balloonKnotAt(anchor.x, anchor.y);
+        ddm._objects = [rope, balloon];
+
+        ddm._snapObjectToRopes(balloon);
+
+        expect(rope.isSevered).toBe(true);
+        expect(rope.getAttachmentRefs()).toEqual([]);
+        rope.dispose();
+    });
+    it('knots every in-range rope endpoint — one attachment point holds several ropes', () => {
+        const ropeA = new Rope(300, 100, { length: 40 });
+        const endA = ropeA.bodies[ropeA.bodies.length - 1].position;
+        // Lay ropeB so its free-end body sits 10px right of ropeA's free end
+        // (same (6/5.5) span math the drop-time tests pin down).
+        const from = { x: endA.x - 60, y: endA.y };
+        const target = { x: endA.x + 10, y: endA.y };
+        const d = Math.hypot(target.x - from.x, target.y - from.y);
+        const span = (d * 6) / 5.5;
+        const ropeB = new Rope(from.x, from.y, {
+            length: span,
+            endPoint: {
+                x: from.x + ((target.x - from.x) / d) * span,
+                y: from.y + ((target.y - from.y) / d) * span,
+            },
+        });
+        const balloon = balloonKnotAt(endA.x, endA.y); // 0px from ropeA's end, 10px from ropeB's
+        ddm._objects = [ropeA, ropeB, balloon];
+
+        ddm._snapObjectToRopes(balloon);
+
+        expect(ropeA.getAttachmentRefs()).toEqual([
+            { endpoint: 1, target: balloon, pointId: 'knot' },
+        ]);
+        expect(ropeB.getAttachmentRefs()).toEqual([
+            { endpoint: 1, target: balloon, pointId: 'knot' },
+        ]);
+        ropeA.dispose();
+        ropeB.dispose();
+    });
+
+    it('re-ties a rope when the dropped balloon replaces a deleted payload', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const first = balloonKnotAt(end.x, end.y);
+        ddm._objects = [rope, first];
+        ddm._snapObjectToRopes(first);
+        expect(rope.getAttachmentRefs()).toEqual([
+            { endpoint: 1, target: first, pointId: 'knot' },
+        ]);
+
+        // The player deletes that balloon and drops a fresh one at the same spot
+        first.dispose();
+        const second = balloonKnotAt(end.x, end.y);
+        ddm._objects = [rope, second];
+        ddm._snapObjectToRopes(second);
+
+        const refs = rope.getAttachmentRefs();
+        expect(refs).toContainEqual({ endpoint: 1, target: second, pointId: 'knot' });
+        expect(refs).toHaveLength(2); // the dead ref to the disposed balloon lingers in edit
+                                      // mode (guarded render/serialize; pruned by the first
+                                      // play step) and cannot block the new tie
+        rope.dispose();
+        second.dispose();
+    });
+    it('the object-side tie realizes as an engine link on the first play step', async () => {
+        const { PhysicsEngine } = await import('../js/engine/PhysicsEngine.js');
+        const physics = new PhysicsEngine(800, 600);
+        const rope = new Rope(300, 100, { length: 40 });
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const balloon = balloonKnotAt(end.x, end.y);
+        ddm._objects = [rope, balloon];
+        ddm._snapObjectToRopes(balloon);
+
+        physics.addObject(rope);
+        physics.addObject(balloon); // addObject adds the rope's own chain constraints too
+        physics.step(16.67);
+
+        expect(physics.getAttachedConstraints()).toHaveLength(1);
+        const link = physics.getAttachedConstraints()[0];
+        expect(link.bodyA).toBe(rope.bodies[rope.bodies.length - 1]);
+        expect(link.bodyB).toBe(balloon.bodies[0]);
+        expect(link.length).toBe(0);
+        expect(link.stiffness).toBe(0.9);
+        physics.dispose();
+    });
+});
+
+describe('Object-side tie hints (Renderer._drawRopeEndpointHints)', () => {
+    const balloonKnotAt = (x, y) => new Balloon(x, y - 25.6);
+
+    it('marks a rope end bright with a tie-line while a knot-bearing ghost hangs in reach', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const anchor = rope.bodies[0].position;
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const ghost = balloonKnotAt(end.x, end.y); // would tie endpoint 1; the anchor is 40px away
+        const knot = ghost.getAttachmentWorldPoint('knot');
+        const ctx = makeRecordingCtx();
+
+        new Renderer()._drawRopeEndpointHints(ctx, [rope, ghost], ghost);
+
+        expect(ctx.strokeStyles).toContain(TIED_STYLE);
+        const arcs = ctx.arc.mock.calls.map(([x, y, r]) => ({ x, y, r }));
+        expect(arcs).toContainEqual({ x: end.x, y: end.y, r: 7 });       // bright on the reachable end
+        expect(arcs).toContainEqual({ x: anchor.x, y: anchor.y, r: 4 }); // faint on the far end
+        // tie-line runs from the rope end to the ghost's knot
+        expect(ctx.moveTo.mock.calls).toContainEqual([end.x, end.y]);
+        expect(ctx.lineTo.mock.calls).toContainEqual([knot.x, knot.y]);
+        rope.dispose();
+    });
+
+    it('marks out-of-reach rope ends faint dashed', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const anchor = rope.bodies[0].position;
+        const ghost = balloonKnotAt(anchor.x + 20, anchor.y + 60); // well below the span
+        const ctx = makeRecordingCtx();
+
+        new Renderer()._drawRopeEndpointHints(ctx, [rope, ghost], ghost);
+
+        expect(ctx.strokeStyles).toContain(FAR_POINT_STYLE);
+        expect(ctx.strokeStyles).not.toContain(TIED_STYLE);
+        expect(ctx.setLineDash).toHaveBeenCalledWith([3, 3]);
+        rope.dispose();
+    });
+    it('shows both styles at once when one rope end is reachable and the other is not', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const ghost = balloonKnotAt(end.x, end.y); // endpoint 1 in reach, anchor far
+        const ctx = makeRecordingCtx();
+
+        new Renderer()._drawRopeEndpointHints(ctx, [rope, ghost], ghost);
+
+        expect(ctx.strokeStyles).toContain(TIED_STYLE);
+        expect(ctx.strokeStyles).toContain(FAR_POINT_STYLE);
+        rope.dispose();
+    });
+
+    it('skips a severed rope entirely', () => {
+        const rope = new Rope(300, 100, { severed: true });
+        const anchor = rope.bodies[0].position;
+        const ghost = balloonKnotAt(anchor.x, anchor.y);
+        const ctx = makeRecordingCtx();
+
+        new Renderer()._drawRopeEndpointHints(ctx, [rope, ghost], ghost);
 
         expect(ctx.arc).not.toHaveBeenCalled();
         rope.dispose();

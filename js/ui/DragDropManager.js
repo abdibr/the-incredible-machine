@@ -279,6 +279,7 @@ class DragDropManager {
                 obj.setPosition(clamped.x, clamped.y);
             }
             if (type === 'rope') this._snapRopeEndpoints(obj);
+            else this._snapObjectToRopes(obj);
             this._objects.push(obj);
             this._selectObject(obj);
             eventBus.emit('object:placed', { type, id: obj.id, object: obj });
@@ -328,6 +329,50 @@ class DragDropManager {
         for (const endpoint of [0, 1]) {
             const match = matches[endpoint];
             if (match) rope.attachEndpoint(endpoint, match.target, match.pointId);
+        }
+    }
+
+    /**
+     * Object placement snap (issue 04, the object-side mirror of
+     * _snapRopeEndpoints): when an object that offers attachment points
+     * (balloon knot, bucket rim, …) is dropped within ROPE_SNAP_RADIUS of
+     * a board rope's endpoint (endpoint 0 = its anchor, endpoint 1 = its
+     * free end), that endpoint ties itself to the new object's point —
+     * tying works whichever part is placed last, including re-tying a rope
+     * after its payload was deleted. The laid rope is not re-layed
+     * (rope-side placement re-lays a fresh, knotless rope; re-spanning here
+     * could drag away its other endpoint's knots): the length-0 / 0.9
+     * stiffness knot link closes the remaining ≤ ROPE_SNAP_RADIUS gap on
+     * the first play step (Rope._reconcileAttachments).
+     * @param {import('../objects/BaseObject.js').default} obj — fresh object, out of the physics world
+     * @private
+     */
+    _snapObjectToRopes(obj) {
+        const points = (obj.attachmentPoints ?? []).map((point) => ({
+            id: point.id,
+            world: obj.getAttachmentWorldPoint(point.id),
+        })).filter((point) => point.world);
+        if (points.length === 0) return;
+
+        for (const rope of this._objects) {
+            if (rope === obj || rope.type !== 'rope') continue;
+            if (rope.isSevered) continue; // a severed rope cannot hold a payload
+            const bodies = rope.bodies;
+            if (!bodies[0]) continue; // disposed rope
+
+            const spots = [bodies[0].position, bodies[bodies.length - 1].position];
+            for (const endpoint of [0, 1]) {
+                let match = null;
+                for (const point of points) {
+                    const dist = Math.hypot(
+                        point.world.x - spots[endpoint].x,
+                        point.world.y - spots[endpoint].y
+                    );
+                    if (dist > this.ROPE_SNAP_RADIUS) continue;
+                    if (!match || dist < match.dist) match = { ...point, dist };
+                }
+                if (match) rope.attachEndpoint(endpoint, obj, match.id);
+            }
         }
     }
 

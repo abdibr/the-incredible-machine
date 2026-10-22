@@ -127,7 +127,7 @@ export function registerAllObjects() {
     objectRegistry.register('rope', Rope, {
         displayName: 'Rope',
         category: 'triggers',
-        description: 'Each end ties to balloon knots and bucket rims — drop it right up close to one.',
+        description: 'Each end ties to balloon knots and bucket rims — drop either part right up close to the other.',
     });
 
     objectRegistry.register('scissors', Scissors, {
