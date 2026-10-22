@@ -12,7 +12,9 @@ dist
 dist-ssr
 *.local
 
-# Editor directories and files
+# Scratch artifacts (agent workspaces; see docs/plans/ §5)
+.scratch/
+.vitest-*.txt
 .vscode/*
 !.vscode/extensions.json
 .idea
