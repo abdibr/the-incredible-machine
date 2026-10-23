@@ -10,7 +10,7 @@ import { eventBus } from '../EventBus.js';
 import { InteractionMatrix } from '../interactions/InteractionMatrix.js';
 import { DEFAULT_INTERACTION_ROWS } from '../interactions/rules.js';
 
-const { Engine, World, Bodies, Body, Composite, Events, Query, Bounds, Collision, Sleeping, Pairs, Constraint } = Matter;
+const { Engine, World, Bodies, Body, Composite, Events, Query, Bounds, Collision, Sleeping, Pairs, Constraint, Vertices, Axes } = Matter;
 
 export class PhysicsEngine {
     /**
@@ -184,9 +184,41 @@ export class PhysicsEngine {
                     // step (floating point), so restored contacts would
                     // differ; store it to keep restores bit-deterministic.
                     vertices: b.vertices.map(v => ({ x: v.x, y: v.y })),
+                    // Recorded verbatim, not re-derived: bounds carry
+                    // one-sided velocity inflation from whenever each
+                    // sub-phase last wrote them (the constraint/solver
+                    // phases can skip idle bodies), so the recorded value
+                    // is not a pure function of vertices + velocity —
+                    // bounds.min.y can lag the live velocity by ~7e-3 px.
+                    bounds: {
+                        min: { x: b.bounds.min.x, y: b.bounds.min.y },
+                        max: { x: b.bounds.max.x, y: b.bounds.max.y },
+                    },
                     positionImpulse: { x: b.positionImpulse.x, y: b.positionImpulse.y },
+                    // Constraint-solver warm-start accumulator: solve() adds
+                    // to it per iteration, preSolveAll re-applies it to
+                    // body.position/angle at the start of the next step and
+                    // postSolveAll transfers it onto vertices/bounds before
+                    // damping it. A stale cache perturbs the first post-
+                    // restore solve, so it is recorded with the pose.
+                    constraintImpulse: {
+                        x: b.constraintImpulse.x,
+                        y: b.constraintImpulse.y,
+                        angle: b.constraintImpulse.angle,
+                    },
                     motion: b.motion,
                     sleepCounter: b.sleepCounter,
+                    // Mass model, including behavioral overrides such as
+                    // Body.setInertia(Infinity) rotation locks or setMass /
+                    // setDensity tweaks: Body.setVertices would otherwise
+                    // recompute all of these from the vertex set and erase
+                    // them. (Snapshots are in-memory only — Infinity
+                    // round-trips; this record is never JSON-serialized.)
+                    mass: b.mass,
+                    inverseMass: b.inverseMass,
+                    inertia: b.inertia,
+                    inverseInertia: b.inverseInertia,
+                    density: b.density,
                 })),
             });
         }
@@ -269,18 +301,55 @@ export class PhysicsEngine {
                     body.positionImpulse.y = bodyState.positionImpulse.y;
                 }
 
+                // Constraint warm-start cache: preSolveAll adds this to
+                // body.position/angle next step (postSolveAll moves it onto
+                // vertices/bounds and damps it). Restoring the snapshot-time
+                // cache makes the first post-restore solve bit-reproducible.
+                if (bodyState.constraintImpulse) {
+                    body.constraintImpulse.x = bodyState.constraintImpulse.x;
+                    body.constraintImpulse.y = bodyState.constraintImpulse.y;
+                    body.constraintImpulse.angle = bodyState.constraintImpulse.angle;
+                }
+
                 // Sleeping is per-body numeric state; restore it so sleep
                 // evolution replays identically (engine has sleeping on).
                 body.motion = bodyState.motion ?? body.motion;
                 body.sleepCounter = bodyState.sleepCounter ?? body.sleepCounter;
 
-                // Restore exact vertex geometry LAST (setVertices() orients
-                // around body.position): per-step rotate/translate
-                // accumulate floating-point drift into vertices, so the
-                // SAT solver would otherwise see slightly different
-                // contacts than the original run.
+                // Restore exact vertex geometry and the snapshot-time mass
+                // model directly. The previous Body.setVertices(data) path
+                // recomputes mass/inertia from the vertex set (setVertices
+                // runs Body.setMass + Body.setInertia internally), erasing
+                // behavioral overrides like Body.setInertia(Infinity)
+                // rotation locks, and re-centers vertices through a centroid
+                // round-trip (Vertices.centre translate out/in) that shifts
+                // previously-drifted vertex sets by ~1e-2 px. Direct
+                // assignment round-trips vertices bit-exactly; axes and area
+                // are pure functions of the restored vertex set. Bounds are
+                // reinstated from the record below, not derived here.
                 if (bodyState.vertices) {
-                    Body.setVertices(body, bodyState.vertices);
+                    body.vertices = Vertices.create(bodyState.vertices, body);
+                    body.axes = Axes.fromVertices(body.vertices);
+                    body.area = Vertices.area(body.vertices);
+                    // Bounds are NOT re-derived from vertices + velocity:
+                    // each sub-phase's Bounds.update inflates only the side
+                    // the body is moving toward, and idle bodies can skip
+                    // updates entirely, so the recorded bounds carry stale
+                    // inflation no longer derivable from the final state.
+                    // Reinstate the snapshot-time value verbatim.
+                    if (bodyState.bounds) {
+                        body.bounds.min.x = bodyState.bounds.min.x;
+                        body.bounds.min.y = bodyState.bounds.min.y;
+                        body.bounds.max.x = bodyState.bounds.max.x;
+                        body.bounds.max.y = bodyState.bounds.max.y;
+                    }
+                }
+                if (bodyState.mass !== undefined) {
+                    body.mass = bodyState.mass;
+                    body.inverseMass = bodyState.inverseMass;
+                    body.inertia = bodyState.inertia;
+                    body.inverseInertia = bodyState.inverseInertia;
+                    body.density = bodyState.density;
                 }
 
                 appliedBodyIds.add(body.id);

@@ -66,6 +66,20 @@ export default class Pulley extends BaseObject {
         }
         );
 
+        // Lock both platforms against rotation. Each rope is a point
+        // constraint anchored at the platform's center of mass (pointA
+        // defaults to the body's position), so it can exert no restoring
+        // torque — an off-center rider's landing impulse winds the plank up
+        // freely (bug 20261023: a baseball spun the left platform to
+        // ~0.085 rad/step, coasting for hundreds of steps as angular
+        // frictionAir decays only ~1%/step) while draw() paints it
+        // axis-aligned, so riders visibly fall through the "horizontal"
+        // panel. inertia = Infinity is Matter's own pattern for suppressing
+        // rotation (inverseInertia = 0, as used for static bodies): the
+        // platforms keep swaying/sinking with the rope but never spin.
+        Body.setInertia(this._leftPlatform, Infinity);
+        Body.setInertia(this._rightPlatform, Infinity);
+
         // Constraints — connect each platform to the pivot point
         this._leftConstraint = Constraint.create({
             bodyA: this._leftPlatform,
