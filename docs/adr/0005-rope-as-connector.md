@@ -4,6 +4,8 @@
 - **Status:** Accepted
 - **Scope:** Issue 04 (rope as a connector). Covers `tests/bucket.test.js`, `tests/rope-connector.test.js`, `tests/connector-reset.test.js`, `tests/rope-snap-hints.test.js` — the feature's executable contracts.
 
+> **Superseded in part (2026-10-23) by ADR 0007** (`docs/adr/0007-rope-connection-redesign.md`), the rope connection redesign: the connection-UX decisions of this record — tying via drop-snap and pull-to-tie proximity, snap/attract hint visuals, endpoint-only knot addressing, clamped-drop tying, and sever-as-total-demolition — are replaced by explicit click-to-connect via squares, segment-indexed knots, fixed-length/unlimited-span types with beyond-reach refusal, wholesale drag-untie, and piece severing. The engine-link realize-per-step seam, the ordinal-token round-trip and two-phase bind, snapshot rewind convergence, the attachment-point contract, the welded-bucket construction, and the chain-rest-length corrections stand unchanged.
+
 ## Context
 
 Issue 04 makes two machine structures real. First, buckets must be *movable game pieces*: hoisted, lowered or dropped by ropes and payloads (goal buckets stay fixed). Second, a **placed rope must be able to tie its two endpoints to other objects at placement time** — and the tie must survive play/reset cycles, release payloads when the rope severs, and rewind correctly across snapshots.

@@ -1,5 +1,14 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-10-23 — ADR 0007: rope connection redesign decision record (issue #51)
+
+The rope-redesign design grilling's settled decisions are now the citable decision record: **ADR 0007** (`docs/adr/0007-rope-connection-redesign.md`) — one `Rope` class exposed as the toolbox types `rope` and `free-rope`; explicit click-to-connect via squares replacing every proximity path; chain-of-segment bodies with segment-indexed knot tokens (`{ segment, targetType, targetOrdinal, pointId }`); fixed-length pinned rope (100 px default drop, freeze on first tie, beyond-reach refusal) vs unlimited-span free rope; inert pre-tie bundle; piece severing into connected components; wholesale drag-untie (targets stay); edit-only squares/seek with clean stage-change cancellation. Future-routing compatibility (sheave/wrap-point machinery, deterministic geometric routing as its own router object, pulleys stay closed, whole-rope sever deferred) and the out-of-scope list (EditorPanel save, ball attachment points, routed pulley design) are recorded.
+
+- **Numbering**: ticketed on the fork as "ADR 0006" (issues #51–#59), but 0006 was claimed 2026-10-21 by the session bug-file record; the record ships as **ADR 0007** with the mapping noted in its header and on issue #51.
+- **ADR 0005** gained a superseded-pointer note for its connection-UX parts (proximity drop-snap/pull-to-tie, endpoint-only knots, snap/attract hints, whole-rope sever); the engine-link seam, token round-trip, welded buckets, and chain rest lengths stand.
+- **GLOSSARY** gained "Rope redesign (ADR 0007)" (connect flow, bundle, segment tie point, sheave) and cross-references on the affected rope entries (endpoint, attachment point, knot, knot reconcile, ordinal token, snap hint).
+- Status: docs-only; full suite still **33 files / 356 tests, all green** (`cmd /c npm test`); issue #51 closed with the mapping comment.
+
 ## 2026-10-23 — Hardening: ramp surface material restored (trampoline follow-up)
 
 The general follow-up from the trampoline fix (`43486d4`): `js/objects/Ramp.js` declared a static body's material (`friction 0.5 / restitution 0.1`) that matter-js's static flip silently zeroed (→ 1 / 0). For today's population it is behaviorally inert — pairs resolve at `max(live restitutions)` / `min(live frictions)`, every ball variant (restitution ≥ 0.3, friction ≤ 0.5) dominates or washes out the blend, and even a domino resting on a ramp only shifts pair friction 0.6 → 0.5 — but it was a landmine: any future tuning of the ramp's surface would silently do nothing, exactly as nearly happened with the trampoline's 0.95. The ramp now re-asserts its declared material right after body creation, same pattern as Trampoline.js, via named constants `RAMP_FRICTION` / `RAMP_RESTITUTION` with the rationale documented at the constants.
