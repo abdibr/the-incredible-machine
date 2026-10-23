@@ -254,7 +254,11 @@ class EditorPanel {
 
     _show() {
         this.container.classList.remove('hidden');
-        // Editor panel floats independently (not in overlay-container)
+        // #editor-overlay is a sibling of #overlay-container in index.html: it
+        // floats bottom-right instead of being a modal. LevelSelect/GoalOverlay
+        // toggle the shared shell's `hidden` on every mode change, so any real
+        // ancestry of this panel inside the shell would leave it unrenderable
+        // whenever the shell is hidden (display:none ignores the child styles).
         this.container.style.display = 'block';
     }
 

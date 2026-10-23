@@ -1,5 +1,13 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-10-23 — Bugfix: editor panel (and 🐞 Bug File section) never rendered when entering Sandbox
+
+User report: "I don't see any button in the UI". The panel never rendered in the live app: `#editor-overlay` was nested **inside** `#overlay-container`, whose `hidden` class `LevelSelect`/`GoalOverlay` toggle on every mode change — and the 🔧 Sandbox Mode button calls `levelSelect.hide()` (which re-hides the shared shell) **before** `setMode(AppMode.SANDBOX)`, so a `display:none` ancestor swallowed the floating panel no matter what its own classes said. Caught only by the pending manual browser pass; no test exercised ancestor visibility.
+
+- **`index.html`** — `#editor-overlay` moved out of `#overlay-container` as a sibling (the "floats independently" intent in `EditorPanel._show()`'s comment is now true in the DOM); the modal shell keeps only goal/level-select overlays.
+- **`js/ui/EditorPanel.js`** — `_show()` comment updated to document the placement constraint (no code change; the build/show logic was already correct).
+- **`tests/editor-overlay-structure.test.js`** (new, 2 tests) — pins the index.html structure (`#editor-overlay` exists exactly once and never inside the balanced `<div id="overlay-container">…</div>` block), and the real sandbox-entry sequence (`levelSelect.hide()` → `mode:changed` SANDBOX, fake-DOM conventions per `speed-wiring.test.js`): panel + every ancestor carry no `hidden`, 🐞 Bug File controls present (label, status line, notes, dense toggle, 💾 Export, 🩹 Recover hidden-by-default), honest idle status `not recording`; leaving SANDBOX still hides the panel.
+- Rebuilt `dist/` (`npm run build`) so the preview bundle carries the fix.
 ## 2026-10-21 — Session bug-file recorder + bit-exact replay harness (ADR 0006)
 
 Physics bugs are now reportable as **files** instead of playthroughs. An always-on SANDBOX session recorder captures each visit (build trace + play runs with per-play board snapshots, raw dt stream, normalized play events, sampled poses) and exports one self-contained "bug file" JSON download; a Node/vitest replay harness rebuilds each run from its snapshot, re-steps the exact recorded dt sequence, and prints a divergence report. The grilling interview locked all 16 decisions (plan doc `docs/plans/session-bug-file-recorder.md`; ADR `docs/adr/0006-session-bug-file.md`).

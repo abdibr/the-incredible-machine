@@ -33,8 +33,14 @@
     <div id="overlay-container" class="hidden">
       <div id="goal-overlay" class="overlay-panel hidden"></div>
       <div id="level-select-overlay" class="overlay-panel hidden"></div>
-      <div id="editor-overlay" class="overlay-panel hidden"></div>
     </div>
+
+    <!-- Editor panel — a deliberate SIBLING of #overlay-container, not a child:
+         LevelSelect/GoalOverlay toggle the shell's `hidden` on every mode change
+         (LevelSelect.hide() runs BEFORE setMode(SANDBOX)), and a display:none
+         ancestor would make the floating panel unrenderable no matter what its
+         own styles say. Kept outside so it truly floats bottom-right. -->
+    <div id="editor-overlay" class="overlay-panel hidden"></div>
   </div>
 
   <script type="module" src="/js/main.js"></script>
