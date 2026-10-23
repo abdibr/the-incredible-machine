@@ -358,7 +358,7 @@ describe('Discovery & wake seam (ADR 0002)', () => {
             for (let i = 0; i < 13; i++) engine.step(STEP_MS); // 0.08/frame release fires on frame 13
 
             expect(ball.isSleeping).toBe(false);
-            expect(ball.velocity.y).toBeLessThan(-1); // launch impulse delivered (measured ≈ -2.5)
+            expect(ball.velocity.y).toBeLessThan(-10); // launch impulse delivered (mass-proportional burst; measured ≈ -22 for the default bowling ball)
         });
 
         it('a sleeping rider is awakened and carried by a conveyor belt', () => {

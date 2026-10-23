@@ -156,7 +156,7 @@ export const DEFAULT_INTERACTION_ROWS = [
             match: "spring, via its 'spring-platform' body, off cooldown",
         },
         target: ANY,
-        handler: (spring) => spring.armLaunch(),
+        handler: (spring, other) => spring.armLaunch(other),
         test: 'spring ✕ platform contact triggers; cooldown suppresses retriggers',
     },
 
