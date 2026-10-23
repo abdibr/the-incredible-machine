@@ -33,19 +33,36 @@ export default class Bucket extends BaseObject {
         // Unfixed buckets are dynamic (issue 04 — a bucket can be lowered,
         // hoisted or dropped by ropes and payloads); fixed buckets stay
         // static exactly as before.
+        //
+        // The parts sit in flush contact by construction — the walls' inner
+        // faces exactly on the floor's ends, the sensor's bottom exactly on
+        // the floor's top — so Matter generates mutual contact pairs every
+        // step. With only centre-held welds those contacts resolved into
+        // off-centre nudges: a hanging bucket churned, its walls spun like
+        // pinwheels and the container folded (bug-20261023T152411Z-05xt).
+        // One exclusive negative collision group per bucket instance stops
+        // the self-resolution; groups differ between buckets, and against
+        // everything else the filter falls through to the default category
+        // masks (balls, ropes and walls all still collide with the parts).
+        let selfGroup = Body.nextGroup(true);
+        if (selfGroup === -1) selfGroup = Body.nextGroup(true); // −1 = the rope chain's reserved group
+
         this._leftWall = Bodies.rectangle(
             x - hw + wallThickness / 2, y, wallThickness, this._height, {
             isStatic: this._isFixed, label: 'bucket-wall', friction: 0.3,
+            collisionFilter: { group: selfGroup },
         }
         );
         this._rightWall = Bodies.rectangle(
             x + hw - wallThickness / 2, y, wallThickness, this._height, {
             isStatic: this._isFixed, label: 'bucket-wall', friction: 0.3,
+            collisionFilter: { group: selfGroup },
         }
         );
         this._floor = Bodies.rectangle(
             x, y + hh - wallThickness / 2, this._width - wallThickness * 2, wallThickness, {
             isStatic: this._isFixed, label: 'bucket-floor', friction: 0.3,
+            collisionFilter: { group: selfGroup },
         }
         );
 
@@ -55,6 +72,7 @@ export default class Bucket extends BaseObject {
             isStatic: this._isFixed,
             isSensor: true,
             label: 'bucket-sensor',
+            collisionFilter: { group: selfGroup },
         }
         );
 
@@ -95,14 +113,30 @@ export default class Bucket extends BaseObject {
 
     /**
      * Welds binding the bucket's four bodies into one rigid container
-     * (issue 04). Distance constraints with stiffness 1 and lengths taken
-     * from the construction layout: a triangle over wall-wall-floor plus
-     * the sensor pinned to the floor. They hold the shape under a dropped
-     * ball load — see tests/bucket.test.js.
+     * (issue 04; rigid scheme per ADR 0005 decision 12). Each body-to-body
+     * joint is TWO zero-length constraints anchored at both ends of the
+     * parts' construction contact seam — two distinct coinciding points
+     * lock the pair's relative rotation, which a single centre-to-centre
+     * distance weld leaves free (the pinwheel/fold failure recorded in
+     * bug-20261023T152411Z-05xt). The wall↔wall weld keeps a centre
+     * distance across the rim to triangulate the mouth's aperture. All
+     * lengths are satisfied exactly by the construction layout, so no
+     * weld starts under load.
      * @private
      * @returns {Matter.Constraint[]}
      */
     _buildWelds() {
+        const wt = WALL_THICKNESS;
+        const floorHalf = (this._width - 2 * wt) / 2;      // 20: the floor's half-length
+        const floorHalfThickness = wt / 2;                 // 2.5
+        const rimY = this._height / 2 - wt;                // 15: floor's top edge, wall-local
+        const wallBottomY = this._height / 2;              // 20: the walls' bottom end
+        const sensorHalf = (this._width - 2 * wt - 4) / 2; // 18: the sensor's half-width
+        const sensorBottomY = this._height * 0.25;         // 10: the sensor's bottom edge
+
+        const pin = (bodyA, pointA, bodyB, pointB) => Constraint.create({
+            bodyA, bodyB, pointA, pointB, length: 0, stiffness: 1,
+        });
         const weld = (bodyA, bodyB) => Constraint.create({
             bodyA,
             bodyB,
@@ -113,10 +147,17 @@ export default class Bucket extends BaseObject {
             stiffness: 1,
         });
         return [
+            // Rim: wall↔wall centre distance triangulates the mouth
             weld(this._leftWall, this._rightWall),
-            weld(this._leftWall, this._floor),
-            weld(this._rightWall, this._floor),
-            weld(this._sensor, this._floor),
+            // Left wall ↔ floor: both ends of their shared edge seam
+            pin(this._leftWall,  { x:  wt / 2, y: rimY },       this._floor, { x: -floorHalf, y: -floorHalfThickness }),
+            pin(this._leftWall,  { x:  wt / 2, y: wallBottomY }, this._floor, { x: -floorHalf, y:  floorHalfThickness }),
+            // Right wall ↔ floor (mirrored)
+            pin(this._rightWall, { x: -wt / 2, y: rimY },       this._floor, { x:  floorHalf, y: -floorHalfThickness }),
+            pin(this._rightWall, { x: -wt / 2, y: wallBottomY }, this._floor, { x:  floorHalf, y:  floorHalfThickness }),
+            // Sensor ↔ floor: both ends of their flush seam
+            pin(this._sensor, { x: -sensorHalf, y: sensorBottomY }, this._floor, { x: -sensorHalf, y: -floorHalfThickness }),
+            pin(this._sensor, { x:  sensorHalf, y: sensorBottomY }, this._floor, { x:  sensorHalf, y: -floorHalfThickness }),
         ];
     }
 
@@ -193,15 +234,23 @@ export default class Bucket extends BaseObject {
     }
 
     draw(ctx) {
-        const x = this._leftWall.position.x + 2.5;
-        const y = this._leftWall.position.y;
         const w = this._width;
         const h = this._height;
         const hw = w / 2 - 2.5;
         const hh = h / 2;
 
         ctx.save();
-        ctx.translate(x + hw, y);
+        // Draw in the floor body's frame (issue 04, ADR 0005 decision 12):
+        // the rigid welds make the four parts one container whose pose the
+        // floor body carries — the same body the `rim` attachment point
+        // rides — so anchoring the painting on the floor (rotating with its
+        // angle) keeps the render welded to the physics for hangs, hoists
+        // and swings. The offsets are the construction offsets from the
+        // floor's centre to the drawn shape's origin; upright they match
+        // the previous left-wall-anchored origin pixel for pixel.
+        ctx.translate(this._floor.position.x, this._floor.position.y);
+        ctx.rotate(this._floor.angle);
+        ctx.translate(2.5, -(hh - WALL_THICKNESS / 2));
 
         // Bucket interior (dark)
         ctx.fillStyle = BUCKET_INNER;

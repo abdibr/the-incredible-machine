@@ -39,11 +39,12 @@ describe('Bucket mobility — welded dynamic container (issue 04)', () => {
         ];
     }
 
-    it('builds dynamic bodies with four weld constraints when not fixed', () => {
+    it('builds dynamic bodies with rigid welds and an exclusive collision group when not fixed', () => {
         const bucket = new Bucket(300, 200);
         expect(bucket.bodies).toHaveLength(4);
         for (const body of bucket.bodies) expect(body.isStatic).toBe(false);
-        expect(bucket.constraints).toHaveLength(4);
+        // Rim weld + two seam-end pins per joint (wall↔floor ×2, sensor↔floor)
+        expect(bucket.constraints).toHaveLength(7);
         // Every weld ties two of the bucket's own bodies together
         const bodySet = new Set(bucket.bodies);
         for (const weld of bucket.constraints) {
@@ -51,6 +52,15 @@ describe('Bucket mobility — welded dynamic container (issue 04)', () => {
             expect(bodySet.has(weld.bodyB)).toBe(true);
             expect(weld.stiffness).toBe(1);
         }
+        // One exclusive negative collision group shared by all four parts:
+        // the parts sit in flush contact by construction and must never
+        // resolve self-pairs (the pinwheel churn of bug-20261023T152411Z-05xt)
+        const groups = bucket.bodies.map((b) => b.collisionFilter.group);
+        expect(groups[0]).toBeLessThan(0);
+        for (const g of groups) expect(g).toBe(groups[0]);
+        // …but never the rope chain's reserved group −1 (rope segments must
+        // still collide with — and rest inside — bucket parts)
+        expect(groups[0]).not.toBe(-1);
     });
 
     it('falls freely and holds its shape while falling', () => {
@@ -68,6 +78,11 @@ describe('Bucket mobility — welded dynamic container (issue 04)', () => {
         }
         for (const [i, d] of shapeProfile(bucket).entries()) {
             expect(Math.abs(d - shape0[i])).toBeLessThan(2);
+        }
+        // Rigid welds + no self-contact: nothing torques the parts in free
+        // fall — the container rotates as one body only when contacted
+        for (const body of bucket.bodies) {
+            expect(Math.abs(body.angle)).toBeLessThan(0.1);
         }
         physics.dispose();
     });
@@ -119,7 +134,9 @@ describe('Bucket mobility — welded dynamic container (issue 04)', () => {
         const freeData = free.serialize();
         expect(freeData.isFixed).toBe(false);
         const freeBack = Bucket.deserialize(freeData);
-        expect(freeBack.constraints).toHaveLength(4);
+        // Welds derive from the construction layout (ADR 0005 decision 12),
+        // so the rebuilt object re-welds the full rigid scheme
+        expect(freeBack.constraints).toHaveLength(7);
         expect(freeBack.bodies.every((b) => !b.isStatic)).toBe(true);
     });
 

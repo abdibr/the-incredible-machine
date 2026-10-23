@@ -110,9 +110,13 @@ export default class Rope extends BaseObject {
 
     /**
      * Build the chain constraints along the current layout (anchor→first
-     * segment, then consecutive segments). Extracted so construction, the
-     * severed→intact rewind and setEndpoints re-lays all build identical
-     * chains for a given span.
+     * segment, then consecutive segments). Each link's rest length equals
+     * that pair's laid distance — anchor→seg-0 half of segLength, seg↔seg
+     * the full segLength — so the intact chain rests at the laid span
+     * (shorter lengths yank the rope violently inboard on the first play
+     * steps and leave it permanently over-tensioned; ADR 0005 decision 12).
+     * Extracted so construction, the severed→intact rewind and setEndpoints
+     * re-lays all build identical chains for a given span.
      * @param {number} [spanLength] - end-to-end span the chain is built for
      * @returns {Matter.Constraint[]}
      * @private
@@ -132,7 +136,7 @@ export default class Rope extends BaseObject {
                 bodyB: this._segments[i + 1],
                 stiffness: 0.8,
                 damping: 0.1,
-                length: segLength * 0.6,
+                length: segLength,
             }));
         }
         return chain;

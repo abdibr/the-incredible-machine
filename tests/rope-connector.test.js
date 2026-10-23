@@ -80,14 +80,17 @@ describe('Rope as connector (issue 04)', () => {
         rope.attachEndpoint(1, balloon, 'knot');
         for (let i = 0; i < 10; i++) physics.step(16.67); // realize the link, let it strain
         expect(physics.getAttachedConstraints()).toHaveLength(1);
-        const balloonYAtSever = balloon.bodies[0].position.y;
 
         rope.sever();
         // The engine-attached link is co-terminated with the chain
         expect(physics.getAttachedConstraints()).toHaveLength(0);
-        // The freed balloon keeps rising (buoyancy, unrestrained)
+        // The freed balloon keeps rising (buoyancy, unrestrained): measured
+        // from its placement, not from where the strain phase's yank left it
+        // — the zero-length knot realizes the API tie's gap on the first
+        // step (the app flow's pull-to-tie closes that gap at placement)
+        const balloonYAtAttach = 220;
         for (let i = 0; i < 40; i++) physics.step(16.67);
-        expect(balloon.bodies[0].position.y).toBeLessThan(balloonYAtSever - 10);
+        expect(balloon.bodies[0].position.y).toBeLessThan(balloonYAtAttach - 50);
         physics.dispose();
     });
 
@@ -312,12 +315,16 @@ describe('Rope as connector (issue 04)', () => {
         physics.addObject(rope);
         const anchor = rope.bodies[0];
         for (let i = 0; i < 20; i++) physics.step(16.67);
+        // The chain rests at (or slightly under) the laid span when it
+        // dangles from the anchor — every body stays within reach. The old
+        // 140 bound ("slack chain contracts") pinned the contracting chain.
+        const span = Math.hypot(60, 180);
         for (const body of rope.bodies) {
             const dist = Math.hypot(
                 body.position.x - anchor.position.x,
                 body.position.y - anchor.position.y,
             );
-            expect(dist).toBeLessThan(140); // slack chain contracts, but stays attached
+            expect(dist).toBeLessThan(span + 15); // rests at the laid reach, stays attached
         }
         physics.dispose();
         rope.dispose();
