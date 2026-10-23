@@ -154,6 +154,10 @@ function init() {
 
     // 9. Drag-and-Drop (after Renderer + Toolbox)
     dragDropManager.init(state.placedObjects);
+    // The renderer paints the click-to-connect squares from the same flow
+    // instance the drag-drop handler delegates square clicks to
+    // (ADR 0007 decision 2).
+    renderer.setConnectFlow(dragDropManager.connectFlow);
 
     // 10. Session bug-file recorder (ADR 0006) — always-on in SANDBOX;
     //     the Editor panel surfaces export / recovery for it.

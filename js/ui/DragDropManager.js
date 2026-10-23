@@ -17,6 +17,7 @@ import { renderer } from '../render/Renderer.js';
 import { toolbox } from './Toolbox.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 import { ROPE_SNAP_RADIUS, ROPE_ATTRACT_RADIUS } from '../objects/Rope.js';
+import ConnectFlow from './ConnectFlow.js';
 
 class DragDropManager {
     constructor() {
@@ -31,6 +32,10 @@ class DragDropManager {
          * this close to a rope endpoint is pulled onto it and tied exactly
          * there — shared with the renderer's endpoint glow hints. */
         this.ROPE_ATTRACT_RADIUS = ROPE_ATTRACT_RADIUS;
+
+        /** Click-to-connect flow (ADR 0007 decision 2): this manager delegates
+         * square clicks (seek entry, tie, cancel, untie) to it. */
+        this._connectFlow = new ConnectFlow();
 
         /** Current edit mode */
         this._mode = 'MENU';
@@ -71,50 +76,28 @@ class DragDropManager {
             eventBus.emit('drag:ghost-update', { type, x: canvasPos.x, y: canvasPos.y });
         });
 
+        // ── Click-to-connect flow (ADR 0007 decision 2) ──
+        this._connectFlow.init();
+
         // ── Canvas mousedown ──
         canvas.addEventListener('mousedown', (e) => {
             if (!this._enabled) return;
             if (e.button !== 0) return; // Left button only
 
             const pos = renderer.pageToCanvas(e.pageX, e.pageY);
-
-            // Check for selection handle clicks first
-            if (this._selectedObject) {
-                const handle = renderer.getHandleAtPoint(pos.x, pos.y);
-                if (handle === 'delete') {
-                    this._deleteSelected();
-                    return;
-                }
-                if (handle === 'move') {
-                    this._startMoveObject(pos.x, pos.y);
-                    return;
-                }
-                if (handle === 'rotate') {
-                    this._startRotateObject(pos.x, pos.y);
-                    return;
-                }
-            }
-
-            // Check for clicking on an object
-            const obj = renderer.getObjectAtPoint(pos.x, pos.y, this._objects);
-            if (obj) {
-                if (obj.isFixed) {
-                    // Can't interact with fixed objects
-                    this._selectObject(null);
-                } else {
-                    this._selectObject(obj);
-                    this._startMoveObject(pos.x, pos.y);
-                }
-            } else {
-                this._selectObject(null);
-            }
+            this._onCanvasPointerDown(pos.x, pos.y);
         });
 
         // ── Global mousemove ──
         document.addEventListener('mousemove', (e) => {
-            if (!this._dragging) return;
-
             const pos = renderer.pageToCanvas(e.pageX, e.pageY);
+
+            // Hover-reveal for the connect-flow squares; the seek preview
+            // line aims wherever the cursor is while a seek is in flight.
+            renderer.hoverPoint = pos;
+            if (this._connectFlow.seek) this._connectFlow.setPreview(pos.x, pos.y);
+
+            if (!this._dragging) return;
 
             if (this._dragType === 'toolbox') {
                 eventBus.emit('drag:ghost-update', { type: this._dragObjType, x: pos.x, y: pos.y });
@@ -191,16 +174,13 @@ class DragDropManager {
             }
         });
 
-        // ── Delete key ──
-        document.addEventListener('keydown', (e) => {
-            if (!this._enabled) return;
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-            if ((e.code === 'Delete' || e.code === 'Backspace') && this._selectedObject) {
-                e.preventDefault();
-                this._deleteSelected();
-            }
+        // ── Cursor leaves the canvas: no hover target ──
+        canvas.addEventListener('mouseleave', () => {
+            renderer.hoverPoint = null;
         });
+
+        // ── Keyboard (Esc / Delete) ──
+        document.addEventListener('keydown', (e) => this._onKeyDown(e));
 
         // ── Mode changes ──
         eventBus.on('mode:changed', ({ newMode }) => {
@@ -210,11 +190,88 @@ class DragDropManager {
             if (!this._enabled) {
                 this._selectObject(null);
                 this._dragging = false;
+                this._connectFlow.cancel(); // leaving the edit stage ends any seek
+                renderer.hoverPoint = null;
                 eventBus.emit('drag:ghost-clear');
             }
         });
 
         console.log('[DragDropManager] Initialized');
+    }
+
+    /**
+     * The flow the drag-drop handler delegates square clicks to — the
+     * renderer draws from the same instance (main.js wires it in).
+     * @returns {ConnectFlow}
+     */
+    get connectFlow() {
+        return this._connectFlow;
+    }
+
+    /**
+     * Pointer-down on the canvas body, in canvas coordinates. Order matters:
+     * selection handles first, then the click-to-connect squares (a seek
+     * entry, untie, tie or swallowed seek-click consumes the pointer before
+     * selection can claim it), then normal selection/move.
+     * @param {number} x - canvas x
+     * @param {number} y - canvas y
+     * @private
+     */
+    _onCanvasPointerDown(x, y) {
+        // Check for selection handle clicks first
+        if (this._selectedObject) {
+            const handle = renderer.getHandleAtPoint(x, y);
+            if (handle === 'delete') {
+                this._deleteSelected();
+                return;
+            }
+            if (handle === 'move') {
+                this._startMoveObject(x, y);
+                return;
+            }
+            if (handle === 'rotate') {
+                this._startRotateObject(x, y);
+                return;
+            }
+        }
+
+        // Click-to-connect squares (ADR 0007 decision 2)
+        if (this._connectFlow.handlePointerDown(x, y, this._objects)) return;
+
+        // Check for clicking on an object
+        const obj = renderer.getObjectAtPoint(x, y, this._objects);
+        if (obj) {
+            if (obj.isFixed) {
+                // Can't interact with fixed objects
+                this._selectObject(null);
+            } else {
+                this._selectObject(obj);
+                this._startMoveObject(x, y);
+            }
+        } else {
+            this._selectObject(null);
+        }
+    }
+
+    /**
+     * Global keyboard handling: Esc cancels an in-flight seek; Delete or
+     * Backspace removes the selection.
+     * @param {KeyboardEvent} e
+     * @private
+     */
+    _onKeyDown(e) {
+        if (!this._enabled) return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        if (e.code === 'Escape') {
+            this._connectFlow.cancel(); // AC: Esc cancels the seek
+            return;
+        }
+
+        if ((e.code === 'Delete' || e.code === 'Backspace') && this._selectedObject) {
+            e.preventDefault();
+            this._deleteSelected();
+        }
     }
 
     /**

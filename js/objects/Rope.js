@@ -177,6 +177,27 @@ export default class Rope extends BaseObject {
     }
 
     /**
+     * Untie one knot (ADR 0007 decision 8 — untie stays per-knot) identified
+     * by its live ref — the rope side frees, the target keeps its attachment
+     * point. The physical link drops on the next reconcile step (an emptied
+     * or shrunk slot releases its former links, see _reconcileAttachments).
+     * @param {number} endpoint
+     * @param {import('./BaseObject.js').default} target
+     * @param {string} pointId
+     * @returns {boolean} true when a matching knot was removed
+     */
+    detachEndpoint(endpoint, target, pointId) {
+        if (endpoint !== 0 && endpoint !== 1) {
+            throw new Error(`[Rope] detachEndpoint: endpoint must be 0 or 1, got ${endpoint}`);
+        }
+        const knots = this._attachments[endpoint];
+        const idx = knots.findIndex((knot) => knot.target === target && knot.pointId === pointId);
+        if (idx === -1) return false;
+        knots.splice(idx, 1);
+        return true;
+    }
+
+    /**
      * Live knots in ref form for serialization (issue 04): the board
      * annotator (levelReset.serializePlacedBoard) maps each target to its
      * board ordinal and writes `attachments` onto the rope's serialized

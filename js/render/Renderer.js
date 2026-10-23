@@ -30,6 +30,12 @@ class Renderer {
         /** Current application mode */
         this._mode = 'MENU';
 
+        /** Connect-flow board (ADR 0007 decision 2), injected via setConnectFlow */
+        this._connectFlow = null;
+
+        /** Cursor canvas position for hover-reveal squares (set by DragDropManager) */
+        this.hoverPoint = null;
+
         /** Objects list reference (set each frame) */
         this._objects = [];
 
@@ -100,6 +106,15 @@ class Renderer {
      */
     setObjects(objects) {
         this._objects = objects;
+    }
+
+    /**
+     * Wire the click-to-connect flow this renderer draws from — the same
+     * instance the drag-drop handler delegates square clicks to.
+     * @param {import('../ui/ConnectFlow.js').default|null} flow
+     */
+    setConnectFlow(flow) {
+        this._connectFlow = flow;
     }
 
     /**
@@ -177,6 +192,11 @@ class Renderer {
                 this._drawRopeEndpointHints(ctx, objs, this._ghostObj);
             }
         }
+
+        // 5.6. Click-to-connect squares (ADR 0007 decision 2): rope endpoint
+        // handles, target squares, seek preview and glow — edit modes only
+        // (the drawer gates itself, so PLAY boards draw nothing).
+        this._drawConnectSquares(ctx, objs);
     }
 
     /**
@@ -523,6 +543,80 @@ class Renderer {
                 ctx.stroke();
             }
         }
+        ctx.restore();
+    }
+
+    /**
+     * The click-to-connect squares (ADR 0007 decision 2): rope endpoint
+     * handles, attachment-point target squares, and — while a seek is in
+     * flight — the preview line to the cursor and the glow on every valid
+     * target. Edit modes only (EDITING/SANDBOX): gates itself so PLAY
+     * boards draw nothing, exactly like the proximity hints above.
+     *
+     * Geometry comes from the flow (getEndpointSquares/getTieSquares — one
+     * source for clicks and pixels); this method only paints it.
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {BaseObject[]} objs
+     * @private
+     */
+    _drawConnectSquares(ctx, objs) {
+        if (this._mode !== 'EDITING' && this._mode !== 'SANDBOX') return;
+        if (!this._connectFlow) return;
+        const squares = this._connectFlow.getEndpointSquares(objs, this.hoverPoint);
+        const targets = this._connectFlow.getTieSquares(objs, this.hoverPoint);
+
+        ctx.save();
+
+        // The seek preview: the seeking square aims a dashed tie-green line
+        // at the cursor.
+        const seeking = squares.find((s) => s.seeking);
+        if (seeking && this._connectFlow.preview) {
+            ctx.beginPath();
+            ctx.moveTo(seeking.x, seeking.y);
+            ctx.lineTo(this._connectFlow.preview.x, this._connectFlow.preview.y);
+            ctx.strokeStyle = '#2f9e2f';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 4]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // Target squares: glow green during a seek (every target is valid —
+        // click to tie), faint on bare hover.
+        for (const target of targets) {
+            if (!target.visible) continue;
+            const half = target.glows ? 9 : 7;
+            ctx.fillStyle = target.glows
+                ? 'rgba(64, 192, 64, 0.25)'
+                : 'rgba(64, 192, 64, 0.08)';
+            ctx.strokeStyle = target.glows
+                ? '#2f9e2f'
+                : 'rgba(47, 158, 47, 0.5)';
+            ctx.lineWidth = target.glows ? 2 : 1;
+            ctx.fillRect(target.x - half, target.y - half, half * 2, half * 2);
+            ctx.strokeRect(target.x - half, target.y - half, half * 2, half * 2);
+        }
+
+        // Rope endpoint squares on top: tied structure persists (gold), a
+        // seeking square lights up (handle blue), a free square is
+        // hover-revealed (white).
+        for (const square of squares) {
+            if (!square.visible) continue;
+            ctx.fillStyle = square.seeking
+                ? 'rgba(64, 128, 255, 0.9)'
+                : square.tied
+                    ? 'rgba(184, 134, 11, 0.85)'
+                    : 'rgba(255, 255, 255, 0.8)';
+            ctx.strokeStyle = square.seeking
+                ? '#4080ff'
+                : square.tied
+                    ? '#8a6508'
+                    : '#777';
+            ctx.lineWidth = 1.5;
+            ctx.fillRect(square.x - 7, square.y - 7, 14, 14);
+            ctx.strokeRect(square.x - 7, square.y - 7, 14, 14);
+        }
+
         ctx.restore();
     }
 }
