@@ -12,6 +12,20 @@ const { Bodies, Body } = Matter;
 
 const TRAMP_WIDTH = 80;
 const TRAMP_HEIGHT = 10;
+
+// Declared fabric material. matter-js zeroes a static body's restitution and
+// forces friction = 1 when the body goes static, and the `isStatic: true`
+// option is applied through that same Body.setStatic path inside Body.create
+// itself — so values passed in the body options never reach the solver (the
+// defaults land in body._original, which only setStatic(false) restores). The
+// pair solver takes max of the two live restitutions, so a zeroed trampoline
+// degrades every landing to the other body's restitution: a bowling ball at
+// 0.3 thuds instead of the intended 0.95 bounce
+// (bug-20261023T174706Z-0oca). Pair.update recomputes pair.restitution and
+// pair.friction from the live body values each tick, so re-asserting right
+// after creation takes effect immediately.
+const TRAMPOLINE_RESTITUTION = 0.95;
+const TRAMPOLINE_FRICTION = 0.3;
 const FABRIC_COLOR = '#e04040';
 const FRAME_COLOR = '#606060';
 const LEG_COLOR = '#808080';
@@ -29,11 +43,15 @@ export default class Trampoline extends BaseObject {
 
         this._body = Bodies.rectangle(x, y, this._width, this._height, {
             isStatic: true,
-            restitution: 0.95,
-            friction: 0.3,
+            restitution: TRAMPOLINE_RESTITUTION,
+            friction: TRAMPOLINE_FRICTION,
             label: 'trampoline',
             angle: this._angle,
         });
+        // Re-assert the declared fabric material after the body's implicit
+        // static flip (see the constants note above).
+        this._body.restitution = TRAMPOLINE_RESTITUTION;
+        this._body.friction = TRAMPOLINE_FRICTION;
 
         /** @type {number} animation: stretch amount (0 = none, 1 = max) */
         this._stretch = 0;
