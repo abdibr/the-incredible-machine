@@ -1,5 +1,12 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-10-23 — Hardening: ramp surface material restored (trampoline follow-up)
+
+The general follow-up from the trampoline fix (`43486d4`): `js/objects/Ramp.js` declared a static body's material (`friction 0.5 / restitution 0.1`) that matter-js's static flip silently zeroed (→ 1 / 0). For today's population it is behaviorally inert — pairs resolve at `max(live restitutions)` / `min(live frictions)`, every ball variant (restitution ≥ 0.3, friction ≤ 0.5) dominates or washes out the blend, and even a domino resting on a ramp only shifts pair friction 0.6 → 0.5 — but it was a landmine: any future tuning of the ramp's surface would silently do nothing, exactly as nearly happened with the trampoline's 0.95. The ramp now re-asserts its declared material right after body creation, same pattern as Trampoline.js, via named constants `RAMP_FRICTION` / `RAMP_RESTITUTION` with the rationale documented at the constants.
+
+- `tests/ramp.test.js` (new, 2 tests): declared friction 0.5 / restitution 0.1 survive the implicit static flip; and a dead ball (restitution forced to 0 — no shipped variant can exercise the ramp's own 0.1 through the pair's `max()`) dropped on a flat ramp rebounds at ≈ −0.57 vy after an 8.2 vy impact (pair restitution 0.1, ~0.9 px hop) where the pre-fix zeroed material measured exactly 0 (calibration: `.scratch/probe-ramp.mjs`). Full suite: **33 files / 356 tests, all green** (`cmd /c npm test`).
+- ADR 0006 invariants intact: the committed fixture `tests/fixtures/bugfiles/ball-drop-ramp.json` still replays **bit-exactly** — the recording's bowling ball (restitution 0.3 > the ramp's 0.1, friction 0.4 < 0.5) dominates or washes out both pair blends either way — and the trampoline/spring regression suites are untouched.
+- Remaining instances of the same static-flip disease, all currently inert (documented, left for a future pass): **Gear** friction 0.8, **Pulley** 0.6, **Conveyor belt** 0.9, **Spring platform** restitution 0.1 (documented in both bug issue bodies), **Bucket** walls/floor friction 0.3 — the last only when the bucket is `isFixed` (a fixed bucket runs its walls at a visitor's friction instead of the declared 0.3).
 ## 2026-10-23 — Bugfix: trampoline fabric had no bounce; spring never launched its rider (two bug files)
 
 Two user-recorded sandbox sessions (ADR 0006 bug files) exposed physics objects whose runtime behavior didn't match what the code declares.

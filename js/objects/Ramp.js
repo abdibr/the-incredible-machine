@@ -15,6 +15,21 @@ const RAMP_HEIGHT = 12;
 const RAMP_COLOR = '#8B7355';
 const RAMP_EDGE = '#6b5335';
 
+// Declared surface material. Like the trampoline's fabric (see
+// Trampoline.js), the `isStatic: true` option is applied through matter-js's
+// Body.setStatic inside Body.create, which zeroes restitution and forces
+// friction = 1 — so values passed in the body options never reach the solver.
+// For this value set the loss is currently behaviorally inert: the pair
+// solver takes max(rest) / min(friction) of the two live bodies, and every
+// ball variant (restitution ≥ 0.3, friction ≤ 0.5) already dominates or
+// washes out the blend. But any future tuning of the ramp's surface would
+// silently do nothing — the same latent trap that ate the trampoline's
+// declared 0.95 (bug-20261023T174706Z-0oca). Re-asserting after creation
+// keeps the body honest; Pair.update recomputes the pair's restitution and
+// friction from the live body values every tick, so the assignment sticks.
+const RAMP_FRICTION = 0.5;
+const RAMP_RESTITUTION = 0.1;
+
 export default class Ramp extends BaseObject {
     /**
      * @param {number} x - Center x
@@ -29,11 +44,15 @@ export default class Ramp extends BaseObject {
 
         this._body = Bodies.rectangle(x, y, this._width, this._height, {
             isStatic: true,
-            friction: 0.5,
-            restitution: 0.1,
+            friction: RAMP_FRICTION,
+            restitution: RAMP_RESTITUTION,
             angle: this._angle,
             label: 'ramp',
         });
+        // Re-assert the declared surface material after the body's implicit
+        // static flip (see the constants note above).
+        this._body.restitution = RAMP_RESTITUTION;
+        this._body.friction = RAMP_FRICTION;
     }
 
     get type() { return 'ramp'; }
