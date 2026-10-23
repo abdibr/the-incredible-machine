@@ -20,6 +20,8 @@ import { editorPanel } from './ui/EditorPanel.js';
 import { dragDropManager } from './ui/DragDropManager.js';
 import { objectRegistry } from './objects/ObjectRegistry.js';
 import { beginPlay, restorePlacedFromSnapshot, resetSandboxBoard } from './reset/levelReset.js';
+import { sessionRecorder } from './recorder/SessionRecorder.js';
+import { localMirrorStore } from './recorder/browser.js';
 
 // ──────────────────────────────────────────────
 // Application Modes
@@ -152,6 +154,26 @@ function init() {
 
     // 9. Drag-and-Drop (after Renderer + Toolbox)
     dragDropManager.init(state.placedObjects);
+
+    // 10. Session bug-file recorder (ADR 0006) — always-on in SANDBOX;
+    //     the Editor panel surfaces export / recovery for it.
+    sessionRecorder.init({
+        getBoard: () => state.placedObjects,
+        getSnapshot: () => (state._savedPlacedSnapshot.length > 0 ? state._savedPlacedSnapshot : null),
+        getEngine: () => state.physicsEngine?.engine ?? null,
+        getPlayfield: () => (state.physicsEngine
+            ? { width: state.physicsEngine.width, height: state.physicsEngine.height }
+            : null),
+        getEngineInfo: () => (state.physicsEngine
+            ? {
+                gravityX: state.physicsEngine.engine.gravity.x,
+                gravityY: state.physicsEngine.engine.gravity.y,
+                enableSleeping: state.physicsEngine.engine.enableSleeping,
+            }
+            : null),
+        mirrorStore: localMirrorStore(),
+    });
+    window.addEventListener('beforeunload', () => sessionRecorder.flushMirror());
 
     // ── Wire up mode transition events ──
     _wireEvents();

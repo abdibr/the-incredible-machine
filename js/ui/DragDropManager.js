@@ -162,6 +162,14 @@ class DragDropManager {
                     x: this._dragObject.x,
                     y: this._dragObject.y,
                 });
+            } else if (this._dragType === 'rotate' && this._dragObject) {
+                // Rotate drops previously emitted nothing — a build-trace gap
+                // (ADR 0006): announce the final angle like move announces
+                // its pose, so the recorded trace can reconstruct pose history.
+                eventBus.emit('object:rotated', {
+                    id: this._dragObject.id,
+                    angle: this._dragObject.angle,
+                });
             }
 
             this._dragging = false;

@@ -30,7 +30,11 @@ export default class Balloon extends BaseObject {
         this._colorIndex = options.colorIndex ?? Math.floor(Math.random() * COLORS.length);
         this._color = COLORS[this._colorIndex];
         this._popped = false;
-        this._bobPhase = Math.random() * Math.PI * 2;
+        // Bob-phase may arrive from serialize() (bug-file/board snapshots and
+        // editor-saved levels — ADR 0006): the live phase is the only
+        // physics-affecting construction randomness, so restore exactly it
+        // and only seed randomly when no recorded phase exists.
+        this._bobPhase = options.bobPhase ?? Math.random() * Math.PI * 2;
 
         this._body = Bodies.circle(x, y, this._radius, {
             density: 0.0003,
@@ -183,7 +187,14 @@ export default class Balloon extends BaseObject {
     serialize() {
         return {
             ...super.serialize(),
-            options: { ...this._options, colorIndex: this._colorIndex },
+            // Write the LIVE phase (not the constructed one): the phase
+            // advances every step, so captured snapshots must reflect the
+            // moment they are taken (ADR 0006 decision 5).
+            options: {
+                ...this._options,
+                colorIndex: this._colorIndex,
+                bobPhase: this._bobPhase,
+            },
         };
     }
 
@@ -193,6 +204,7 @@ export default class Balloon extends BaseObject {
             isFixed: data.isFixed,
             customId: data.id,
             colorIndex: data.options?.colorIndex,
+            bobPhase: data.options?.bobPhase, // restores the captured phase
         });
     }
 

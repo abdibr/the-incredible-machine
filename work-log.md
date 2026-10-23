@@ -1,4 +1,20 @@
 # Work Log — The Incredible Machine (Web Clone)
+
+## 2026-10-21 — Session bug-file recorder + bit-exact replay harness (ADR 0006)
+
+Physics bugs are now reportable as **files** instead of playthroughs. An always-on SANDBOX session recorder captures each visit (build trace + play runs with per-play board snapshots, raw dt stream, normalized play events, sampled poses) and exports one self-contained "bug file" JSON download; a Node/vitest replay harness rebuilds each run from its snapshot, re-steps the exact recorded dt sequence, and prints a divergence report. The grilling interview locked all 16 decisions (plan doc `docs/plans/session-bug-file-recorder.md`; ADR `docs/adr/0006-session-bug-file.md`).
+
+- **`js/recorder/`** (new) — `schema.js` (SCHEMA v1 constants, topic vocabulary, refIds = `customId` else `type@<ordinal>`, pose/rounding helpers, canonical collision-pair ordering), `SessionRecorder.js` (DOM-free bus-driven recorder: session/run state machine mirroring the GameLoop, build trace with per-action snapshots incl. rope-knot tokens, poses every 6th tick with rolling budget + dense toggle, raw unrounded dt rows — the bit-exactness load-bearing detail, events-only ~2s localStorage mirror + crash-recovery stash, export), `replay.js` (Node-safe replay + divergence report; drives a second passive recorder as comparison collector — one implementation of every recording convention), `meta.js`/`browser.js` (app identity + download/localStorage shims; Node never imports package.json directly).
+- **`js/objects/Balloon.js`** — `_bobPhase` (the one physics-affecting construction randomness) is now serialized **live** from `serialize()` and restored via `deserialize`; bug files, board snapshots, and editor-saved levels are therefore phase-exact.
+- **`js/ui/DragDropManager.js`** — rotate drops now emit `object:rotated { id, angle }` (rotate previously emitted nothing — recordable-trace gap).
+- **`js/ui/EditorPanel.js`** — 🐞 Bug File section: status line, free-text notes input, dense (60 Hz) toggle, 💾 Export, 🩹 Recover-crashed-session.
+- **`js/main.js`** — recorder wiring (board/snapshot/engine/playfield accessors + localStorage mirror adapter + `beforeunload` flush).
+- **`scripts/replay-bugfile.mjs`** — CLI: `node scripts/replay-bugfile.mjs <bugfile.json> [--run N] [--until tick] [--json] [--quiet]`; exit 1 on divergence. **`scripts/make-bugfile-fixture.mjs`** — regenerates graduated fixtures.
+- **`tests/recorder.test.js`** (22 tests), **`tests/replay.test.js`** (5 tests incl. the committed fixture `tests/fixtures/bugfiles/ball-drop-ramp.json` replaying bit-exactly), **`tests/helpers/replayBugFile.js`**.
+- **Docs**: ADR 0006; plan doc status; GLOSSARY gained "Bug files (ADR 0006)" (bug file, session recorder, build trace, run, refId, divergence report, `physics:collision`, events-only mirror).
+- Live finding from the harness builder: Matter's collisionStart pair orientation (`bodyA/bodyB`) is **emergent** and flippers across sessions even when the simulation is bit-identical (pose rows matched 40/40 in the first cross-process replay) — pairs are now canonically ordered at record time.
+- Status: `npm test` — 27 files / **345 tests, all green**; `npm run build` compiles; CLI smoke replays the fixture bit-exactly. GitHub issue deferred (`gh` not on this machine; body ready at `.scratch/issue-body.md`).
+
 ## 2026-10-21 — Rope↔payload tying: pull-to-tie (near-miss drops now tie, no play-start yank)
 
 Manual playtest found the object-side tie seam's blind spot: dropping a bucket near a hanging rope's free end never wrote a knot — the bucket's `rim` point (an invisible mouth-edge offset) sat ~54 px from the rope end, outside the 24 px tie radius — so on play the bucket free-fell past the rope; and even an in-radius tie left a ≤ 24 px residual for the length-0 link to yank closed on the first play step.

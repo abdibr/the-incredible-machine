@@ -10,6 +10,8 @@ import { levelManager } from '../levels/LevelManager.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { DEFAULT_GOAL_ZONE_ID, stampGoalZoneIds } from '../goals/GoalChecker.js';
 import { dragDropManager } from './DragDropManager.js';
+import { sessionRecorder } from '../recorder/SessionRecorder.js';
+import { downloadJson } from '../recorder/browser.js';
 import { setMode, AppMode } from '../main.js';
 
 class EditorPanel {
@@ -41,10 +43,20 @@ class EditorPanel {
             if (newMode === 'SANDBOX') {
                 this._build();
                 this._show();
+                this._updateBugStatus();
             } else {
                 this._hide();
             }
         });
+
+        // Recording status refresh on the events that change it (cheap poll)
+        for (const topic of ['controls:play', 'controls:pause', 'controls:reset', 'object:placed', 'object:moved', 'object:removed']) {
+            eventBus.on(topic, () => {
+                if (this._mode === 'SANDBOX') {
+                    this._updateBugStatus();
+                }
+            });
+        }
 
         console.log('[EditorPanel] Initialized');
     }
@@ -148,12 +160,96 @@ class EditorPanel {
             eventBus.emit('overlay:menu');
         });
         this.container.appendChild(menuBtn);
+
+        // ── Bug file recorder (ADR 0006) ──
+        this.container.appendChild(this._makeSep());
+
+        const bugLabel = document.createElement('label');
+        bugLabel.textContent = '🐞 Bug File';
+        bugLabel.style.cssText = 'display: block; margin-bottom: 4px; font-weight: bold;';
+        this.container.appendChild(bugLabel);
+
+        this._bugStatusLine = document.createElement('div');
+        this._bugStatusLine.style.cssText = 'opacity: 0.85; font-size: 12px; margin-bottom: 4px;';
+        this.container.appendChild(this._bugStatusLine);
+
+        this._bugNotesInput = document.createElement('input');
+        this._bugNotesInput.type = 'text';
+        this._bugNotesInput.placeholder = 'What went wrong? (goes in the file)';
+        this._bugNotesInput.style.cssText = 'width: 100%; padding: 4px; margin-bottom: 4px; border-radius: 4px; border: 1px solid #404040; box-sizing: border-box;';
+        this._bugNotesInput.addEventListener('input', () => {
+            sessionRecorder.notes = this._bugNotesInput.value;
+        });
+        this.container.appendChild(this._bugNotesInput);
+
+        const denseLabel = document.createElement('label');
+        denseLabel.style.cssText = 'display: block; margin-bottom: 4px;';
+        this._bugDenseCheck = document.createElement('input');
+        this._bugDenseCheck.type = 'checkbox';
+        this._bugDenseCheck.addEventListener('change', () => {
+            sessionRecorder.dense = this._bugDenseCheck.checked;
+        });
+        denseLabel.appendChild(this._bugDenseCheck);
+        denseLabel.appendChild(document.createTextNode(' dense sampling (60 Hz, big file)'));
+        this.container.appendChild(denseLabel);
+
+        const bugExportBtn = document.createElement('button');
+        bugExportBtn.className = 'btn btn-success';
+        bugExportBtn.textContent = '💾 Export Bug File';
+        bugExportBtn.style.cssText = 'width: 100%; margin-bottom: 4px;';
+        bugExportBtn.addEventListener('click', () => this._exportBugFile());
+        this.container.appendChild(bugExportBtn);
+
+        this._bugRecoverBtn = document.createElement('button');
+        this._bugRecoverBtn.className = 'btn btn-primary';
+        this._bugRecoverBtn.textContent = '🩹 Recover crashed session';
+        this._bugRecoverBtn.style.cssText = 'width: 100%; display: none;';
+        this._bugRecoverBtn.addEventListener('click', () => this._recoverBugFile());
+        this.container.appendChild(this._bugRecoverBtn);
     }
 
     _makeSep() {
         const hr = document.createElement('hr');
         hr.style.cssText = 'border: none; border-top: 1px solid rgba(255,255,255,0.2); margin: 8px 0;';
         return hr;
+    }
+
+    // ── Bug file recorder (ADR 0006) ──────────────
+
+    /** Always-on recorder: export the current sandbox session as a JSON download. */
+    _exportBugFile() {
+        if (this._bugNotesInput) sessionRecorder.notes = this._bugNotesInput.value;
+        const { filename, json } = sessionRecorder.exportSession();
+        downloadJson(json, filename);
+        console.log('[EditorPanel] Bug file exported:', filename);
+        this._updateBugStatus();
+    }
+
+    /** Export a session recovered from the crash mirror (if one is stashed). */
+    _recoverBugFile() {
+        const recovered = sessionRecorder.exportCrashedSession();
+        if (!recovered) return;
+        downloadJson(recovered.json, recovered.filename);
+        console.log('[EditorPanel] Recovered session exported:', recovered.filename);
+        this._updateBugStatus();
+    }
+
+    /** Refresh the recording status line + recovery button visibility. */
+    _updateBugStatus() {
+        if (!this._built) return;
+        const st = sessionRecorder.status();
+        if (this._bugStatusLine) {
+            const runPart = st.runs.length > 0
+                ? st.runs.map((r) => `#⁠${r.index + 1} ${r.ticks}t/${r.events}ev`).join(', ')
+                : 'no runs yet';
+            this._bugStatusLine.textContent = st.active
+                ? `recording — ${st.buildEvents} build steps · ${runPart}`
+                : 'not recording';
+        }
+        if (this._bugDenseCheck) this._bugDenseCheck.checked = st.dense;
+        if (this._bugRecoverBtn) {
+            this._bugRecoverBtn.style.display = st.crashedSession ? 'block' : 'none';
+        }
     }
 
     _show() {
