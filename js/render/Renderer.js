@@ -9,7 +9,6 @@
 import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
-import { ROPE_SNAP_RADIUS, ROPE_ATTRACT_RADIUS } from '../objects/Rope.js';
 import { ROPE_TOO_SHORT } from '../ui/ConnectFlow.js';
 
 class Renderer {
@@ -175,23 +174,6 @@ class Renderer {
             this._ghostObj.setPosition(gpos.x, gpos.y);
             this._ghostObj.draw(ctx);
             ctx.restore();
-        }
-
-        // 5.5. Rope snap hints (issue 04): while a rope hangs on the cursor,
-        // every board attachment point shows a marker; points this ghost's
-        // endpoints would tie (same clamped layout a drop will lay, within
-        // ROPE_SNAP_RADIUS) glow bright with a tie-line to that endpoint.
-        // The object-side mirror: while a knot-bearing part (balloon knot,
-        // bucket rim, …) hangs on the cursor, every board rope endpoint
-        // shows the same reach markers.
-        if (this._ghostObj
-            && this.ghostState
-            && (this._mode === 'EDITING' || this._mode === 'SANDBOX')) {
-            if (this._ghostObj.type === 'rope') {
-                this._drawRopeSnapHints(ctx, objs, this._ghostObj);
-            } else if (this._ghostObj.attachmentPoints?.length) {
-                this._drawRopeEndpointHints(ctx, objs, this._ghostObj);
-            }
         }
 
         // 5.6. Click-to-connect squares (ADR 0007 decision 2): rope endpoint
@@ -413,148 +395,13 @@ class Renderer {
     }
 
     /**
-     * Rope-placement hints (issue 04): while a rope ghost hangs on the
-     * cursor, mark every board attachment point. Points within
-     * ROPE_SNAP_RADIUS of one of the ghost's two endpoints — the same
-     * clamped layout a drop will lay, because the ghost received the
-     * placement clamp — get a bright filled ring and a tie-line from that
-     * endpoint; the rest stay faint dashed. The drop will then knot exactly
-     * what glows (see DragDropManager._snapRopeEndpoints).
-     * @param {CanvasRenderingContext2D} ctx
-     * @param {BaseObject[]} objs
-     * @param {import('../objects/Rope.js').default} ghost — rope object on the cursor
-     * @private
-     */
-    _drawRopeSnapHints(ctx, objs, ghost) {
-        const bodies = ghost.bodies;
-        if (!bodies.length) return;
-        const endpoints = [bodies[0].position, bodies[bodies.length - 1].position];
-
-        ctx.save();
-        for (const target of objs) {
-            if (target === ghost) continue;
-            for (const point of target.attachmentPoints ?? []) {
-                const world = target.getAttachmentWorldPoint(point.id);
-                if (!world) continue;
-
-                let tiesThrough = null;
-                for (const end of endpoints) {
-                    if (Math.hypot(world.x - end.x, world.y - end.y) <= ROPE_SNAP_RADIUS) {
-                        tiesThrough = end;
-                        break;
-                    }
-                }
-
-                ctx.beginPath();
-                ctx.arc(world.x, world.y, tiesThrough ? 7 : 4, 0, Math.PI * 2);
-                if (tiesThrough) {
-                    ctx.fillStyle = 'rgba(64, 192, 64, 0.35)';
-                    ctx.fill();
-                }
-                ctx.strokeStyle = tiesThrough ? '#2f9e2f' : 'rgba(122, 106, 38, 0.8)';
-                ctx.setLineDash(tiesThrough ? [] : [3, 3]);
-                ctx.lineWidth = tiesThrough ? 2 : 1.5;
-                ctx.stroke();
-                ctx.setLineDash([]);
-                if (tiesThrough) {
-                    ctx.beginPath();
-                    ctx.moveTo(tiesThrough.x, tiesThrough.y);
-                    ctx.lineTo(world.x, world.y);
-                    ctx.strokeStyle = '#2f9e2f';
-                    ctx.stroke();
-                }
-            }
-        }
-        ctx.restore();
-    }
-
-    /**
-     * Object-placement hints (issue 04, the mirror of _drawRopeSnapHints):
-     * while a knot-bearing part (balloon knot, bucket rim, …) hangs on the
-     * cursor, mark every board rope's tying endpoints — the same clamped
-     * layout a drop will land, because the ghost received the placement
-     * clamp. With the pull-to-tie seam (ADR 0005 decision 11) an endpoint
-     * glows bright (filled ring + tie-line) when the drop will tie it: it
-     * sits within ROPE_SNAP_RADIUS of a knot, or it is the one endpoint the
-     * drop gets pulled onto from within ROPE_ATTRACT_RADIUS. The rest stay
-     * faint dashed. The drop will then knot exactly what glows (see
-     * DragDropManager._snapObjectToRopes).
-     * @param {CanvasRenderingContext2D} ctx
-     * @param {BaseObject[]} objs
-     * @param {import('../objects/BaseObject.js').default} ghost — knot-bearing object on the cursor
-     * @private
-     */
-    _drawRopeEndpointHints(ctx, objs, ghost) {
-        const knots = (ghost.attachmentPoints ?? []).map((point) => (
-            ghost.getAttachmentWorldPoint(point.id)
-        )).filter(Boolean);
-        if (!knots.length) return;
-
-        ctx.save();
-        // Board endpoints are collected first: the pull-to-tie attract is
-        // chosen globally (one winner per drop), so the bright/faint
-        // decision must see every candidate, not one rope at a time.
-        const ends = [];
-        for (const obj of objs) {
-            if (obj === ghost || obj.type !== 'rope' || obj.isSevered) continue;
-            const bodies = obj.bodies;
-            if (!bodies[0]) continue; // disposed rope
-            ends.push(bodies[0].position, bodies[bodies.length - 1].position);
-        }
-
-        // The drop knots exactly what glows (DragDropManager._snapObjectToRopes):
-        // an endpoint within ROPE_SNAP_RADIUS of a knot ties as laid, and the
-        // single nearest endpoint within ROPE_ATTRACT_RADIUS is the one the
-        // drop will be pulled onto — both glow bright.
-        let best = null;
-        for (const end of ends) {
-            for (const knot of knots) {
-                const dist = Math.hypot(knot.x - end.x, knot.y - end.y);
-                if (dist > ROPE_ATTRACT_RADIUS) continue;
-                if (!best || dist < best.dist) best = { end, knot, dist };
-            }
-        }
-
-        for (const end of ends) {
-            let tiesTo = null;
-            for (const knot of knots) {
-                if (Math.hypot(knot.x - end.x, knot.y - end.y) <= ROPE_SNAP_RADIUS) {
-                    tiesTo = knot;
-                    break;
-                }
-            }
-            if (!tiesTo && best && best.end === end) tiesTo = best.knot;
-
-            ctx.beginPath();
-            ctx.arc(end.x, end.y, tiesTo ? 7 : 4, 0, Math.PI * 2);
-            if (tiesTo) {
-                ctx.fillStyle = 'rgba(64, 192, 64, 0.35)';
-                ctx.fill();
-            }
-            ctx.strokeStyle = tiesTo ? '#2f9e2f' : 'rgba(122, 106, 38, 0.8)';
-            ctx.setLineDash(tiesTo ? [] : [3, 3]);
-            ctx.lineWidth = tiesTo ? 2 : 1.5;
-            ctx.stroke();
-            ctx.setLineDash([]);
-            if (tiesTo) {
-                ctx.beginPath();
-                ctx.moveTo(end.x, end.y);
-                ctx.lineTo(tiesTo.x, tiesTo.y);
-                ctx.strokeStyle = '#2f9e2f';
-                ctx.stroke();
-            }
-        }
-        ctx.restore();
-    }
-
-    /**
      * The click-to-connect squares (ADR 0007 decision 2): rope endpoint
      * handles, attachment-point target squares, and — while a seek is in
      * flight — the preview line to the cursor and the glow on in-reach
      * targets (glow = tieable, issue #54). A refused tie flashes its
      * seeking handle red plus a "rope too short" badge at the refused aim.
      * Edit modes only (EDITING/SANDBOX): gates itself so PLAY
-     * boards draw nothing, exactly like the proximity hints above.
+     * boards draw nothing.
      *
      * Geometry comes from the flow (getEndpointSquares/getTieSquares — one
      * source for clicks and pixels); this method only paints it.

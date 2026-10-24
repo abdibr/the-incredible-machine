@@ -18,26 +18,6 @@ import { eventBus } from '../EventBus.js';
 
 const { Bodies, Body, Constraint } = Matter;
 
-/**
- * How close (px) a placed rope endpoint must land to an attachment point
- * for the two to tie (issue 04). Shared by the placement snap
- * (DragDropManager._snapRopeEndpoints) and the drag-time hint marks
- * (Renderer._drawRopeSnapHints) — one number, one meaning.
- * @type {number}
- */
-export const ROPE_SNAP_RADIUS = 24;
-
-/**
- * How close (px) a dropped knot-bearing part may sit to a rope endpoint for
- * the drop to be pulled onto that endpoint and tied exactly there
- * ("pull to tie", ADR 0005 decision 11). Generous on purpose — the pull, not
- * a residual, closes the gap — and shared by the placement pull
- * (DragDropManager._snapObjectToRopes) and the object-side glow hints
- * (Renderer._drawRopeEndpointHints): one number, one meaning.
- * @type {number}
- */
-export const ROPE_ATTRACT_RADIUS = 64;
-
 const ROPE_COLOR = '#8B6914';
 const SEGMENTS = 6;
 const SEGMENT_RADIUS = 3;

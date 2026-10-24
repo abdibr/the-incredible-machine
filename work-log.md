@@ -1,5 +1,19 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-10-23 — Rope drops simply place; proximity tying surface removed (issue #53)
+
+Issue #53 (ADR 0007 decisions 2/6): releasing a rope near an attachment point no longer snaps, re-lays, ties, or pulls — "releasing near does nothing special". Ties live only in the explicit click-to-connect flow (ConnectFlow, the issue #52 seam).
+
+- **DragDropManager**: `_placeObject` is the plain drop seam again — `registry.create(type, x, y)` → playfield clamp → push. The rope dispatch to `_snapRopeEndpoints` (24px endpoint-body match → re-lay `setEndpoints` → `attachEndpoint` tie) and the object-side mirror `_snapObjectToRopes` (with `_readAttachmentPoints` and the pull-to-tie `setPosition`) are deleted. A rope drop constructs the committed pinned-rope layout (issue #54: hangs 100px straight down from the release point) and nothing else happens.
+- **Rope.js**: the `ROPE_SNAP_RADIUS` / `ROPE_ATTRACT_RADIUS` exports are gone — the radius constants exist nowhere on the module's public surface; their doc blocks went with them. Constructor and the click-flow API (`attachEndpoint`, knots, reconcile) untouched.
+- **Renderer**: `_drawRopeSnapHints` / `_drawRopeEndpointHints` and the Rope import + ghost hint dispatch removed — no snap/attract markers or tie-lines render during placement or drags (the play-mode suppression gate is moot now that nothing renders).
+- **tests/rope-snap-hints.test.js deleted** (the 21 proximity contracts); new `tests/rope-placement.test.js` (8 tests) + `tests/rope-knots.test.js` (2 tests) carry the #53 contracts:
+  - drop seam: rope anchor released exactly on the balloon knot (0px — the spot the old code matched, re-layed, and tied) and a rope dropped across two attachment points both tie nothing, re-lay nothing, keep the straight-down chain; balloon within the old attract reach and bucket rim on a rope endpoint keep their drop spots, untied;
+  - removed surface: the four placement snap methods, both radius exports, and both hint renderers stay gone;
+  - surviving members intact: plain placement announces itself through the registry, the strengthened knot ring renders tied points and skips untied ones.
+- TDD forensics note: the drop-seam scenario "an endpoint dropped onto an attachment point" was first authored with the rope released 100px left of the knot, expecting the free-end chain aimed horizontally at the point — a drop-time "seek toward the nearest attachment point" that no code ever implemented (the old drop was straight-down + 24px snap; issue #04 pins "hangs 100px straight down"; issue #03 pins "releasing near does nothing special"). The test was corrected to its own intent (anchor released exactly on the point), which also makes it a true regression test: HEAD's `_snapRopeEndpoints` ties that exact configuration, the new contract leaves it laid-out and untied.
+- Full suite: **36 files / 379 tests, all green** (`cmd /c npx vitest run`). Straggler grep over js/ for the removed names and radius constants: 0 in source (only the tests' negative assertions and PhysicsEngine's unrelated `_assertAttachEndpoint` helper). Living docs already aligned: GLOSSARY "Snap hint" carries the ADR 0007 supersession note.
+
 ## 2026-10-23 — Pinned rope: adjustable fixed length with beyond-reach refusal (issue #54, ADR 0007 decision 4)
 
 The pinned rope gets its length from the hand, as decided: a fresh drop hangs 100 px straight down from its anchor; while the rope is untied, a seek at its free end reels the rope to the cursor continuously (the tie square rides the cursor); the first tie freezes the length; a tie click aimed beyond the rope's reach is refused with feedback — the seeking handle flashes red and a "rope too short" badge marks the refused aim — instead of silently snapping or stretching; tied, the rope keeps sagging as a slack chain (max length with slack, never a rigid rod).
@@ -275,4 +289,3 @@ The placement tie fired only while the rope was the dragged part: a placed rope'
 - **Toolbox copy:** the rope description is now order-neutral ("drop either part right up close to the other").
 - Rope-to-rope tying stays intentionally unsupported (ropes expose no attachment points) — decision 10 documents it.
 - `tests/rope-snap-hints.test.js` 9 → 21 tests: object-side tie to free end / anchor / bucket rim, out-of-range no-op, severed skip, one knot holding two ropes, replace-after-delete, first-play-step engine-link realization; hints: bright + tie-line, faint dashed, mixed styles on one rope, severed skip. Full suite: **22 files / 294 tests, all green** (`cmd /c npm test`). Verified in-browser via Playwright (rope dropped, balloon placed onto its free end: green tie-hint ring on hover, gold knot ring after the drop, balloon stays tethered during play; no console errors). ADR 0005 decision 10.
-
