@@ -34,11 +34,23 @@ import { eventBus } from '../EventBus.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 
 /**
- * How close (px) a click must land to a square for the flow to consume it —
- * also the hover-reveal reach the renderer shows squares at.
+ * How close (px) a click must land to a square for the flow to consume it,
+ * and the hover-reveal reach the renderer shows squares at. Click hit-testing
+ * only — the reach gate's aim slack is REACH_AIM_TOLERANCE below (one
+ * number, one meaning).
  * @type {number}
  */
 export const CONNECT_HIT_RADIUS = 14;
+
+/**
+ * How far (px) past a rope's laid reach a tie aim may sit and still glow and
+ * tie — the slack passed to Rope.isPointWithinReach at both the tie gate and
+ * the glow; a tie inside the band grows the rope to cover its knot exactly
+ * (Rope.attachEndpoint). Deliberately its own number: the click hit radius
+ * above is a UX affordance and must never retune this physics band.
+ * @type {number}
+ */
+export const REACH_AIM_TOLERANCE = 14;
 
 /**
  * How long (ms) a refused tie keeps painting its feedback — the red handle
@@ -156,7 +168,7 @@ class ConnectFlow {
                 // Free bundle (issue #55): a bodyless coil has no reach
                 // circle — its first tie is unconditional; the chain spawns
                 // hanging from exactly the point that was clicked.
-                if (world && (this._seek.rope.isFreeBundle || this._seek.rope.isPointWithinReach(world.x, world.y, CONNECT_HIT_RADIUS))) {
+                if (world && (this._seek.rope.isFreeBundle || this._seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE))) {
                     // A fixed-end tie realizes as a length-0 pin between
                     // the rope's anchor and the tied attachment point (the
                     // zero-length engine link of ADR 0007 decision 6,
@@ -420,7 +432,7 @@ class ConnectFlow {
                     target: obj, pointId: point.id, x: world.x, y: world.y,
                     glows: !!seek
                         && (seek.rope.isFreeBundle
-                            || seek.rope.isPointWithinReach(world.x, world.y, CONNECT_HIT_RADIUS)),
+                            || seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE)),
                     hovered,
                     visible: !!seek || hovered,
                 });

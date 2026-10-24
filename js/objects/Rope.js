@@ -213,6 +213,21 @@ export default class Rope extends BaseObject {
         // distance (the tie body is the last segment's center, a half
         // segment inboard of the layout end) — the chain is never
         // over-tensioned by its own knot, and no tie ever shrinks the rope.
+        // The coverage is the LIVE chain's, not just the accounting: a
+        // bump-only grow left the laid (shorter) constraints stepping into
+        // play, and the length-0 knot link then resolved the deficit by
+        // hauling the tied target inboard / stretching the chain taut — the
+        // "silently snapping or stretching" ADR 0007 decision 4 refuses.
+        // So the grow re-lays the chain along the tie direction through
+        // setEndpoints (bodies re-line, identical constraints rebuild, and
+        // rope:chain-converge lets an in-world rope swap its chain — the
+        // registration guard keeps the event a no-op out of world), then
+        // seals _length exact against setEndpoints' float-dust
+        // re-derivation, the same seal relayFreeEnd uses. Grown capacity =
+        // tied span: the chain rests exactly taut at the knot, zero
+        // residual. Severed ropes keep accounting-only growth (nothing lays
+        // or reconciles for them); a spawned bundle never reaches here past
+        // capacity (its first tie sits at the anchor, tied = 0).
         // Measured from the anchor; the endpoint-0 knot realizes at the
         // anchor itself and consumes no chain.
         if (endpoint === 1 && this._anchor) {
@@ -223,7 +238,19 @@ export default class Rope extends BaseObject {
                     world.y - this._anchor.position.y
                 );
                 if (tied > this._length * (SEGMENTS - 0.5) / SEGMENTS) {
-                    this._length = tied * SEGMENTS / (SEGMENTS - 0.5);
+                    const grown = tied * SEGMENTS / (SEGMENTS - 0.5);
+                    if (!this._severed && this._segments.length) {
+                        const anchor = this._anchor.position;
+                        const ux = (world.x - anchor.x) / tied;
+                        const uy = (world.y - anchor.y) / tied;
+                        this.setEndpoints(
+                            { x: anchor.x, y: anchor.y },
+                            { x: anchor.x + ux * grown, y: anchor.y + uy * grown }
+                        );
+                        this._length = grown; // exact seal (setEndpoints re-derived with float dust)
+                    } else {
+                        this._length = grown; // severed: reconcile skips it — accounting only
+                    }
                 }
             }
         }

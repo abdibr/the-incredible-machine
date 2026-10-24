@@ -38,7 +38,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { eventBus } from '../js/EventBus.js';
-import ConnectFlow from '../js/ui/ConnectFlow.js';
+import ConnectFlow, { CONNECT_HIT_RADIUS, REACH_AIM_TOLERANCE } from '../js/ui/ConnectFlow.js';
 import Rope from '../js/objects/Rope.js';
 import Balloon from '../js/objects/Balloon.js';
 import Bucket from '../js/objects/Bucket.js';
@@ -54,6 +54,11 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
     beforeEach(() => {
         flow = new ConnectFlow();
         flow._mode = 'EDITING'; // the stage gate under test; PLAY rejections pinned below
+    });
+
+    it('one number, one meaning: the click hit radius and the reach aim tolerance are separate constants', () => {
+        expect(CONNECT_HIT_RADIUS).toBe(14);
+        expect(REACH_AIM_TOLERANCE).toBe(14);
     });
 
     it('a click on a free rope endpoint square enters a seek, preview anchored at the cursor', () => {
@@ -252,11 +257,14 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         rope.attachEndpoint(1, far, 'knot');
 
         // The first click unties the knot whose target sits nearest the click
-        // (the far knot stays — decision 8: untie stays per-knot).
+        // (decision 8: untie stays per-knot). The covering grow re-lays the
+        // chain so the rope's end square rides onto the last-tied knot's
+        // target — far — so the click at `end` lands nearest far, and far
+        // unties first.
         expect(flow.handlePointerDown(end.x, end.y, [rope, near, far])).toBe(true);
         expect(flow.seek).toBe(null); // untie is not a seek
-        expect(rope.getAttachmentRefs()).toContainEqual({ endpoint: 1, target: far, pointId: 'knot' });
-        expect(rope.getAttachmentRefs()).not.toContainEqual({ endpoint: 1, target: near, pointId: 'knot' });
+        expect(rope.getAttachmentRefs()).toContainEqual({ endpoint: 1, target: near, pointId: 'knot' });
+        expect(rope.getAttachmentRefs()).not.toContainEqual({ endpoint: 1, target: far, pointId: 'knot' });
 
         // The second click frees the remaining knot.
         expect(flow.handlePointerDown(end.x, end.y, [rope, near, far])).toBe(true);

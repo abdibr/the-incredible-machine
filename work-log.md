@@ -1,5 +1,15 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-10-23 — Reach-aim tolerance named; covering grow re-lays the live chain (carry-overs from the #54 review)
+
+Both #54 review gaps addressed; behavior changes only where the bug itself lived, everything else pixel-identical.
+
+- **`REACH_AIM_TOLERANCE` (new export, `js/ui/ConnectFlow.js`)**: the 14px reach-band slack the tie gate and `getTieSquares`' glow pass to `Rope.isPointWithinReach` is now its own constant instead of borrowing `CONNECT_HIT_RADIUS` (one number, one meaning — a future retune of the click hit-testing/hover radius can no longer silently reshape the physics reach band). Same value, zero behavior change; `tests/connect-flow.test.js` pins both constants.
+- **`Rope.attachEndpoint`'s covering grow re-lays the live chain**: the grow branch previously bumped only `_length`, leaving the laid (shorter) constraints in place. Since `beginPlay` re-adds the *same live instances*, the first play step realized the length-0 knot link against a chain whose rest lengths summed short of the tied span — the tied target got hauled up to the tolerance band (≤14px) toward the anchor / the chain stretched taut, the "silently snapping or stretching" ADR 0007 decision 4 refuses (restore healed it only after the play that counted; sandbox live-tying showed the yank raw, with no snapshot boundary to mask it). The grow now re-lays the laid chain along the tie direction via `setEndpoints` (bodies move, identical constraints rebuild, `rope:chain-converge` announced — the engine swap is a membership-guarded no-op out of world) and re-seals `_length` exact, the same seal `relayFreeEnd` uses. Grown capacity = tied span, so the chain ties exactly taut with zero residual; severed chains keep accounting-only growth.
+- **Tests**: `tests/pinned-rope-length.test.js` — the grow test now asserts the chain rest-sum spans the tied span and the last segment lands exactly on the knot (fails against the bump-only grow); new in-world grow test (chain swap in the world, balloon not hauled on the realizing step). Full suite green.
+- **Per-knot untie order shift (consequence, pinned)**: with the grow re-laying the chain, the rope's end tie square rides onto the last-tied knot's target — previously it stayed at the stale laid position (part of the same bug). The nearest-to-click untie therefore unties the last-tied knot first; decision 8 semantics are unchanged (one knot per click, the rest keep). `tests/connect-flow.test.js`'s per-knot untie test now orders far-before-near with the reason in a comment.
+- The review's item 3 stands as a deliberate non-bug: `serialize()`'s `options.lengthFrozen` stays informational (restore re-derives it through the two-phase token bind).
+
 ## 2026-10-23 — Rope drops simply place; proximity tying surface removed (issue #53)
 
 Issue #53 (ADR 0007 decisions 2/6): releasing a rope near an attachment point no longer snaps, re-lays, ties, or pulls — "releasing near does nothing special". Ties live only in the explicit click-to-connect flow (ConnectFlow, the issue #52 seam).

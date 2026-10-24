@@ -14,8 +14,10 @@
  *   (MIN_ROPE_SPAN — six segments stay a chain, never collapse) and a
  *   frozen rope re-orients around its frozen reach only, length unmoved.
  * - Rope.attachEndpoint — the first tie freezes the length; a tie reaching
- *   past the laid capacity grows the fixed length to cover its knot; ties
- *   never shrink the rope (max length with slack — never a rigid rod).
+ *   past the laid capacity grows the fixed length to cover its knot (and
+ *   re-lays the live chain so its rest lengths span the tied span exactly —
+ *   nothing over-tensioned); ties never shrink the rope (max length with
+ *   slack — never a rigid rod).
  * - PhysicsEngine._restoreRopeConstraints — the chain-converge consumer
  *   now swaps chains: a re-lay's previous chain leaves the world as the
  *   rebuilt one enters (registration-guarded, bus-global).
@@ -169,6 +171,18 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
         expect(rope._length).toBeCloseTo(tied * 6 / 5.5, 3); // grown to cover the knot
         expect(rope._length).toBeGreaterThan(40);
         expect(rope.lengthFrozen).toBe(true);
+        // The covering grow re-lays the LIVE chain too, not just the _length
+        // accounting: the rebuilt rest lengths span the tied span exactly and
+        // the tie square lands ON the knot. A bump-only grow left the laid
+        // 36.67px chain in place — the length-0 knot link then resolved the
+        // ≤14px deficit by hauling the target inboard / stretching the chain
+        // taut (the silent snap ADR 0007 decision 4 refuses).
+        const restSum = rope.constraints.reduce((sum, c) => sum + c.length, 0);
+        expect(restSum).toBeCloseTo(tied, 3);
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const knot = balloon.getAttachmentWorldPoint('knot');
+        expect(end.x).toBeCloseTo(knot.x, 3);
+        expect(end.y).toBeCloseTo(knot.y, 3);
         rope.dispose();
         balloon.dispose();
     });
@@ -249,5 +263,34 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
         physics.dispose();
         stray.dispose();
         other.dispose();
+    });
+
+    it('a covering grow on an in-world rope swaps its chain and hauls nothing', () => {
+        const physics = new PhysicsEngine(800, 600);
+        const rope = new Rope(300, 100, { length: 40 });
+        const balloon = new Balloon(330, 115); // knot at (330, 140.6): 50.48px out
+        physics.addObject(rope);
+        physics.addObject(balloon);
+        physics.step(16.67);
+        const before = rope.constraints;
+        expect(before).toHaveLength(6);
+
+        rope.attachEndpoint(1, balloon, 'knot'); // ties past laid capacity, inside the aim tolerance
+
+        // The rebuilt (covering) chain entered the world as the laid (short)
+        // one left it — no stale, over-tensioned members stepping into play.
+        expect(rope.constraints).not.toBe(before);
+        const inWorld = Composite.allConstraints(physics.world);
+        for (const constraint of rope.constraints) expect(inWorld).toContain(constraint);
+        for (const constraint of before) expect(inWorld).not.toContain(constraint);
+        // The knot link realizes on the next step against a chain that is
+        // exactly taut at the tie: the balloon stays where it was tied, no
+        // deficit haul, no stretch-taut.
+        physics.step(16.67);
+        const knot = balloon.getAttachmentWorldPoint('knot');
+        expect(Math.hypot(knot.x - 330, knot.y - 140.6)).toBeLessThan(2);
+        physics.dispose();
+        rope.dispose();
+        balloon.dispose();
     });
 });
