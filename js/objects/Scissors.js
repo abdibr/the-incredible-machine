@@ -129,8 +129,10 @@ export default class Scissors extends BaseObject {
         if (this._closed) return false;
         if (!this._touchingHandle(pair)) return false;
         // Light, flimsy rope segments brushing the handles shouldn't snap
-        // them shut; statics can't "fall" onto a handle either.
-        if (other.type === 'rope') return false;
+        // them shut; statics can't "fall" onto a handle either. Both rope
+        // families are excluded: the laid rope and the issue-#55 spawned
+        // free-rope chain segments.
+        if (other.type === 'rope' || other.type === 'free-rope') return false;
         const otherBody = pair.bodyA === this._handleUpper || pair.bodyA === this._handleLower
             ? pair.bodyB
             : pair.bodyA;
@@ -166,10 +168,18 @@ export default class Scissors extends BaseObject {
         const tip = BLADE_CENTER_OFFSET + BLADE_LENGTH / 2 + ROPE_CUT_PAD;
         // Object-level discovery through the engine seam (ADR 0002): ropes by
         // canonical type, replacing the hand-rolled getObjects() + filter scan.
-        for (const rope of this._engine.queryObjectsByType('rope')) {
+        for (const rope of [
+            ...this._engine.queryObjectsByType('rope'),
+            ...this._engine.queryObjectsByType('free-rope'), // issue #55: spawned chains cut too
+        ]) {
             if (rope.isSevered) continue; // already cut apart
             for (const body of rope.bodies) {
-                if (!body || body.isStatic) continue; // skip the anchor nail
+                // Skip the anchor in every rope family — the pinned rope's
+                // static nail or the free rope's dynamic knot (issue #55).
+                // This can no longer key on isStatic: the free rope's anchor
+                // is dynamic, and a cut works on rope itself, never its
+                // anchor body.
+                if (!body || body.label === 'rope-anchor') continue;
                 const dx = body.position.x - this._x;
                 const dy = body.position.y - this._y;
                 // World → scissors-local: pivot at origin, blades on +x

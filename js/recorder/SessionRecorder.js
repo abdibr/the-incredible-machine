@@ -379,6 +379,9 @@ export class SessionRecorder {
                 return { ref: refOf(packet?.rope) };
             case 'rope:chain-converge':
                 return { ref: refOf(packet?.rope) };
+            case 'rope:chain-spawned': // issue #55
+            case 'rope:unbundled':
+                return { ref: refOf(packet?.rope) };
             case 'balloon:popped':
                 return { ref: refOf(packet?.balloon) };
             case 'bucket:caught':

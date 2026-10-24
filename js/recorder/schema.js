@@ -56,6 +56,8 @@ export const EDIT_TOPICS = Object.freeze([
 export const PLAY_TOPICS = Object.freeze([
     'rope:severed',
     'rope:chain-converge',
+    'rope:chain-spawned',
+    'rope:unbundled',
     'balloon:popped',
     'bucket:caught',
     'goal:reached',
@@ -70,11 +72,15 @@ export const PLAY_TOPICS = Object.freeze([
  * Run-event topics the replay harness can reproduce from the recorded
  * world + dt stream, and therefore compares between recorded and replayed
  * sessions. Everything else is narrative (commands, mode navigation).
+ * `rope:chain-spawned` (issue #55) is play-recorded but NOT replayable: a
+ * spawn is born of an edit-time tie, not of the dt stream — its
+ * `rope:unbundled` counterpart is replayable (a collapse happens in play).
  */
 export const REPLAYABLE_TOPICS = Object.freeze([
     'physics:collision',
     'rope:severed',
     'rope:chain-converge',
+    'rope:unbundled',
     'balloon:popped',
     'bucket:caught',
     'goal:reached',

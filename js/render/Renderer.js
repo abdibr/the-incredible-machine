@@ -373,7 +373,7 @@ class Renderer {
     _drawRopeKnots(ctx, objs) {
         ctx.save();
         for (const obj of objs) {
-            if (obj.type !== 'rope' || typeof obj.getAttachmentRefs !== 'function') continue;
+            if ((obj.type !== 'rope' && obj.type !== 'free-rope') || typeof obj.getAttachmentRefs !== 'function') continue;
             for (const ref of obj.getAttachmentRefs()) {
                 const world = ref.target.getAttachmentWorldPoint?.(ref.pointId);
                 if (!world) continue;

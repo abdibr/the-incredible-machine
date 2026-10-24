@@ -23,6 +23,8 @@ import Conveyor from '../js/objects/Conveyor.js';
 import Fan from '../js/objects/Fan.js';
 import Domino from '../js/objects/Domino.js';
 import Pulley from '../js/objects/Pulley.js';
+import { objectRegistry } from '../js/objects/ObjectRegistry.js';
+import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import PhysicsEngine from '../js/engine/PhysicsEngine.js';
 import { InteractionMatrix } from '../js/interactions/InteractionMatrix.js';
 import { DEFAULT_INTERACTION_ROWS } from '../js/interactions/rules.js';
@@ -31,6 +33,10 @@ import { readFileSync } from 'node:fs';
 import { eventBus } from '../js/EventBus.js';
 
 const matrix = new InteractionMatrix(DEFAULT_INTERACTION_ROWS);
+
+// The free-rope rows (issue #55) build their actor through the registry —
+// the FreeRope wrapper class lives inside registerAllObjects.
+registerAllObjects();
 
 /** First rope segment body (non-static chain link). */
 const ropeSegOf = (rope) => rope.bodies.find((b) => b.label?.startsWith('rope-seg'));
@@ -129,6 +135,62 @@ describe('Row rope-closed-scissors-blade', () => {
         const rope = new Rope(200, 40, { length: 60 });
         const fired = matrix.resolve(rope, scissors, { bodyA: blade, bodyB: ropeSegOf(rope) });
         expect(fired).toContain('rope-closed-scissors-blade');
+        expect(rope.isSevered).toBe(true);
+    });
+});
+
+describe('Row free-rope-candle-flame', () => {
+    it('free-rope ✕ candle-flame severs; free-rope ✕ candle wax does not', () => {
+        const candle = new Candle(200, 80);
+        const flame = bodyWithLabel(candle, 'candle-flame');
+        expect(flame).toBeTruthy();
+
+        // Issue-#55 prep: a fresh free rope is a bodyless bundle, so the
+        // fixture ties once to spawn the hanging chain (exactly what the
+        // UI's first tie does) and resolves against a real chain segment.
+        const rope = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        rope.attachEndpoint(0, new Balloon(200, 200), 'knot');
+        const seg = ropeSegOf(rope);
+        expect(seg).toBeTruthy();
+
+        const fired = matrix.resolve(rope, candle, { bodyA: flame, bodyB: seg });
+        expect(fired).toContain('free-rope-candle-flame');
+        expect(rope.isSevered).toBe(true);
+
+        // The bundle itself can never reach a pair at all (no bodies), and
+        // the spawned chain's regression mirrors the laid rope's: the solid
+        // wax body alone must not sever it.
+        const rope2 = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        rope2.attachEndpoint(0, new Balloon(200, 200), 'knot');
+        const wax = bodyWithLabel(candle, 'candle');
+        expect(wax).toBeTruthy();
+        expect(matrix.resolve(rope2, candle, { bodyA: wax, bodyB: ropeSegOf(rope2) })).toEqual([]);
+        expect(rope2.isSevered).toBe(false);
+    });
+});
+
+describe('Row free-rope-closed-scissors-blade', () => {
+    it('free-rope ✕ closed-scissors blade severs; open blades and handles never cut', () => {
+        const scissors = new Scissors(400, 300);
+        const blade = bodyWithLabel(scissors, 'scissors-blade');
+        const handle = bodyWithLabel(scissors, 'scissors-handle');
+
+        // Spawned chain vs open blades / handles: never cut (mirror of the
+        // laid-rope gates).
+        const openRope = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        openRope.attachEndpoint(0, new Balloon(200, 200), 'knot');
+        expect(matrix.resolve(openRope, scissors, { bodyA: blade, bodyB: ropeSegOf(openRope) })).toEqual([]);
+        expect(matrix.resolve(openRope, scissors, { bodyA: handle, bodyB: ropeSegOf(openRope) })).toEqual([]);
+        expect(openRope.isSevered).toBe(false);
+
+        // Snap them shut (row scissors-snap: dynamic weight on a handle)
+        matrix.resolve(scissors, { type: 'ball' }, { bodyA: handle, bodyB: { isStatic: false } });
+        expect(scissors.isClosed).toBe(true);
+
+        const rope = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        rope.attachEndpoint(0, new Balloon(200, 200), 'knot');
+        const fired = matrix.resolve(rope, scissors, { bodyA: blade, bodyB: ropeSegOf(rope) });
+        expect(fired).toContain('free-rope-closed-scissors-blade');
         expect(rope.isSevered).toBe(true);
     });
 });

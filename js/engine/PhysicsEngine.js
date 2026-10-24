@@ -64,6 +64,10 @@ export class PhysicsEngine {
         // Consume severing so a severed rope is physically detached
         this._setupSeveredEvents();
 
+        // Free-rope chain lifecycle (issue #55): the first tie on a bundle
+        // adds its newborn chain to the world; an unbundling pulls it out.
+        this._setupRopeLifecycleEvents();
+
         // Object removal events (popped balloons, etc.)
         this._setupRemovalEvents();
     }
@@ -173,6 +177,11 @@ export class PhysicsEngine {
         this._snapshot = [];
         for (const obj of this._objects) {
             this._snapshot.push({
+                // Instance identity captured at snapshot time: serialize()
+                // carries the semantic payload but no object id, and the
+                // zero-body rewind matching (issue #55) needs a stable
+                // per-object key to reach restoreState.
+                objId: obj.id,
                 serialized: obj.serialize(),
                 bodyStates: obj.bodies.map(b => ({
                     id: b.id,
@@ -259,6 +268,22 @@ export class PhysicsEngine {
             }
             if (snap.serialized) snapByIdSet.set(ids, snap.serialized);
         }
+        // Zero-body snapshot entries (issue #55 — the free-rope bundle) have
+        // a vacuous body-id identity: match them by the object id recorded
+        // at snapshot time (objId; serialize() itself carries no identity
+        // field), so the rewind can reach their restoreState (a mid-play
+        // spawned chain collapses there via the wrapper's spawned-flag
+        // check, pulling its chain out of the world through the
+        // 'rope:unbundled' consumer).
+        const snapBodylessById = new Map();
+        for (const snap of this._snapshot) {
+            const key = snap.objId != null
+                ? snap.objId
+                : (snap.serialized ? snap.serialized.id : undefined);
+            if (snap.serialized && snap.bodyStates.length === 0 && key != null) {
+                snapBodylessById.set(key, snap.serialized);
+            }
+        }
         for (const obj of this._objects) {
             if (typeof obj.restoreState !== 'function') continue;
             let ids = '';
@@ -268,6 +293,17 @@ export class PhysicsEngine {
             }
             if (ids && snapByIdSet.has(ids)) {
                 obj.restoreState(snapByIdSet.get(ids));
+            } else if (!ids && snapBodylessById.has(obj.id)) {
+                obj.restoreState(snapBodylessById.get(obj.id));
+            } else if (ids && snapBodylessById.has(obj.id)) {
+                // Issue #55 rewind case: the snapshot caught this rope as a
+                // bodyless coil, play has since given birth to its chain —
+                // the body-id key cannot match a vacuous snapshot entry, so
+                // fall back to the object id recorded at snapshot time.
+                // restoreState sees
+                // spawned:false there and collapses the chain (the un-bundle
+                // consumer then pulls it out of the world).
+                obj.restoreState(snapBodylessById.get(obj.id));
             }
         }
 
@@ -1065,6 +1101,58 @@ export class PhysicsEngine {
         eventBus.on('rope:chain-converge', this._onRopeChainConverge);
     }
 
+    /** @private */
+    _setupRopeLifecycleEvents() {
+        // Chain spawn (issue #55): the first tie on a free-rope bundle gives
+        // birth to its hanging chain — the rope owns the bodies/constraints,
+        // but only this engine can put them into the world (addObject already
+        // ran for the bodyless rope and will not run again).
+        this._onRopeChainSpawned = ({ rope }) => this._addRopeChain(rope);
+        eventBus.on('rope:chain-spawned', this._onRopeChainSpawned);
+
+        // Unbundle (issue #55): a spawned free rope collapsed back into its
+        // inert coil — remove the dying chain from the world (the refs ride
+        // the packet because the rope has already cleared its getters).
+        this._onRopeUnbundled = (packet) => this._removeRopeChain(packet);
+        eventBus.on('rope:unbundled', this._onRopeUnbundled);
+    }
+
+    /** @private */
+    _addRopeChain(rope) {
+        // Registration guard: the bus is global, so a rope belonging to
+        // ANOTHER engine must not leak its chain into this world.
+        if (!rope || !this._objects.has(rope)) return;
+        for (const constraint of rope.constraints) {
+            Composite.add(this.world, constraint);
+        }
+        for (const body of rope.bodies) {
+            Composite.add(this.world, body);
+            this._bodyToObject.set(body.id, rope);
+        }
+        this.wakeBodies(rope.bodies);
+    }
+
+    /**
+     * Pull a collapsed chain out of the world (issue #55). The rope emitted
+     * 'rope:unbundled' already in bundle state, so the dying constraints and
+     * bodies ride the packet as `previous`/`bodies`.
+     * @param {{rope: import('../objects/Rope.js').default,
+     *     previous?: Matter.Constraint[], bodies?: Matter.Body[]}} packet
+     * @private
+     */
+    _removeRopeChain(packet) {
+        const { rope, previous = [], bodies = [] } = packet ?? {};
+        if (!rope || !this._objects.has(rope)) return;
+        for (const constraint of previous) {
+            Composite.remove(this.world, constraint);
+        }
+        for (const body of bodies) {
+            if (!body) continue;
+            Composite.remove(this.world, body);
+            this._bodyToObject.delete(body.id);
+        }
+    }
+
     /**
      * Physically detach a severed rope: drop its Matter constraints from the
      * world (mirroring the severed flag/visual), then wake its bodies so the
@@ -1138,6 +1226,8 @@ export class PhysicsEngine {
         eventBus.off('balloon:popped', this._onBalloonPopped);
         eventBus.off('rope:severed', this._onRopeSevered);
         eventBus.off('rope:chain-converge', this._onRopeChainConverge);
+        eventBus.off('rope:chain-spawned', this._onRopeChainSpawned);
+        eventBus.off('rope:unbundled', this._onRopeUnbundled);
         Events.off(this.engine);
         this.clear();
         World.clear(this.world);

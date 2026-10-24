@@ -55,7 +55,9 @@ const DOC_ONLY_ROW_IDS = ['boundary-null', 'silent-objects-null'];
 // The scenario registry under test: one entry per active matrix row.
 const SCENARIO_ROW_IDS = [
     'rope-candle-flame',
+    'free-rope-candle-flame',
     'rope-closed-scissors-blade',
+    'free-rope-closed-scissors-blade',
     'balloon-scissors',
     'balloon-candle',
     'bucket-catch',
@@ -78,7 +80,7 @@ const EXPECTED_REGISTRY_TYPES = [
     'ball', 'tennis-ball', 'baseball',
     'ramp', 'conveyor', 'trampoline',
     'fan', 'spring', 'domino', 'gear', 'pulley',
-    'balloon', 'bucket', 'candle', 'rope', 'scissors', 'mouse',
+    'balloon', 'bucket', 'candle', 'rope', 'free-rope', 'scissors', 'mouse',
 ];
 
 const interactionsTestPath = fileURLToPath(
@@ -196,6 +198,46 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         // pieces' landing geometry depends on what they collide with (the
         // closed blades sit inside the span here), so assert the chain
         // itself rather than a fall distance.
+        expect(rope.constraints.length, 'severing must drop the constraint chain').toBe(0);
+    });
+
+    it('free-rope-candle-flame: the first tie births the chain and the flame cuts it', () => {
+        const engine = makeEngine();
+        // The bundle ties ONCE to the balloon knot — that first tie is the
+        // chain's birth (issue #55): it hangs straight down from the knot
+        // and, from spawn on, burns exactly like a laid rope.
+        const rope = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        const balloon = new Balloon(200, 10);
+        const candle = new Candle(200, 80);
+        engine.addObject(rope);
+        engine.addObject(balloon);
+        engine.addObject(candle);
+        rope.attachEndpoint(0, balloon, 'knot');
+        expect(rope.bodies.length, 'the first tie spawns the hanging chain').toBeGreaterThan(0);
+        const severed = trackEvent('rope:severed');
+
+        stepUntil(engine, () => rope.isSevered, 60, 'free-rope chain severing');
+        expect(severed.length).toBe(1);
+    });
+
+    it('free-rope-closed-scissors-blade: a spawned chain across the blades is cut when the scissors snap', () => {
+        const engine = makeEngine();
+        // Mirror of the laid-rope scissors rig: the chain dangles from a
+        // balloon knot above the open blades; the ball snapping the scissors
+        // cuts the spawned chain mid-span.
+        const rope = objectRegistry.create('free-rope', 400, 40, { length: 60 });
+        const balloon = new Balloon(400, -10);
+        const scissors = new Scissors(400, 55);
+        const ball = new Ball(379, 28, { variant: 'tennis' });
+        engine.addObject(rope);
+        engine.addObject(balloon);
+        engine.addObject(scissors);
+        engine.addObject(ball);
+        rope.attachEndpoint(0, balloon, 'knot');
+        expect(rope.constraints.length, 'the spawned chain holds itself by constraints').toBeGreaterThan(0);
+
+        stepUntil(engine, () => scissors.isClosed, 90, 'scissors snap');
+        stepUntil(engine, () => rope.isSevered, 90, 'chain cut');
         expect(rope.constraints.length, 'severing must drop the constraint chain').toBe(0);
     });
 

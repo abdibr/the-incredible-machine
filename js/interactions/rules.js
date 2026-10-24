@@ -60,6 +60,32 @@ export const DEFAULT_INTERACTION_ROWS = [
         // Preserved from Rope.onCollision: this was the codebase's only
         // label-gated pair; open blades let a rope rest untouched.
     },
+    {
+        id: 'free-rope-candle-flame',
+        summary: 'A spawned free-rope chain touching a candle flame burns through and severs.',
+        actor: { type: 'free-rope', match: 'free-rope (any chain segment)' },
+        target: { type: 'candle', label: 'candle-flame', match: "candle flame (label 'candle-flame')" },
+        handler: (rope) => rope.sever(),
+        test: 'free-rope ✕ candle-flame severs; free-rope ✕ candle wax does not',
+        // Issue #55: the chain is born of the first tie; from spawn on it
+        // burns exactly like a laid rope. The bodyless bundle can never
+        // reach a pair at all — it has no bodies.
+    },
+    {
+        id: 'free-rope-closed-scissors-blade',
+        summary: 'A spawned free-rope chain touching the blade bodies of snapped-shut scissors is cut.',
+        actor: { type: 'free-rope', match: 'free-rope (any chain segment)' },
+        target: {
+            type: 'scissors',
+            label: 'scissors-blade',
+            predicate: (scissors) => scissors.isClosed,
+            match: "scissors, closed, via label 'scissors-blade'",
+        },
+        handler: (rope) => rope.sever(),
+        test: 'free-rope ✕ closed-scissors blade severs; open blades and handles never cut',
+        // Issue #55: mirrors rope-closed-scissors-blade for the spawned
+        // chain; the bundle (no bodies) is naturally immune.
+    },
 
     // ── Balloon reactions ──────────────────────────────────────
     {

@@ -153,7 +153,10 @@ class ConnectFlow {
                 // tie beyond the rope's reach is REFUSED — no knot, the
                 // seek stays alive, and the refusal feedback paints (red
                 // handle flash + "rope too short" badge) until it expires.
-                if (world && this._seek.rope.isPointWithinReach(world.x, world.y, CONNECT_HIT_RADIUS)) {
+                // Free bundle (issue #55): a bodyless coil has no reach
+                // circle — its first tie is unconditional; the chain spawns
+                // hanging from exactly the point that was clicked.
+                if (world && (this._seek.rope.isFreeBundle || this._seek.rope.isPointWithinReach(world.x, world.y, CONNECT_HIT_RADIUS))) {
                     // A fixed-end tie realizes as a length-0 pin between
                     // the rope's anchor and the tied attachment point (the
                     // zero-length engine link of ADR 0007 decision 6,
@@ -169,7 +172,9 @@ class ConnectFlow {
                     // rope API and restore paths keep their contract of not
                     // moving targets (ADR 0006 divergence). Reach was
                     // evaluated on the pre-pull aim, unchanged.
-                    if (this._seek.endpoint === 0 && !target.target.isFixed) {
+                    // Free bundle (issue #55): no anchor body exists yet —
+                    // skip the pull; the spawn hangs the chain from the aim.
+                    if (this._seek.endpoint === 0 && !target.target.isFixed && !this._seek.rope.isFreeBundle) {
                         const anchor = this._seek.rope.bodies[0].position;
                         const dx = anchor.x - world.x;
                         const dy = anchor.y - world.y;
@@ -333,7 +338,36 @@ class ConnectFlow {
         const squares = [];
         const refusal = this.refusal; // the most recent refused tie, while it paints
         for (const rope of objects ?? []) {
-            if (rope.type !== 'rope' || rope.isSevered) continue;
+            if ((rope.type !== 'rope' && rope.type !== 'free-rope') || rope.isSevered) continue;
+
+            // Bodyless free bundle (issue #55): both endpoints sit at the
+            // coil — one square each, tied=false, so the seek/tie UX matches
+            // a fresh laid rope's free squares exactly (a free square is
+            // hover-revealed). There is no body to hang these squares on:
+            // _endpointBody would return null for a bundle.
+            if (rope.type === 'free-rope' && rope.isFreeBundle) {
+                for (const endpoint of [0, 1]) {
+                    const knots = rope.getAttachmentRefs()
+                        .filter((ref) => ref.endpoint === endpoint);
+                    const seeking = !!this._seek
+                        && this._seek.rope === rope && this._seek.endpoint === endpoint;
+                    const hovered = hover
+                        ? Math.hypot(hover.x - rope.x, hover.y - rope.y) <= CONNECT_HIT_RADIUS
+                        : false;
+                    squares.push({
+                        rope, endpoint,
+                        x: rope.x, y: rope.y,
+                        knots,
+                        tied: false,
+                        seeking,
+                        hovered,
+                        refused: !!refusal && seeking,
+                        visible: seeking || hovered,
+                    });
+                }
+                continue;
+            }
+
             const bodies = rope.bodies;
             if (!bodies || !bodies[0]) continue; // disposed rope
             for (const endpoint of [0, 1]) {
@@ -385,7 +419,8 @@ class ConnectFlow {
                 squares.push({
                     target: obj, pointId: point.id, x: world.x, y: world.y,
                     glows: !!seek
-                        && seek.rope.isPointWithinReach(world.x, world.y, CONNECT_HIT_RADIUS),
+                        && (seek.rope.isFreeBundle
+                            || seek.rope.isPointWithinReach(world.x, world.y, CONNECT_HIT_RADIUS)),
                     hovered,
                     visible: !!seek || hovered,
                 });

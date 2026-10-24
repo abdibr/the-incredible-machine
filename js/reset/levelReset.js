@@ -34,7 +34,7 @@ export function serializePlacedBoard(board) {
     const ordinalByObject = new Map(board.map((obj, index) => [obj, index]));
     for (let index = 0; index < board.length; index++) {
         const obj = board[index];
-        if (obj.type !== 'rope' || typeof obj.getAttachmentRefs !== 'function') continue;
+        if ((obj.type !== 'rope' && obj.type !== 'free-rope') || typeof obj.getAttachmentRefs !== 'function') continue;
         const tokens = [];
         for (const ref of obj.getAttachmentRefs()) {
             // Target no longer on the board → the knot dies with it

@@ -130,6 +130,72 @@ export function registerAllObjects() {
         description: 'Each end ties to balloon knots and bucket rims — drop either part right up close to the other.',
     });
 
+    objectRegistry.register('free-rope', class FreeRope extends Rope {
+        constructor(x, y, opts = {}) { super(x, y, { ...opts, free: true }); }
+        get type() { return 'free-rope'; }
+        drawToolboxIcon(ctx, w, h) {
+            // Distinct toolbox icon (issue #55): the pinned rope shows the
+            // nail + hanging strand; the free rope is its inert coil — the
+            // same three concentric arcs the bundle draws on the board
+            // (Rope.draw, radii 6/9/12), scaled to the icon, plus a loose
+            // end spilling out of the outer ring (ready to tie and uncoil).
+            // Never draws the gray nail dot.
+            const cx = w / 2;
+            const cy = h / 2;
+            const outer = w * 0.32;
+            ctx.strokeStyle = '#8B6914'; // ROPE_COLOR (duplicated here, as in Pulley.js)
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(cx + outer * 0.8, cy + outer * 0.6);
+            ctx.quadraticCurveTo(cx + outer + w * 0.04, cy + outer + h * 0.06, cx + w * 0.1, cy + outer + h * 0.08);
+            ctx.stroke();
+            for (let i = 0; i < 3; i++) {
+                ctx.beginPath();
+                ctx.arc(cx, cy, outer - i * w * 0.09, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+        static deserialize(data) {
+            return new FreeRope(data.x, data.y, {
+                angle: data.angle,
+                isFixed: data.isFixed,
+                customId: data.id,
+                length: data.options?.length || 100,
+                endPoint: data.options?.endPoint,
+                severed: data.options?.severed ?? false,
+                attachments: data.attachments ?? [],
+            });
+        }
+        serialize() {
+            // The spawned discriminator is derived live, never stored: a
+            // bundle re-serializes spawned:false, a spawned chain spawned:true.
+            // Mirrors the ADR 0005 convergence pattern (derive at serialize
+            // time so round-trips stay stable).
+            const data = super.serialize();
+            data.options.spawned = this._segments.length > 0;
+            return data;
+        }
+        restoreState(record) {
+            super.restoreState(record);
+            // Snapshot rewind (issue #55): the snapshot predates the first
+            // tie (spawned:false) while this instance already carries a
+            // spawned chain — collapse it back into the bundle (force skips
+            // the live-knot guard; the engine consumer un-bundles the world).
+            // The reverse is intentionally skipped: once collapsed, the chain
+            // bodies are gone from the world, so a spawned snapshot cannot
+            // resurrect them — it keeps its bundle like a severed rope keeps
+            // its severed flag.
+            if (record?.options?.spawned === false && this._segments.length > 0) {
+                this._maybeRevertToBundle(true);
+            }
+        }
+    }, {
+        displayName: 'Free Rope',
+        category: 'triggers',
+        description: 'Inert coiled rope — tie one end to a knot or rim to spawn the hanging chain; untie it all to coil back up.',
+    });
+
     objectRegistry.register('scissors', Scissors, {
         displayName: 'Scissors',
         category: 'triggers',

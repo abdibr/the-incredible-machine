@@ -50,6 +50,17 @@ export default class Rope extends BaseObject {
         this._endPoint = options.endPoint || { x, y: y + this._length };
         this._severed = options.severed ?? false;
 
+        // Free-rope mode (issue #55): the FreeRope registry variant sets
+        // `free: true` and the rope is born an inert, bodyless coiled bundle
+        // at (x, y) — no anchor, no segments, no constraints. Its first tie
+        // gives birth to the hanging chain (attachEndpoint → _spawnChain);
+        // its last untie collapses it back (→ _maybeRevertToBundle).
+        // Bundled-vs-spawned stays derived state — a bundle is a free rope
+        // with zero segments (isFreeBundle), so knots, snapshots and the
+        // serializers never manage a second flag.
+        this._isFree = options.free ?? false;
+        if (this._isFree) this._anchor = null;
+
         this._segments = [];
         this._constraints = [];
 
@@ -59,35 +70,37 @@ export default class Rope extends BaseObject {
         this._attachments = [[], []];
         this._pendingAttachments = [];
 
-        // Build rope as chain of small circle segments
-        const segLength = this._length / SEGMENTS;
-        const dx = (this._endPoint.x - x) / SEGMENTS;
-        const dy = (this._endPoint.y - y) / SEGMENTS;
+        if (!this._isFree) {
+            // Build rope as chain of small circle segments
+            const segLength = this._length / SEGMENTS;
+            const dx = (this._endPoint.x - x) / SEGMENTS;
+            const dy = (this._endPoint.y - y) / SEGMENTS;
 
-        for (let i = 0; i < SEGMENTS; i++) {
-            const sx = x + dx * (i + 0.5);
-            const sy = y + dy * (i + 0.5);
+            for (let i = 0; i < SEGMENTS; i++) {
+                const sx = x + dx * (i + 0.5);
+                const sy = y + dy * (i + 0.5);
 
-            const seg = Bodies.circle(sx, sy, SEGMENT_RADIUS, {
-                density: 0.001,
-                friction: 0.8,
-                frictionAir: 0.02,
-                label: `rope-seg-${i}`,
-                collisionFilter: {
-                    group: -1, // rope segments don't collide with each other
-                },
+                const seg = Bodies.circle(sx, sy, SEGMENT_RADIUS, {
+                    density: 0.001,
+                    friction: 0.8,
+                    frictionAir: 0.02,
+                    label: `rope-seg-${i}`,
+                    collisionFilter: {
+                        group: -1, // rope segments don't collide with each other
+                    },
+                });
+                this._segments.push(seg);
+            }
+
+            // Static anchor at start
+            this._anchor = Bodies.circle(x, y, 4, {
+                isStatic: true,
+                label: 'rope-anchor',
+                collisionFilter: { group: -1 },
             });
-            this._segments.push(seg);
+
+            this._constraints = this._severed ? [] : this._buildChainConstraints(this._length);
         }
-
-        // Static anchor at start
-        this._anchor = Bodies.circle(x, y, 4, {
-            isStatic: true,
-            label: 'rope-anchor',
-            collisionFilter: { group: -1 },
-        });
-
-        this._constraints = this._severed ? [] : this._buildChainConstraints(this._length);
 
         // Passive restore tokens (issue 04): a severed rope cannot hold a
         // payload, so it binds nothing.
@@ -97,11 +110,26 @@ export default class Rope extends BaseObject {
     get type() { return 'rope'; }
 
     get bodies() {
-        return [this._anchor, ...this._segments];
+        // filter(Boolean) (issue #55): a free bundle has no anchor and a
+        // disposed rope may already report released nulls — both must read
+        // as zero bodies so every world/snapshot pass stays null-safe.
+        return [this._anchor, ...this._segments].filter(Boolean);
     }
 
     get constraints() {
         return this._constraints;
+    }
+
+    /**
+     * Free-rope mode (issue #55): true while a `free` rope is its inert,
+     * bodyless coil. Derived, never stored — the ctor, _spawnChain and
+     * _maybeRevertToBundle are the only writers of the members this reads,
+     * so it can never drift from reality. A laid base Rope is never a
+     * bundle.
+     * @returns {boolean}
+     */
+    get isFreeBundle() {
+        return this._isFree === true && this._segments.length === 0;
     }
 
     /**
@@ -140,7 +168,8 @@ export default class Rope extends BaseObject {
 
     /**
      * The body a given endpoint ties through (issue 04): 0 = the start's
-     * static anchor, 1 = the free-chain last segment.
+     * anchor (the static nail for a pinned rope; the dynamic knot a free
+     * rope spawns with, issue #55), 1 = the free-chain last segment.
      * @param {number} endpoint
      * @returns {Matter.Body|null}
      * @private
@@ -169,6 +198,14 @@ export default class Rope extends BaseObject {
         if (!known) {
             throw new Error(`[Rope] attachEndpoint: target ${target?.type ?? target} offers no attachment point "${pointId}"`);
         }
+        // First tie on a free bundle (issue #55) is the birth of the chain:
+        // spawn it hanging straight down from the tie point at the rope's
+        // length, then tie exactly like a laid rope below. Later ties hit a
+        // spawned chain and follow the normal span rules (reach refusals
+        // included) — the spawn freezes the length via the knot this push
+        // creates, and the engine's 'rope:chain-spawned' consumer puts the
+        // newborn chain into the world.
+        if (this.isFreeBundle) this._spawnChain(target, pointId);
         this._attachments[endpoint].push({ target, pointId });
         // Fixed length covers its own knots (ADR 0007 decision 4, issue
         // #54): a free-end tie that reaches past the chain's laid capacity
@@ -176,8 +213,8 @@ export default class Rope extends BaseObject {
         // distance (the tie body is the last segment's center, a half
         // segment inboard of the layout end) — the chain is never
         // over-tensioned by its own knot, and no tie ever shrinks the rope.
-        // Measured from the static anchor; the endpoint-0 knot realizes at
-        // the anchor itself and consumes no chain.
+        // Measured from the anchor; the endpoint-0 knot realizes at the
+        // anchor itself and consumes no chain.
         if (endpoint === 1 && this._anchor) {
             const world = target.getAttachmentWorldPoint?.(pointId) ?? null;
             if (world) {
@@ -210,6 +247,10 @@ export default class Rope extends BaseObject {
         const idx = knots.findIndex((knot) => knot.target === target && knot.pointId === pointId);
         if (idx === -1) return false;
         knots.splice(idx, 1);
+        // Last knot gone (issue #55): a spawned free rope with nothing left
+        // tied collapses back into its inert bundle (the engine consumer
+        // pulls the chain out of the world).
+        this._maybeRevertToBundle();
         return true;
     }
 
@@ -235,6 +276,9 @@ export default class Rope extends BaseObject {
      */
     clearAttachments() {
         this._attachments = [[], []];
+        // Wholesale untie (issue #55 — the edit-time move untie): an
+        // emptied spawned free rope collapses back into its inert bundle.
+        this._maybeRevertToBundle();
     }
 
     /**
@@ -348,9 +392,19 @@ export default class Rope extends BaseObject {
                 });
             }
         }
+
+        // Every knot died with its target during play (issue #55): a fully
+        // orphaned spawned free rope collapses back into its bundle.
+        this._maybeRevertToBundle();
     }
 
     get bounds() {
+        // Bodyless free bundle (issue #55): a small static box centered on
+        // the coil — the same footprint the coil glyph draws, so drag
+        // hit-testing matches the visual. (A laid rope bounds its segments.)
+        if (this.isFreeBundle) {
+            return { x: this._x - 14, y: this._y - 14, width: 28, height: 28 };
+        }
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         for (const seg of this._segments) {
             const p = seg.position;
@@ -366,15 +420,106 @@ export default class Rope extends BaseObject {
         const dx = x - this._x;
         const dy = y - this._y;
         super.setPosition(x, y);
-        Body.setPosition(this._anchor, { x, y });
+        // Bodyless free bundle (issue #55): nothing exists in the world yet
+        // — only the coil center tracks (x, y); it becomes the spawn anchor.
+        if (this._anchor) Body.setPosition(this._anchor, { x, y });
         for (const seg of this._segments) {
             Body.translate(seg, { x: dx, y: dy });
         }
     }
 
+    /**
+     * Give birth to the free chain (issue #55): the first tie on a bundle
+     * spawns the chain hanging straight down from the tie point at the
+     * rope's current length (the pinned default — a spawned free rope never
+     * gets hand-laid). Mirrors the constructor build exactly (same labels,
+     * radii, filters and constraint builder) so a spawned chain and a laid
+     * rope are indistinguishable downstream (knots, reach, snapshots). The
+     * engine's 'rope:chain-spawned' consumer (registration-guarded) owns
+     * the world add — addObject long ran for the bodyless rope and will
+     * not run again.
+     * @param {import('./BaseObject.js').default} target
+     * @param {string} pointId
+     * @private
+     */
+    _spawnChain(target, pointId) {
+        const world = target.getAttachmentWorldPoint?.(pointId) ?? null;
+        const anchorX = world?.x ?? this._x;
+        const anchorY = world?.y ?? this._y;
+        this.setPosition(anchorX, anchorY); // bundle: only re-centers the coil
+        this._endPoint = { x: anchorX, y: anchorY + this._length };
+        const dx = 0;
+        const dy = this._length / SEGMENTS;
+
+        for (let i = 0; i < SEGMENTS; i++) {
+            const seg = Bodies.circle(anchorX + dx * (i + 0.5), anchorY + dy * (i + 0.5), SEGMENT_RADIUS, {
+                density: 0.001,
+                friction: 0.8,
+                frictionAir: 0.02,
+                label: `rope-seg-${i}`,
+                collisionFilter: {
+                    group: -1, // rope segments don't collide with each other
+                },
+            });
+            this._segments.push(seg);
+        }
+
+        // The free rope's "anchor" is a dynamic KNOT, not a nail (issue #55,
+        // ADR 0007 decision 5): the chain hangs FROM its tie target, so this
+        // body is hauled along by the endpoint-0 knot link realized on the
+        // next step. A static body here froze the tie (the bugfile: the first
+        // balloon swinging 25.6px around a pinned end). The knot must never
+        // auto-sleep while hauling (this Matter build does not wake sleeping
+        // bodies through constraints), and it rides its tie without
+        // colliding with it — a knot, not a bumper.
+        this._anchor = Bodies.circle(anchorX, anchorY, 4, {
+            isStatic: false,
+            label: 'rope-anchor',
+            collisionFilter: { group: -1, mask: 0 },
+            sleepThreshold: Infinity,
+        });
+
+        this._constraints = this._buildChainConstraints(this._length);
+        eventBus.emit('rope:chain-spawned', { rope: this });
+    }
+
+    /**
+     * Collapse back into the bundle (issue #55): a spawned free rope whose
+     * last knot is gone — per-knot untie, the wholesale move untie, knots
+     * dying with their targets in reconcile, or a snapshot rewind (force).
+     * Emits 'rope:unbundled' with the dying refs so ONLY the engine
+     * consumer touches the world; the rope itself never does. A laid rope
+     * (not free) and an already-collapsed rope (no segments) no-op; a
+     * severed chain keeps its segments, so severing and collapsing never
+     * interact.
+     * @param {boolean} [force] - ignore live knots (snapshot rewind)
+     * @private
+     */
+    _maybeRevertToBundle(force = false) {
+        if (!this._isFree || this._segments.length === 0) return;
+        if (!force && this._attachments[0].length + this._attachments[1].length > 0) return;
+
+        // Collect the dying refs BEFORE clearing: the packet must carry what
+        // the engine removes — the getters are already empty once we emit.
+        const dyingConstraints = this._constraints;
+        const dyingBodies = [this._anchor, ...this._segments].filter(Boolean);
+        this._attachments = [[], []];
+        this._anchor = null;
+        this._segments = [];
+        this._constraints = [];
+        this._endPoint = null;
+        eventBus.emit('rope:unbundled', {
+            rope: this, previous: dyingConstraints, bodies: dyingBodies,
+        });
+    }
+
     /** Sever the rope (e.g., by candle flame or closed scissors blades). */
     sever() {
         if (this._severed) return;
+        // A bodyless bundle cannot burn or be cut (issue #55): there is no
+        // chain in the world to part (and its zero bodies never collide).
+        // A spawned chain severs exactly like a laid rope.
+        if (this.isFreeBundle) return;
         this._severed = true;
         // Synchronous emit: the physics engine consumes this and removes
         // the constraints from the world. Then drop the dead references so
@@ -522,6 +667,22 @@ export default class Rope extends BaseObject {
     draw(ctx) {
         ctx.save();
 
+        // Bodyless free bundle (issue #55): draw a small coiled rope glyph
+        // centered on the bundle — three concentric arcs, the footprint the
+        // bundle bounds expose for drag pick.
+        if (this.isFreeBundle) {
+            ctx.strokeStyle = ROPE_COLOR;
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            for (let i = 0; i < 3; i++) {
+                ctx.beginPath();
+                ctx.arc(this._x, this._y, 6 + i * 3, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            ctx.restore();
+            return;
+        }
+
         // Draw the rope as a smooth curve through segment positions.
         // After severing, no constraint connects the rope to the anchor
         // (they were removed from the physics world) — so the polyline is
@@ -548,14 +709,22 @@ export default class Rope extends BaseObject {
         ctx.lineTo(last.x, last.y);
         ctx.stroke();
 
-        // Anchor point
-        ctx.fillStyle = '#555';
-        ctx.beginPath();
-        ctx.arc(this._anchor.position.x, this._anchor.position.y, 4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#333';
-        ctx.lineWidth = 1;
-        ctx.stroke();
+        // Anchor point. Pinned ropes keep the gray nail; a free rope's
+        // anchor is a moving knot (issue #55), drawn in rope color while
+        // intact. When a free rope severs, its endpoint-0 knot link dies
+        // with the cut and the loose body stays invisible.
+        const pinnedRope = this.type === 'rope';
+        if (pinnedRope || !this._severed) {
+            ctx.fillStyle = pinnedRope ? '#555' : ROPE_COLOR;
+            ctx.beginPath();
+            ctx.arc(this._anchor.position.x, this._anchor.position.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+            if (pinnedRope) {
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+        }
 
         ctx.restore();
     }

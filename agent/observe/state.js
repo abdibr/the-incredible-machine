@@ -41,6 +41,7 @@ function extrasOf(obj, goal) {
     if (obj.type === 'bucket' && obj.customId === goal?.zoneId) extras.push('goal-zone');
     if (obj.type === 'bucket') extras.push(`caught:${obj.caughtCount ?? 0}`);
     if (obj.type === 'rope') extras.push(obj.isSevered ? 'SEVERED' : 'intact');
+    if (obj.type === 'free-rope') extras.push(obj.isSevered ? 'SEVERED' : obj.isFreeBundle ? 'BUNDLED' : 'TIED');
     if (obj.type === 'balloon') extras.push(obj.isPopped ? 'POPPED' : 'intact');
     if (obj.type === 'scissors') extras.push(obj.isClosed ? 'closed' : 'open');
     return extras;

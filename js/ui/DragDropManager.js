@@ -129,7 +129,9 @@ class DragDropManager {
                 // A moved rope drags its knots off their points (issue 04):
                 // untie at release — the drop-scan reconcile releases the
                 // physical links on the next play.
-                if (this._dragObject.type === 'rope') this._dragObject.clearAttachments();
+                if (this._dragObject.type === 'rope' || this._dragObject.type === 'free-rope') {
+                    this._dragObject.clearAttachments();
+                }
                 eventBus.emit('object:moved', {
                     id: this._dragObject.id,
                     x: this._dragObject.x,
