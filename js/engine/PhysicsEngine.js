@@ -1061,7 +1061,7 @@ export class PhysicsEngine {
         // rope owns the constraints, but only this engine can put them
         // back into the world (addObject won't run again for a registered
         // rope).
-        this._onRopeChainConverge = ({ rope }) => this._restoreRopeConstraints(rope);
+        this._onRopeChainConverge = (packet) => this._restoreRopeConstraints(packet);
         eventBus.on('rope:chain-converge', this._onRopeChainConverge);
     }
 
@@ -1087,17 +1087,24 @@ export class PhysicsEngine {
     }
 
     /**
-     * Re-add a restored rope's chain constraints to the world. Consumes
-     * 'rope:chain-converge' — Rope.restoreState rewinding a severed live
-     * rope to an intact snapshot rebuilds the chain; this puts it back
-     * (and wakes the rope so the rebuilt chain integrates immediately).
-     * @param {import('../objects/Rope.js').default} rope
+     * Exchange a rope's chain in the world. Consumes 'rope:chain-converge'
+     * — Rope.restoreState rewinding a severed live rope to an intact
+     * snapshot rebuilds the chain (its previous set is empty: sever already
+     * dropped it), and Rope.setEndpoints re-lays swap in a whole new chain
+     * (previous is the replaced one) — this drops the stale members from
+     * the world and adds the rebuilt chain (and wakes the rope so the new
+     * chain integrates immediately).
+     * @param {{rope: import('../objects/Rope.js').default, previous?: Matter.Constraint[]}} packet
      * @private
      */
-    _restoreRopeConstraints(rope) {
+    _restoreRopeConstraints(packet) {
+        const { rope, previous = [] } = packet ?? {};
         // Register guard: the bus is global, so a converge from a rope
         // living in ANOTHER engine must not leak its chain into this world.
-        if (!rope.bodies.some((body) => body && this._bodyToObject.has(body.id))) return;
+        if (!rope?.bodies?.some((body) => body && this._bodyToObject.has(body.id))) return;
+        for (const constraint of previous) {
+            Composite.remove(this.world, constraint);
+        }
         for (const constraint of rope.constraints) {
             Composite.add(this.world, constraint);
         }

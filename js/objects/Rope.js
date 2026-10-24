@@ -3,6 +3,13 @@
  *
  * Connects two objects or an object to a fixed point.
  * Can be burned by candle flame (severs the constraint).
+ *
+ * Pinned-rope fixed length (ADR 0007 decision 4, issue #54): the length is
+ * the hand's while the rope is untied (relayFreeEnd reels the free-end tie
+ * square to the cursor, clamped at MIN_ROPE_SPAN); the first tie freezes it
+ * (lengthFrozen, derived from the knots — never drifts from the tie state),
+ * beyond-reach ties are refused by the connect flow, and a tie always
+ * covers its own knot (max length with slack — never shrunk, never a rod).
  */
 
 import Matter from 'matter-js';
@@ -34,6 +41,15 @@ export const ROPE_ATTRACT_RADIUS = 64;
 const ROPE_COLOR = '#8B6914';
 const SEGMENTS = 6;
 const SEGMENT_RADIUS = 3;
+
+/**
+ * Shortest span a rope chain re-lays to (issue #54, ADR 0007 decision 4):
+ * six segments of radius 3 need ≥ 8 px pitch each to stay a chain instead
+ * of collapsing to a point — a hand re-lay demanding less clamps here
+ * instead of breaking the chain. One number, one meaning for every caller.
+ * @type {number}
+ */
+export const MIN_ROPE_SPAN = SEGMENTS * (SEGMENT_RADIUS * 2 + 2);
 
 export default class Rope extends BaseObject {
     /**
@@ -174,6 +190,26 @@ export default class Rope extends BaseObject {
             throw new Error(`[Rope] attachEndpoint: target ${target?.type ?? target} offers no attachment point "${pointId}"`);
         }
         this._attachments[endpoint].push({ target, pointId });
+        // Fixed length covers its own knots (ADR 0007 decision 4, issue
+        // #54): a free-end tie that reaches past the chain's laid capacity
+        // grows the length so the chain's rest lengths span the tied
+        // distance (the tie body is the last segment's center, a half
+        // segment inboard of the layout end) — the chain is never
+        // over-tensioned by its own knot, and no tie ever shrinks the rope.
+        // Measured from the static anchor; the endpoint-0 knot realizes at
+        // the anchor itself and consumes no chain.
+        if (endpoint === 1 && this._anchor) {
+            const world = target.getAttachmentWorldPoint?.(pointId) ?? null;
+            if (world) {
+                const tied = Math.hypot(
+                    world.x - this._anchor.position.x,
+                    world.y - this._anchor.position.y
+                );
+                if (tied > this._length * (SEGMENTS - 0.5) / SEGMENTS) {
+                    this._length = tied * SEGMENTS / (SEGMENTS - 0.5);
+                }
+            }
+        }
     }
 
     /**
@@ -372,6 +408,72 @@ export default class Rope extends BaseObject {
     }
 
     /**
+     * ADR 0007 decision 4 (issue #54): a rope's first tie freezes its
+     * length — the hand can no longer reel the free end out or in, only
+     * re-orient it around the frozen reach circle (relayFreeEnd clamps
+     * there). Derived from the knot lists, so it can never drift from the
+     * tie state; the last untie (per-knot or the wholesale move untie)
+     * hands length back to the hand.
+     * @returns {boolean}
+     */
+    get lengthFrozen() {
+        return this._attachments[0].length > 0 || this._attachments[1].length > 0;
+    }
+
+    /**
+     * Whether a world point lies within this rope's reach from its static
+     * anchor (issue #54, ADR 0007 decision 4): a slack chain can span any
+     * distance up to its rest-length sum — (SEGMENTS − 0.5)/SEGMENTS of the
+     * fixed length, because the tie body is the last segment's center — and
+     * must not be stretched past it. The connect flow gates both its tie
+     * clicks and its glow with this one predicate, so what glows is exactly
+     * what ties; the endpoint-0 knot realizes at the anchor itself, so the
+     * same measure covers both ends of a pinned rope.
+     * @param {number} x
+     * @param {number} y
+     * @param {number} [slack=0] - extra px allowed (a tie click's aim tolerance)
+     * @returns {boolean}
+     */
+    isPointWithinReach(x, y, slack = 0) {
+        const anchor = this._anchor?.position;
+        if (!anchor) return false;
+        return Math.hypot(x - anchor.x, y - anchor.y) <= this._length * (SEGMENTS - 0.5) / SEGMENTS + slack;
+    }
+
+    /**
+     * The hand re-lay (ADR 0007 decision 4, issue #54): lay the chain so
+     * its free-end tie square (the last segment's center) rides to (x, y),
+     * clamped — an untied rope takes the demanded square distance as a
+     * chain span of demand · (SEGMENTS/(SEGMENTS − 0.5)), with the span
+     * floored at MIN_ROPE_SPAN; a frozen rope (knots) re-orients only
+     * around its frozen reach circle and its length never moves. The
+     * anchor stays exactly where it is. Delegates the re-lay to
+     * setEndpoints, which announces rope:chain-converge so an in-world
+     * rope swaps its constraints instead of keeping stale members.
+     * @param {number} x - demanded tie-square x
+     * @param {number} y - demanded tie-square y
+     */
+    relayFreeEnd(x, y) {
+        const anchor = this._anchor?.position;
+        if (!anchor) return;
+        const demanded = Math.hypot(x - anchor.x, y - anchor.y);
+        if (demanded === 0) return; // nothing to follow yet
+        const ux = (x - anchor.x) / demanded;
+        const uy = (y - anchor.y) / demanded;
+        const span = this.lengthFrozen
+            ? this._length
+            : Math.max(demanded * SEGMENTS / (SEGMENTS - 0.5), MIN_ROPE_SPAN);
+        this.setEndpoints(
+            { x: anchor.x, y: anchor.y },
+            { x: anchor.x + ux * span, y: anchor.y + uy * span }
+        );
+        // A frozen rope's length is sealed: setEndpoints re-derived it from
+        // the re-laid layout (float dust off the frozen value possible) —
+        // restore the exact frozen length so the accounting never drifts.
+        if (this.lengthFrozen) this._length = span;
+    }
+
+    /**
      * Re-lay the rope between two points (edit-time placement seam, issue
      * 04): the anchor lands on `start`, the segments re-line up along the
      * straight line to `end`, and the chain is rebuilt for the new span.
@@ -396,7 +498,15 @@ export default class Rope extends BaseObject {
             });
         }
         if (!this._severed) {
+            const previous = this._constraints;
             this._constraints = this._buildChainConstraints(this._length);
+            // The re-lay replaced the chain: announce the swap so the
+            // physics engine drops the old chain for the rebuilt one when
+            // this rope lives in a world (the usual edit-stage case is
+            // out-of-world, where the engine's registration guard makes the
+            // event a no-op; after a play→reset rewind the board does live
+            // in the world). A severed rope rebuilt no chain — see above.
+            eventBus.emit('rope:chain-converge', { rope: this, previous });
         }
     }
 
@@ -491,6 +601,7 @@ export default class Rope extends BaseObject {
             options: {
                 ...this._options,
                 length: this._length,
+                lengthFrozen: this.lengthFrozen,
                 endPoint: this._endPoint,
                 severed: this._severed,
             },

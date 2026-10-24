@@ -1,8 +1,25 @@
 /**
  * Click-to-connect tying via squares — GitHub issue #52, the first slice of
- * the rope connection redesign (ADR 0007 decision 2).
+ * the rope connection redesign (ADR 0007 decision 2), plus issue #54's
+ * pinned-rope fixed length and beyond-reach refusal (ADR 0007 decision 4).
  *
- * Seams under test:
+ * #54 seams under test:
+ * - ConnectFlow.setPreview — a free-end seek reels the rope to the cursor
+ *   (rope.relayFreeEnd: the tie square rides the cursor, clamped); an
+ *   anchor-square seek only aims (the pin does not follow the hand).
+ * - ConnectFlow.getTieSquares — glow = tieable: a target glows while a
+ *   seek aims at it only within the rope's reach (Rope.isPointWithinReach).
+ * - ConnectFlow.handlePointerDown — a tie click beyond reach is refused:
+ *   no knot, the seek survives, refusal feedback paints via the flow's
+ *   refusal record (red handle flash + "rope too short" badge, painted by
+ *   Renderer._drawConnectSquares).
+ * - Rope.lengthFrozen — derived from the knots; the first tie freezes the
+ *   hand-set length; the snapshot carries it (serialize option
+ *   lengthFrozen) and restore re-derives it through the two-phase bind.
+ * - DragDropManager delegation — a refused tie click is still consumed by
+ *   the seek (no selection fall-through).
+ *
+ * #52 seams under test:
  * - ConnectFlow (js/ui/ConnectFlow.js) — the state machine the drag-drop
  *   handler delegates to: clicking a free rope endpoint square seeks; the
  *   preview line follows the cursor; clicking a glowing target square ties;
@@ -84,6 +101,11 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const knot = balloon.getAttachmentWorldPoint('knot');
 
         flow.handlePointerDown(end.x, end.y, [rope, balloon]); // seek
+        // ADR 0007 decision 4: the hand reels the free end out to the
+        // target first — the seek's move re-lays the rope beneath the aim,
+        // putting the tie click inside the seeking square's own radius:
+        // the tie wins the seat over the re-click cancel.
+        flow.setPreview(knot.x, knot.y);
         const consumed = flow.handlePointerDown(knot.x, knot.y, [rope, balloon]);
 
         expect(consumed).toBe(true);
@@ -118,10 +140,16 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const end = rope.bodies[rope.bodies.length - 1].position;
         const knot = balloon.getAttachmentWorldPoint('knot');
         flow.handlePointerDown(end.x, end.y, [rope, balloon]);
+        // The hand reels the free end to the target first (issue #54: the
+        // seek's move re-lays the rope, so the tie lands within reach).
+        flow.setPreview(knot.x, knot.y);
         flow.handlePointerDown(knot.x, knot.y, [rope, balloon]);
 
         physics.step(16.67); // the lazy per-step reconcile (ADR 0004 seam)
         expect(physics.getAttachedConstraints()).toHaveLength(1);
+        // The tie covers its own knot: the length grew from 40 to the
+        // tied span times the 6/5.5 chain-rest factor.
+        expect(rope._length).toBeCloseTo(Math.hypot(200, 225.6) * 6 / 5.5, 3);
 
         physics.dispose();
         rope.dispose();
@@ -199,6 +227,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const knot = balloon.getAttachmentWorldPoint('knot');
 
         flow.handlePointerDown(end.x, end.y, [rope, balloon]);
+        flow.setPreview(knot.x, knot.y); // reel the free end to the target (issue #54)
         flow.handlePointerDown(knot.x, knot.y, [rope, balloon]);
         physics.step(16.67); // the lazy per-step reconcile (ADR 0004 seam)
         expect(physics.getAttachedConstraints()).toHaveLength(1);
@@ -252,11 +281,12 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         balloon.dispose();
     });
 
-    it('every attachment point glows during a seek; hover matters only outside one', () => {
+    it('glow = tieable: in-reach targets glow during a seek; out-of-reach ones stay faint', () => {
         const rope = new Rope(300, 100, { length: 40 });
-        const balloon = new Balloon(700, 300);
-        const bucket = new Bucket(200, 500);
+        const balloon = new Balloon(320, 104);  // in reach: knot 35.8px from the anchor
+        const bucket = new Bucket(200, 500);    // beyond reach: rim 393px out
         const knot = balloon.getAttachmentWorldPoint('knot');
+        const rim = bucket.getAttachmentWorldPoint('rim');
 
         let targets = flow.getTieSquares([rope, balloon, bucket], { x: knot.x, y: knot.y });
         expect(targets).toHaveLength(2); // balloon knot + bucket rim
@@ -267,13 +297,109 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         flow.handlePointerDown(end.x, end.y, [rope]);
         targets = flow.getTieSquares([rope, balloon, bucket], null);
         expect(targets).toHaveLength(2);
-        expect(targets[0].glows).toBe(true); // valid targets glow: click one to tie
+        expect(targets[0].glows).toBe(true); // in reach: click one to tie
         expect(targets[0].visible).toBe(true);
+        expect(targets[1].glows).toBe(false); // beyond reach: a tie click would refuse
+        expect(targets[1].visible).toBe(true); // still shown, faint, during the seek
+
+        // The hand reels the rope out toward the rim: reach follows the
+        // drag, and the far target becomes tieable mid-seek.
+        flow.setPreview(rim.x, rim.y);
+        targets = flow.getTieSquares([rope, balloon, bucket], null);
+        expect(targets[1].glows).toBe(true);
+        expect(targets[0].glows).toBe(true);
 
         flow.cancel();
         rope.dispose();
         balloon.dispose();
         bucket.dispose();
+    });
+    it('an anchor-square seek aims without re-laying (the pin does not follow the hand)', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+
+        flow.handlePointerDown(300, 100, [rope]); // anchor-square seek
+        flow.setPreview(640, 360);
+
+        expect(flow.seek).toEqual({ rope, endpoint: 0 });
+        expect(flow.preview).toEqual({ x: 640, y: 360 });
+        expect(rope._length).toBe(40); // untouched: the pin is not re-laid
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        expect(end.y).toBeCloseTo(100 + (40 * 5.5) / 6, 5); // the square stayed laid
+        rope.dispose();
+    });
+
+    it("a frozen rope's free-end drag rides the frozen reach circle — never beyond length", () => {
+        const rope = new Rope(300, 100);
+        const balloon = new Balloon(320, 74.4); // knot at (320, 100): ties the anchor
+        const end = rope.bodies[rope.bodies.length - 1].position;
+
+        flow.handlePointerDown(300, 100, [rope, balloon]); // anchor-square seek
+        expect(flow.handlePointerDown(320, 100, [rope, balloon])).toBe(true); // tie: frozen at 100
+        expect(rope.lengthFrozen).toBe(true);
+        expect(rope._length).toBe(100);
+
+        flow.handlePointerDown(end.x, end.y, [rope, balloon]); // free-end seek on the tied rope
+        flow.setPreview(300, 700); // a far demand clamps at the frozen span
+        expect(rope._length).toBe(100);
+        expect(rope._endPoint).toEqual({ x: 300, y: 200 });
+        flow.setPreview(303, 106); // an inward demand rides the same frozen circle
+        expect(rope._length).toBe(100);
+        const d = Math.hypot(3, 6);
+        expect(rope._endPoint.x).toBeCloseTo(300 + (3 / d) * 100, 5);
+        expect(rope._endPoint.y).toBeCloseTo(100 + (6 / d) * 100, 5);
+        rope.dispose();
+        balloon.dispose();
+    });
+
+    it('a tie click beyond the reach is refused — no knot, seek intact, feedback armed', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const balloon = new Balloon(700, 300); // knot 459px out: far beyond the 40px rope
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const knot = balloon.getAttachmentWorldPoint('knot');
+
+        flow.handlePointerDown(end.x, end.y, [rope, balloon]); // seek
+        expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
+
+        expect(flow.seek).toEqual({ rope, endpoint: 1 }); // the seek survives the refusal
+        expect(rope.getAttachmentRefs()).toEqual([]); // no knot was created
+        expect(rope.lengthFrozen).toBe(false);
+        expect(flow.refusal).toMatchObject({ x: knot.x, y: knot.y });
+        const squares = flow.getEndpointSquares([rope], null);
+        expect(squares[1].refused).toBe(true); // the handle flashes red
+
+        // The hand reels the rope out to the target: the SAME click now ties.
+        flow.setPreview(knot.x, knot.y);
+        expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
+        expect(rope.getAttachmentRefs()).toContainEqual({ endpoint: 1, target: balloon, pointId: 'knot' });
+        expect(flow.seek).toBe(null);
+        expect(flow.refusal).toBe(null); // a settled tie sweeps the flash
+        expect(rope._length).toBeCloseTo(Math.hypot(400, 225.6) * 6 / 5.5, 3);
+        rope.dispose();
+        balloon.dispose();
+    });
+
+    it('the refusal feedback decays on its own and a cancel sweeps it', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const balloon = new Balloon(700, 300);
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const knot = balloon.getAttachmentWorldPoint('knot');
+        flow.handlePointerDown(end.x, end.y, [rope, balloon]);
+        flow.handlePointerDown(knot.x, knot.y, [rope, balloon]); // refused
+        expect(flow.refusal).not.toBe(null);
+        let squares = flow.getEndpointSquares([rope], null);
+        expect(squares[1].refused).toBe(true);
+
+        flow._refusal.until = 0; // the flash expired
+        expect(flow.refusal).toBe(null);
+        squares = flow.getEndpointSquares([rope], null);
+        expect(squares[1].refused).toBe(false);
+
+        flow._refuse(knot.x, knot.y); // a fresh refusal repaints
+        expect(flow.refusal).not.toBe(null);
+        flow.cancel(); // any seek exit sweeps it
+        expect(flow.refusal).toBe(null);
+        rope.dispose();
+        balloon.dispose();
     });
 });
 
@@ -287,8 +413,8 @@ describe('Click-flow ties survive the snapshot round-trip (AC)', () => {
     });
 
     it('ties made via the flow serialize to ordinal tokens and rebind on restore', () => {
-        const balloon = new Balloon(700, 300);  // board ordinal 0
-        const bucket = new Bucket(200, 500);    // board ordinal 1
+        const balloon = new Balloon(320, 104);  // board ordinal 0 — knot 35.8px from the rope's anchor: in reach
+        const bucket = new Bucket(280, 132);    // board ordinal 1 — rim 23.3px from the anchor: in reach
         const rope = new Rope(300, 100, { length: 40 }); // board ordinal 2
         const board = [balloon, bucket, rope];
         const end = rope.bodies[rope.bodies.length - 1].position;
@@ -303,6 +429,9 @@ describe('Click-flow ties survive the snapshot round-trip (AC)', () => {
         expect(rope.getAttachmentRefs()).toHaveLength(2);
 
         const snapshot = serializePlacedBoard(board);
+        // The first tie froze the length: it and the flag ride the row.
+        expect(snapshot[2].options.length).toBe(40);
+        expect(snapshot[2].options.lengthFrozen).toBe(true);
         expect(snapshot[2].attachments).toContainEqual({
             endpoint: 1, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot',
         });
@@ -317,6 +446,8 @@ describe('Click-flow ties survive the snapshot round-trip (AC)', () => {
         const rope2 = board2.find((o) => o.type === 'rope');
         expect(rope2.getAttachmentRefs()).toContainEqual({ endpoint: 1, target: balloon2, pointId: 'knot' });
         expect(rope2.getAttachmentRefs()).toContainEqual({ endpoint: 0, target: bucket2, pointId: 'rim' });
+        expect(rope2._length).toBe(40);
+        expect(rope2.lengthFrozen).toBe(true); // the bind refroze it
 
         for (const obj of board) obj.dispose();
         for (const obj of board2) obj.dispose();
@@ -377,6 +508,22 @@ describe('DragDropManager delegates pointer handling to the connect flow', () =>
         expect(rope.getAttachmentRefs()).toEqual([]);
         rope.dispose();
     });
+
+    it('a refused tie click is still consumed by the seek (no selection fall-through)', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const balloon = new Balloon(700, 300);
+        ddm._objects = [rope, balloon];
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const knot = balloon.getAttachmentWorldPoint('knot');
+
+        ddm._onCanvasPointerDown(end.x, end.y);
+        ddm._onCanvasPointerDown(knot.x, knot.y); // beyond reach → refused
+
+        expect(ddm._connectFlow.seek).toEqual({ rope, endpoint: 1 }); // seek intact
+        expect(ddm._selectedObject).toBe(null);
+        rope.dispose();
+        balloon.dispose();
+    });
 });
 
 describe('Renderer draws the connect-flow squares (edit modes only)', () => {
@@ -409,13 +556,14 @@ describe('Renderer draws the connect-flow squares (edit modes only)', () => {
         balloon.dispose();
     });
 
-    it('a seek draws the preview line to the cursor and every target square glows', () => {
+    it('a seek draws the preview line to the cursor and in-reach targets glow', () => {
         const rope = new Rope(300, 100, { length: 40 });
-        const balloon = new Balloon(700, 300);
-        const bucket = new Bucket(200, 500);
-        const end = rope.bodies[rope.bodies.length - 1].position;
+        const balloon = new Balloon(320, 104); // knot 35.8px from the anchor: in reach
+        const bucket = new Bucket(280, 132);   // rim 23.3px from the anchor: in reach
         const knot = balloon.getAttachmentWorldPoint('knot');
-        flow.handlePointerDown(end.x, end.y, [rope, balloon, bucket]);
+        // An anchor-square seek: the pin is not re-layed, so the preview
+        // line stays the meaningful seek affordance here.
+        flow.handlePointerDown(300, 100, [rope, balloon, bucket]);
         flow.setPreview(500, 400);
         const r = new Renderer();
         r._mode = 'EDITING';
@@ -426,9 +574,9 @@ describe('Renderer draws the connect-flow squares (edit modes only)', () => {
         r._drawConnectSquares(ctx, [rope, balloon, bucket]);
 
         // Preview line: from the seeking square to the cursor
-        expect(ctx.moveTo).toHaveBeenCalledWith(end.x, end.y);
+        expect(ctx.moveTo).toHaveBeenCalledWith(300, 100);
         expect(ctx.lineTo).toHaveBeenCalledWith(500, 400);
-        // Both targets glow (click one to tie) at their world points
+        // Both in-reach targets glow (click one to tie) at their world points
         const rects = ctx.fillRect.mock.calls.map(([x, y]) => ({ x, y }));
         expect(rects).toContainEqual({ x: knot.x - 9, y: knot.y - 9 });
         const rim = bucket.getAttachmentWorldPoint('rim');
@@ -438,6 +586,41 @@ describe('Renderer draws the connect-flow squares (edit modes only)', () => {
         rope.dispose();
         balloon.dispose();
         bucket.dispose();
+    });
+
+    it('a refused tie paints the seeking handle red with a rope-too-short badge', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const balloon = new Balloon(700, 300); // knot 459px out: beyond reach
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const knot = balloon.getAttachmentWorldPoint('knot');
+        flow.handlePointerDown(end.x, end.y, [rope]); // seek
+        flow.handlePointerDown(knot.x, knot.y, [rope, balloon]); // refused
+
+        const r = new Renderer();
+        r._mode = 'EDITING';
+        r.setConnectFlow(flow);
+        r.hoverPoint = null;
+        const ctx = makeDrawCtx();
+
+        r._drawConnectSquares(ctx, [rope, balloon]);
+
+        // The seeking handle flashes red while the refusal lives...
+        expect(ctx.fillStyles).toContainEqual('rgba(232, 76, 76, 0.9)');
+        // ...and the badge marks the refused aim.
+        expect(ctx.fillText).toHaveBeenCalledWith('rope too short', knot.x, knot.y + 23);
+        expect(ctx.fillStyles).toContainEqual('#ffd9d9'); // the badge's text
+        const rects = ctx.fillRect.mock.calls.map(([x, y, w, h]) => ({ x, y, w, h }));
+        expect(rects).toContainEqual({ x: knot.x - 52, y: knot.y + 10, w: 104, h: 18 });
+
+        // Expired refusal: no flash, no badge; the handle is back to blue.
+        flow._refusal.until = 0;
+        const ctx2 = makeDrawCtx();
+        r._drawConnectSquares(ctx2, [rope, balloon]);
+        expect(ctx2.fillText).not.toHaveBeenCalled();
+        expect(ctx2.fillStyles).not.toContainEqual('rgba(232, 76, 76, 0.9)');
+        expect(ctx2.fillStyles).toContainEqual('rgba(64, 128, 255, 0.9)');
+        rope.dispose();
+        balloon.dispose();
     });
 
     it('PLAY boards draw nothing — squares, preview and glow are edit-only', () => {
@@ -464,9 +647,11 @@ function makeDrawCtx() {
     const ctx = {};
     const strokeStyleLog = [];
     const fillStyleLog = [];
+    const fontLog = [];
     for (const fn of [
         'save', 'restore', 'beginPath', 'moveTo', 'lineTo',
         'arc', 'fillRect', 'strokeRect', 'fill', 'stroke', 'setLineDash',
+        'fillText',
     ]) {
         ctx[fn] = vi.fn();
     }
@@ -479,7 +664,12 @@ function makeDrawCtx() {
         set(v) { fillStyleLog.push(v); },
         get() { return fillStyleLog[fillStyleLog.length - 1]; },
     });
+    Object.defineProperty(ctx, 'font', {
+        set(v) { fontLog.push(v); },
+        get() { return fontLog[fontLog.length - 1]; },
+    });
     ctx.strokeStyles = strokeStyleLog;
     ctx.fillStyles = fillStyleLog;
+    ctx.fonts = fontLog;
     return ctx;
 }

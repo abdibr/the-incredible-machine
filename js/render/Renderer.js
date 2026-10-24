@@ -10,6 +10,7 @@ import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 import { ROPE_SNAP_RADIUS, ROPE_ATTRACT_RADIUS } from '../objects/Rope.js';
+import { ROPE_TOO_SHORT } from '../ui/ConnectFlow.js';
 
 class Renderer {
     constructor() {
@@ -549,8 +550,10 @@ class Renderer {
     /**
      * The click-to-connect squares (ADR 0007 decision 2): rope endpoint
      * handles, attachment-point target squares, and — while a seek is in
-     * flight — the preview line to the cursor and the glow on every valid
-     * target. Edit modes only (EDITING/SANDBOX): gates itself so PLAY
+     * flight — the preview line to the cursor and the glow on in-reach
+     * targets (glow = tieable, issue #54). A refused tie flashes its
+     * seeking handle red plus a "rope too short" badge at the refused aim.
+     * Edit modes only (EDITING/SANDBOX): gates itself so PLAY
      * boards draw nothing, exactly like the proximity hints above.
      *
      * Geometry comes from the flow (getEndpointSquares/getTieSquares — one
@@ -581,8 +584,8 @@ class Renderer {
             ctx.setLineDash([]);
         }
 
-        // Target squares: glow green during a seek (every target is valid —
-        // click to tie), faint on bare hover.
+        // Target squares: glow green during a seek when in reach (glow =
+        // tieable, issue #54), faint on bare hover.
         for (const target of targets) {
             if (!target.visible) continue;
             const half = target.glows ? 9 : 7;
@@ -598,23 +601,45 @@ class Renderer {
         }
 
         // Rope endpoint squares on top: tied structure persists (gold), a
-        // seeking square lights up (handle blue), a free square is
+        // seeking square lights up (handle blue) or flashes red while its
+        // last tie click was refused (issue #54), a free square is
         // hover-revealed (white).
         for (const square of squares) {
             if (!square.visible) continue;
-            ctx.fillStyle = square.seeking
-                ? 'rgba(64, 128, 255, 0.9)'
-                : square.tied
-                    ? 'rgba(184, 134, 11, 0.85)'
-                    : 'rgba(255, 255, 255, 0.8)';
-            ctx.strokeStyle = square.seeking
-                ? '#4080ff'
-                : square.tied
-                    ? '#8a6508'
-                    : '#777';
+            // Refused-tie flash (ADR 0007 decision 4, issue #54): the
+            // seeking handle goes red for the flash duration.
+            ctx.fillStyle = square.refused
+                ? 'rgba(232, 76, 76, 0.9)'
+                : square.seeking
+                    ? 'rgba(64, 128, 255, 0.9)'
+                    : square.tied
+                        ? 'rgba(184, 134, 11, 0.85)'
+                        : 'rgba(255, 255, 255, 0.8)';
+            ctx.strokeStyle = square.refused
+                ? '#e34e4e'
+                : square.seeking
+                    ? '#4080ff'
+                    : square.tied
+                        ? '#8a6508'
+                        : '#777';
             ctx.lineWidth = 1.5;
             ctx.fillRect(square.x - 7, square.y - 7, 14, 14);
             ctx.strokeRect(square.x - 7, square.y - 7, 14, 14);
+        }
+
+        // Refused-tie badge (ADR 0007 decision 4, issue #54): "rope too
+        // short" marks the refused aim while the flash lives.
+        const refusal = this._connectFlow.refusal;
+        if (refusal) {
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(40, 12, 12, 0.9)';
+            ctx.strokeStyle = '#e34e4e';
+            ctx.lineWidth = 1;
+            ctx.fillRect(refusal.x - 52, refusal.y + 10, 104, 18);
+            ctx.strokeRect(refusal.x - 52, refusal.y + 10, 104, 18);
+            ctx.fillStyle = '#ffd9d9';
+            ctx.fillText(ROPE_TOO_SHORT, refusal.x, refusal.y + 23);
         }
 
         ctx.restore();
