@@ -158,6 +158,10 @@ function init() {
     // instance the drag-drop handler delegates square clicks to
     // (ADR 0007 decision 2).
     renderer.setConnectFlow(dragDropManager.connectFlow);
+    // Fixed-end tie pulls clamp to the same world as the physics engine's
+    // boundary walls (ADR 0007 decision 4): a pulled target must never be
+    // parked inside a wall. Same dims the engine was constructed with.
+    dragDropManager.connectFlow.setPlayfield(state.physicsEngine.width, state.physicsEngine.height);
 
     // 10. Session bug-file recorder (ADR 0006) — always-on in SANDBOX;
     //     the Editor panel surfaces export / recovery for it.

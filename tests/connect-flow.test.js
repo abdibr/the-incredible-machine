@@ -115,6 +115,55 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         balloon.dispose();
     });
 
+    it('an anchor-side tie pulls the target to the anchor so the pin realizes with zero gap', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const balloon = new Balloon(320, 74.4); // knot at (320, 100), on the anchor's reach
+        const anchor = rope.bodies[0].position;
+
+        // The anchored start only aims (no re-lay): the knot click must
+        // already sit within reach of the anchor (per-segment reach covers
+        // both endpoints with the same anchor-centered measure).
+        flow.handlePointerDown(anchor.x, anchor.y, [rope, balloon]); // seek endpoint 0
+        const knot = balloon.getAttachmentWorldPoint('knot');
+        flow.handlePointerDown(knot.x, knot.y, [rope, balloon]); // tie the knot to it
+
+        expect(rope.getAttachmentRefs()).toContainEqual({ endpoint: 0, target: balloon, pointId: 'knot' });
+
+        // The pull: the knot realizes at the anchor itself (zero gap) — the
+        // first play step does not slam the tied balloon across a residual.
+        const pinned = balloon.getAttachmentWorldPoint('knot');
+        expect(pinned.x).toBeCloseTo(anchor.x, 5);
+        expect(pinned.y).toBeCloseTo(anchor.y, 5);
+
+        rope.dispose();
+        balloon.dispose();
+    });
+
+    it('an anchor-side tie pull never parks the target inside a boundary wall', () => {
+        flow.setPlayfield(800, 600);
+        const rope = new Rope(15, 300, { length: 80 });
+        const balloon = new Balloon(50, 274.4); // knot at (50, 300); the pull would push the hull past the left wall
+        const anchor = rope.bodies[0].position; // (15, 300)
+
+        flow.handlePointerDown(anchor.x, anchor.y, [rope, balloon]);
+        const knot = balloon.getAttachmentWorldPoint('knot');
+        flow.handlePointerDown(knot.x, knot.y, [rope, balloon]);
+
+        expect(rope.getAttachmentRefs()).toContainEqual({ endpoint: 0, target: balloon, pointId: 'knot' });
+        // Pulled toward the wall, but clamped: the balloon's painted bounds
+        // (the envelope ± the knot's sway) stay inside the playfield it was
+        // given, and the pull moved the target toward the anchor.
+        const b = balloon.bounds;
+        expect(b.x).toBeGreaterThanOrEqual(0);
+        expect(b.y).toBeGreaterThanOrEqual(0);
+        expect(b.x + b.width).toBeLessThanOrEqual(800);
+        expect(b.y + b.height).toBeLessThanOrEqual(600);
+        expect(balloon.x).toBeLessThan(50);
+
+        rope.dispose();
+        balloon.dispose();
+    });
+
     it('a click that ties nothing is swallowed while the seek holds the pointer', () => {
         const rope = new Rope(300, 100, { length: 40 });
         const end = rope.bodies[rope.bodies.length - 1].position;

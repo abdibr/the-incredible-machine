@@ -31,6 +31,7 @@
  */
 
 import { eventBus } from '../EventBus.js';
+import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 
 /**
  * How close (px) a click must land to a square for the flow to consume it —
@@ -67,6 +68,22 @@ class ConnectFlow {
 
         /** @type {Function|null} unsubscribe for the mode:changed subscription */
         this._unsubscribeMode = null;
+        /** @type {{width: number, height: number}|null} playfield bounds for fixed-end tie pulls (setPlayfield) */
+        this._playfield = null;
+    }
+
+    /**
+     * Record the playfield bounds clamping fixed-end tie pulls live in
+     * (same world as the physics engine's boundary walls; wired once in
+     * main.js from PhysicsEngine's width/height). No resize path exists
+     * (the canvas rescales via CSS only), so wiring once at boot is
+     * enough. An absent playfield (tests, earlier constructions) skips
+     * the clamp.
+     * @param {number} width
+     * @param {number} height
+     */
+    setPlayfield(width, height) {
+        this._playfield = { width, height };
     }
 
     /**
@@ -137,6 +154,40 @@ class ConnectFlow {
                 // seek stays alive, and the refusal feedback paints (red
                 // handle flash + "rope too short" badge) until it expires.
                 if (world && this._seek.rope.isPointWithinReach(world.x, world.y, CONNECT_HIT_RADIUS)) {
+                    // A fixed-end tie realizes as a length-0 pin between
+                    // the rope's anchor and the tied attachment point (the
+                    // zero-length engine link of ADR 0007 decision 6,
+                    // wired by Rope.attachEndpoint). The anchor stays
+                    // pinned to the board, so the target is the only free
+                    // point — pull it to the anchor BEFORE the knot so the
+                    // pin realizes with zero gap; otherwise the first play
+                    // step displaces the target hard over the residual
+                    // (the historic slam). The pull is rigid: a translate
+                    // by (anchor − attachment world point), which lands the
+                    // attachment point exactly on the anchor. Level-fixed
+                    // targets are immovable and never pulled; the direct
+                    // rope API and restore paths keep their contract of not
+                    // moving targets (ADR 0006 divergence). Reach was
+                    // evaluated on the pre-pull aim, unchanged.
+                    if (this._seek.endpoint === 0 && !target.target.isFixed) {
+                        const anchor = this._seek.rope.bodies[0].position;
+                        const dx = anchor.x - world.x;
+                        const dy = anchor.y - world.y;
+                        const pulled = target.target;
+                        let px = pulled.x + dx;
+                        let py = pulled.y + dy;
+                        // Same inside-the-walls invariant as every other
+                        // placement surface (clampObjectToPlayfield): the
+                        // pull must not park the tied body inside a
+                        // boundary wall, where the engine would violently
+                        // displace it at play start. In that edge case the
+                        // knot accepts a small residual gap (a gentle
+                        // settle, like the near-wall placement case).
+                        if (this._playfield) {
+                            ({ x: px, y: py } = clampObjectToPlayfield(pulled, px, py, this._playfield.width, this._playfield.height));
+                        }
+                        pulled.setPosition(px, py);
+                    }
                     try {
                         this._seek.rope.attachEndpoint(this._seek.endpoint, target.target, target.pointId);
                     } catch (e) {

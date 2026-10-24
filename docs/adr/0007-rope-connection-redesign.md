@@ -58,6 +58,7 @@ Constraints inherited unchanged from the codebase: the engine link seam `attachC
 - The bundle is the one rope state with zero engine presence; board snapshots carry it as a plain row until its first tie, and the recorder's refIds/token narration need no change (its build-trace knot tokens stay narrative).
 - Edit-only affordances add a UI interaction mode (seek) gated by stage, cancelled cleanly on every stage change; PLAY boards show no rope UI.
 - Debugging gains new surfaces: per-square knot tooltips (segment, target type + id, pointId, realized/pending, severed) and a live overlay of segment outlines + realized links + bind warnings — for humans and AFK agents alike.
+- Fixed-end knots (segment 0, the pinned anchor) must realize with **zero gap**: the anchor stays pinned at the rope's spawn point, so the connect flow pulls a movable target to the anchor at tie time (a rigid translate) before realizing the knot. Level-fixed targets are immovable and are excluded; the direct rope API and restore paths tie in place and keep their no-move contract. The pull clamps with the same `clampObjectToPlayfield` placement invariant — a pull must never park the tied target inside a boundary wall, where the knot would accept a residual gap (a gentle settle at play start) instead.
 
 ## Related
 
