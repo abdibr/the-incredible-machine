@@ -95,6 +95,16 @@ describe('EditorPanel visibility across the sandbox-entry sequence', () => {
         return [node.textContent ?? '', ...node.children.map(allText)].join('');
     }
 
+    /** Depth-first lookup of the first node whose textContent matches exactly. */
+    function findNodeByText(node, text) {
+        if (node.textContent === text) return node;
+        for (const child of node.children ?? []) {
+            const hit = findNodeByText(child, text);
+            if (hit) return hit;
+        }
+        return null;
+    }
+
     /** Assert every node from el up to the root carries no `hidden` class. */
     function expectUnhiddenThroughAncestors(el) {
         for (let n = el; n; n = n.parentElement) {
@@ -174,7 +184,10 @@ describe('EditorPanel visibility across the sandbox-entry sequence', () => {
         // Recorder not armed in the bare test env → the honest idle status.
         expect(text).toContain('not recording');
         // Recovery button exists but stays hidden until a crash stash appears.
-        const recoverBtn = editorOverlay.children.find((c) => c.textContent === '🩹 Recover crashed session');
+        // (It lives inside the panel body — not a bare container child — so
+        // the lookup walks the subtree; #editor-overlay's top level is exactly
+        // [header, body] since the minimize/maximize toggle.)
+        const recoverBtn = findNodeByText(editorOverlay, '🩹 Recover crashed session');
         expect(recoverBtn).toBeDefined();
         expect(recoverBtn.style.display).toBe('none');
     });

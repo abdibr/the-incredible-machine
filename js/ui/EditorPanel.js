@@ -9,6 +9,13 @@
  * language readout explains the live session's goal (goal-less before a
  * load, #63 posture) and what the selection means for saved levels, and
  * Save writes exactly the goal the UI showed.
+ *
+ * Minimize/maximize (sandbox usability report): the panel floats over the
+ * play area's bottom-right corner, so its header row grows a ➖/➕ toggle
+ * that collapses it to the title bar and restores it. The same header row
+ * also drags the panel anywhere on screen (clamped to the viewport), so a
+ * collapsed bar can be parked clear of the action — the dragged position
+ * persists across sandbox visits like the minimized state does.
  */
 
 import { eventBus } from '../EventBus.js';
@@ -75,6 +82,39 @@ class EditorPanel {
          * @type {HTMLOptionElement|null}
          */
         this._importedGoalOption = null;
+
+        /** @type {HTMLButtonElement|null} header-row minimize/maximize toggle */
+        this._minimizeToggleBtn = null;
+
+        /** @type {HTMLElement|null} body wrapper hidden while minimized */
+        this._panelBody = null;
+
+        /**
+         * Minimize state (sandbox usability report): collapsed, the panel is
+         * only its header row so it stops covering the play area. Persists
+         * across sandbox visits — _build runs once and nothing resets it.
+         * @type {boolean}
+         */
+        this._minimized = false;
+
+        /** @type {HTMLElement|null} draggable header row (title + toggle) */
+        this._headerRow = null;
+
+        /**
+         * Active header drag (sandbox usability report — movable panel):
+         * the pointer-to-panel-top-left offset, captured on header
+         * pointerdown (the ➖/➕ toggle excluded) and cleared on pointerup /
+         * pointercancel.
+         * @type {{dx: number, dy: number, pointerId: number|undefined}|null}
+         */
+        this._dragging = null;
+
+        /**
+         * Document-level drag listeners, bound once in the constructor so
+         * pointerup can remove the exact functions pointerdown added.
+         */
+        this._onHeaderDragMove = this._headerDragMove.bind(this);
+        this._onHeaderDragEnd = this._headerDragEnd.bind(this);
     }
 
     /**
@@ -152,11 +192,37 @@ class EditorPanel {
             box-shadow: 3px 3px 0 rgba(0,0,0,0.3);
         `;
 
-        // Title
+        // Header row: title + minimize/maximize toggle (sandbox usability
+        // report — the panel covered part of the play area and could not be
+        // collapsed). Minimizing hides _panelBody and flips the toggle glyph;
+        // the state persists across sandbox visits of the session.
+        this._minimized = false;
+
+        const header = document.createElement('div');
+        // grab cursor hints movability; user-select/touch-action keep a drag
+        // from selecting title text or scrolling the page on touch.
+        header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; cursor: grab; user-select: none; touch-action: none;';
+        header.title = 'Drag to move the panel';
+        header.addEventListener('pointerdown', (e) => this._onHeaderPointerDown(e));
+        this.container.appendChild(header);
+        this._headerRow = header;
+
         const title = document.createElement('h3');
         title.textContent = '🔧 Editor';
-        title.style.cssText = 'margin: 0 0 12px; font-family: Georgia, serif; font-size: 16px; color: #ffd700;';
-        this.container.appendChild(title);
+        title.style.cssText = 'margin: 0; font-family: Georgia, serif; font-size: 16px; color: #ffd700;';
+        header.appendChild(title);
+
+        this._minimizeToggleBtn = document.createElement('button');
+        this._minimizeToggleBtn.className = 'btn';
+        this._minimizeToggleBtn.style.cssText = 'width: 28px; height: 28px; padding: 0; font-size: 13px; line-height: 1; flex: 0 0 auto;';
+        this._minimizeToggleBtn.addEventListener('click', () => this._setMinimized(!this._minimized));
+        header.appendChild(this._minimizeToggleBtn);
+
+        // Body wrapper: every control below the header lives here, so
+        // minimizing collapses the panel by hiding exactly one element.
+        this._panelBody = document.createElement('div');
+        this.container.appendChild(this._panelBody);
+        this._setMinimized(false);
 
         // Save Level
         const saveBtn = document.createElement('button');
@@ -164,7 +230,7 @@ class EditorPanel {
         saveBtn.textContent = '💾 Save Level';
         saveBtn.style.cssText = 'width: 100%; margin-bottom: 8px;';
         saveBtn.addEventListener('click', () => this._saveLevel());
-        this.container.appendChild(saveBtn);
+        this._panelBody.appendChild(saveBtn);
 
         // Load Level
         const loadBtn = document.createElement('button');
@@ -172,7 +238,7 @@ class EditorPanel {
         loadBtn.textContent = '📂 Load Level';
         loadBtn.style.cssText = 'width: 100%; margin-bottom: 8px;';
         loadBtn.addEventListener('click', () => this._loadLevel());
-        this.container.appendChild(loadBtn);
+        this._panelBody.appendChild(loadBtn);
 
         // Hidden file input for loading
         this._fileInput = document.createElement('input');
@@ -180,10 +246,10 @@ class EditorPanel {
         this._fileInput.accept = '.json';
         this._fileInput.style.display = 'none';
         this._fileInput.addEventListener('change', (e) => this._onFileSelected(e));
-        this.container.appendChild(this._fileInput);
+        this._panelBody.appendChild(this._fileInput);
 
         // Separator
-        this.container.appendChild(this._makeSep());
+        this._panelBody.appendChild(this._makeSep());
 
         // Goal type (issue #66): only implemented goal types are selectable.
         // Unimplemented types stay visible but disabled and marked, so a
@@ -191,7 +257,7 @@ class EditorPanel {
         const goalLabel = document.createElement('label');
         goalLabel.textContent = 'Goal Type:';
         goalLabel.style.cssText = 'display: block; margin-bottom: 4px; font-weight: bold;';
-        this.container.appendChild(goalLabel);
+        this._panelBody.appendChild(goalLabel);
 
         this._goalSelect = document.createElement('select');
         this._goalSelect.style.cssText = 'width: 100%; padding: 4px; border-radius: 4px; border: 1px solid #404040;';
@@ -199,7 +265,7 @@ class EditorPanel {
         // honest select + change listener replaces the old silent list.
         this._rebuildGoalOptions(ZONE_GOAL_TYPE);
         this._goalSelect.addEventListener('change', () => this._updateGoalReadout());
-        this.container.appendChild(this._goalSelect);
+        this._panelBody.appendChild(this._goalSelect);
 
         // Goal readout (issue #66): immediately explains what the live
         // session's goal is (goal-less before a load — #63 posture) and
@@ -207,7 +273,7 @@ class EditorPanel {
         this._goalReadout = document.createElement('div');
         this._goalReadout.style.cssText = 'opacity: 0.9; font-size: 12px; line-height: 1.4; margin: 6px 0 8px;';
         this._updateGoalReadout();
-        this.container.appendChild(this._goalReadout);
+        this._panelBody.appendChild(this._goalReadout);
 
         // Pin notice (issue #66 follow-up): one plain-language line about the
         // last pin action — what the pin did to the goal, said by the same
@@ -217,9 +283,9 @@ class EditorPanel {
         this._pinNotice = document.createElement('div');
         this._pinNotice.style.cssText = 'font-size: 12px; line-height: 1.4; margin: 0 0 8px; padding: 4px 6px; background: rgba(255, 255, 255, 0.12); border-radius: 4px;';
         this._pinNotice.textContent = PIN_TIP;
-        this.container.appendChild(this._pinNotice);
+        this._panelBody.appendChild(this._pinNotice);
 
-        this.container.appendChild(this._makeSep());
+        this._panelBody.appendChild(this._makeSep());
 
         // Test button
         const testBtn = document.createElement('button');
@@ -229,7 +295,7 @@ class EditorPanel {
         testBtn.addEventListener('click', () => {
             eventBus.emit('controls:play');
         });
-        this.container.appendChild(testBtn);
+        this._panelBody.appendChild(testBtn);
 
         // Back to menu
         const menuBtn = document.createElement('button');
@@ -239,19 +305,19 @@ class EditorPanel {
         menuBtn.addEventListener('click', () => {
             eventBus.emit('overlay:menu');
         });
-        this.container.appendChild(menuBtn);
+        this._panelBody.appendChild(menuBtn);
 
         // ── Bug file recorder (ADR 0006) ──
-        this.container.appendChild(this._makeSep());
+        this._panelBody.appendChild(this._makeSep());
 
         const bugLabel = document.createElement('label');
         bugLabel.textContent = '🐞 Bug File';
         bugLabel.style.cssText = 'display: block; margin-bottom: 4px; font-weight: bold;';
-        this.container.appendChild(bugLabel);
+        this._panelBody.appendChild(bugLabel);
 
         this._bugStatusLine = document.createElement('div');
         this._bugStatusLine.style.cssText = 'opacity: 0.85; font-size: 12px; margin-bottom: 4px;';
-        this.container.appendChild(this._bugStatusLine);
+        this._panelBody.appendChild(this._bugStatusLine);
 
         this._bugNotesInput = document.createElement('input');
         this._bugNotesInput.type = 'text';
@@ -260,7 +326,7 @@ class EditorPanel {
         this._bugNotesInput.addEventListener('input', () => {
             sessionRecorder.notes = this._bugNotesInput.value;
         });
-        this.container.appendChild(this._bugNotesInput);
+        this._panelBody.appendChild(this._bugNotesInput);
 
         const denseLabel = document.createElement('label');
         denseLabel.style.cssText = 'display: block; margin-bottom: 4px;';
@@ -271,27 +337,140 @@ class EditorPanel {
         });
         denseLabel.appendChild(this._bugDenseCheck);
         denseLabel.appendChild(document.createTextNode(' dense sampling (60 Hz, big file)'));
-        this.container.appendChild(denseLabel);
+        this._panelBody.appendChild(denseLabel);
 
         const bugExportBtn = document.createElement('button');
         bugExportBtn.className = 'btn btn-success';
         bugExportBtn.textContent = '💾 Export Bug File';
         bugExportBtn.style.cssText = 'width: 100%; margin-bottom: 4px;';
         bugExportBtn.addEventListener('click', () => this._exportBugFile());
-        this.container.appendChild(bugExportBtn);
+        this._panelBody.appendChild(bugExportBtn);
 
         this._bugRecoverBtn = document.createElement('button');
         this._bugRecoverBtn.className = 'btn btn-primary';
         this._bugRecoverBtn.textContent = '🩹 Recover crashed session';
         this._bugRecoverBtn.style.cssText = 'width: 100%; display: none;';
         this._bugRecoverBtn.addEventListener('click', () => this._recoverBugFile());
-        this.container.appendChild(this._bugRecoverBtn);
+        this._panelBody.appendChild(this._bugRecoverBtn);
     }
 
     _makeSep() {
         const hr = document.createElement('hr');
         hr.style.cssText = 'border: none; border-top: 1px solid rgba(255,255,255,0.2); margin: 8px 0;';
         return hr;
+    }
+
+    /**
+     * Minimize/maximize the panel (sandbox usability report): minimized,
+     * only the header row remains, so the panel stops covering the play
+     * area. The body elements survive the collapse — the cheap event poll
+     * keeps refreshing status/readout on hidden nodes, so the next expand
+     * shows them current. The state persists across sandbox visits: _build
+     * runs once per session and no mode change resets it.
+     * @param {boolean} minimized - true collapses to the header row
+     * @private
+     */
+    _setMinimized(minimized) {
+        this._minimized = !!minimized;
+        if (this._panelBody) {
+            this._panelBody.style.display = this._minimized ? 'none' : 'block';
+        }
+        if (this._minimizeToggleBtn) {
+            // Window-chrome convention: ➖ collapses, ➕ restores.
+            this._minimizeToggleBtn.textContent = this._minimized ? '➕' : '➖';
+            this._minimizeToggleBtn.title = this._minimized ? 'Maximize panel' : 'Minimize panel';
+        }
+        // Compact chrome while minimized: hug the header row instead of the
+        // full floating card, same bottom-right corner.
+        this.container.style.padding = this._minimized ? '8px 12px' : '16px';
+        this.container.style.minWidth = this._minimized ? '0' : '240px';
+    }
+
+    // ── Header drag — movable panel (sandbox usability report) ──────────
+
+    /**
+     * pointerdown on the header row starts dragging the panel. Anything
+     * inside a button on the bar (the ➖/➕ toggle) stays a click affordance
+     * and never starts a drag.
+     * @param {PointerEvent} e
+     * @private
+     */
+    _onHeaderPointerDown(e) {
+        if (e.button !== undefined && e.button !== 0) return;
+        // Walk up from the event target to the header row; hitting a button
+        // first means the press belongs to that button, so don't drag.
+        for (let node = e.target ?? null; node != null && node !== this._headerRow; node = node.parentNode) {
+            if (node === this._minimizeToggleBtn) return;
+        }
+
+        const rect = this.container.getBoundingClientRect();
+        this._dragging = {
+            dx: e.clientX - rect.left,
+            dy: e.clientY - rect.top,
+            pointerId: e.pointerId,
+        };
+        if (e.preventDefault) e.preventDefault();
+        // Swap the right/bottom anchor for a left/top pair ONLY after the
+        // offset is captured: clearing the old anchor first drops the panel
+        // onto its static position at (0, 0) mid-read (observed in Chrome),
+        // which poisons dx/dy and teleports the whole drag to the corner.
+        // Re-anchoring first keeps the panel visually exactly where it was.
+        this.container.style.left = `${rect.left}px`;
+        this.container.style.top = `${rect.top}px`;
+        this.container.style.right = '';
+        this.container.style.bottom = '';
+        if (this._headerRow) this._headerRow.style.cursor = 'grabbing';
+        document.addEventListener('pointermove', this._onHeaderDragMove);
+        document.addEventListener('pointerup', this._onHeaderDragEnd);
+        document.addEventListener('pointercancel', this._onHeaderDragEnd);
+    }
+
+    /**
+     * Drag tracking: reapply the clamped position for the current pointer.
+     * @param {PointerEvent} e
+     * @private
+     */
+    _headerDragMove(e) {
+        if (!this._dragging) return;
+        if (e.pointerId !== undefined && e.pointerId !== this._dragging.pointerId) return;
+        this._setPanelPosition(
+            e.clientX - this._dragging.dx,
+            e.clientY - this._dragging.dy,
+        );
+    }
+
+    /**
+     * pointerup/pointercancel: release the drag and its document listeners.
+     * @private
+     */
+    _headerDragEnd() {
+        if (!this._dragging) return;
+        this._dragging = null;
+        if (this._headerRow) this._headerRow.style.cursor = 'grab';
+        document.removeEventListener('pointermove', this._onHeaderDragMove);
+        document.removeEventListener('pointerup', this._onHeaderDragEnd);
+        document.removeEventListener('pointercancel', this._onHeaderDragEnd);
+    }
+
+    /**
+     * Park the panel at (left, top), clamped so it can never be dragged
+     * fully outside the viewport — a bar parked off-screen would be hard to
+     * re-grab. Clamping needs the container's geometry and the viewport
+     * size; when either is missing it places as-is.
+     * @param {number} left
+     * @param {number} top
+     * @private
+     */
+    _setPanelPosition(left, top) {
+        const rect = this.container.getBoundingClientRect();
+        if (rect && window.innerWidth > 0) {
+            left = Math.min(Math.max(0, left), Math.max(0, window.innerWidth - rect.width));
+        }
+        if (rect && window.innerHeight > 0) {
+            top = Math.min(Math.max(0, top), Math.max(0, window.innerHeight - rect.height));
+        }
+        this.container.style.left = `${Math.round(left)}px`;
+        this.container.style.top = `${Math.round(top)}px`;
     }
 
     // ── Goal honesty (issue #66) ─────────────────
