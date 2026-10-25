@@ -508,6 +508,17 @@ describe('EditorPanel anchored copy and save routing (issue #67)', () => {
         dragDropManager._objects = [];
         dragDropManager._mode = 'MENU';
         vi.unstubAllGlobals();
+        // The palette panel is a module singleton (issue #69) — reset so the
+        // next boot rebuilds its rows and starts unauthored.
+        if (palettePanel) {
+            palettePanel._authoredPalette = null;
+            palettePanel._built = false;
+            palettePanel._paletteRows = [];
+            palettePanel._paletteReadout = null;
+            palettePanel._unlimitedBtn = null;
+            palettePanel.container = null;
+            palettePanel._minimized = false;
+        }
     });
 
     /** Save Level's single download as parsed JSON (Blob/URL stubs captured). */
@@ -808,13 +819,20 @@ function fakeNode(tag, id = '') {
     return node;
 }
 
+/** The palette panel singleton — booted beside the editor panel (issue #69). */
+let palettePanel = null;
+
 /** Stub the boot-guard DOM globals, then return a fresh EditorPanel instance. */
 async function makeFreshPanel() {
     const container = fakeNode('div', 'editor-overlay');
     vi.stubGlobal('document', {
         readyState: 'loading',
         addEventListener: vi.fn(),
-        getElementById: (id) => (id === 'editor-overlay' ? container : null),
+        getElementById: (id) => {
+            if (id === 'editor-overlay') return container;
+            if (id === 'palette-overlay') return fakeNode('div', 'palette-overlay');
+            return null;
+        },
         createElement: (tag) => fakeNode(tag),
         createTextNode: (t) => ({ textContent: t, children: [] }),
     });
@@ -823,8 +841,13 @@ async function makeFreshPanel() {
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
     const { default: EditorPanel } = await import('../js/ui/EditorPanel.js');
+    ({ palettePanel } = await import('../js/ui/PalettePanel.js'));
     const panel = new EditorPanel();
     panel.init();
+    // The palette is its own floating panel now (issue #69): init it next to
+    // the editor panel, mirroring main.js — its SANDBOX-entry reset then
+    // clears the singleton's palette state between tests.
+    palettePanel.init();
     eventBus.emit('mode:changed', { oldMode: 'MENU', newMode: 'SANDBOX' });
     return panel;
 }

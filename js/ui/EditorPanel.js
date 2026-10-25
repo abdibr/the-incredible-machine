@@ -1,8 +1,8 @@
 /**
  * EditorPanel — Sandbox / level editor controls
  *
- * Provides save/load level, set goal, author the parts palette (issue #69),
- * and test functionality. Only visible in SANDBOX mode.
+ * Provides save/load level, set goal, and test functionality. Only visible
+ * in SANDBOX mode.
  *
  * Goal honesty (issue #66): the Goal Type select only offers goal types
  * GoalChecker implements — the rest stay visible but disabled. A plain-
@@ -10,20 +10,24 @@
  * load, #63 posture) and what the selection means for saved levels, and
  * Save writes exactly the goal the UI showed.
  *
- * Palette honesty (issue #69): per registered part a row offers an include
- * checkbox and a count. Nothing authored keeps the unauthored sandbox
- * posture (#63) — the toolbox is ∞ and Save Level writes the default
- * palette (every type ×10); any row edit authors exactly the displayed
- * posture, the toolbox constrains to it (placed parts consume, excluded
- * types cannot be placed), and Save Level writes it verbatim so loading
- * the file round-trips it exactly.
+ * Palette (issue #69) — a separate panel now: the parts palette (per-type
+ * include/count authoring, the unauthored ∞ sandbox posture, the exact
+ * save/load round-trip) lives in PalettePanel (js/ui/PalettePanel.js), its
+ * own floating panel wearing the same collapse/move header chrome — the two
+ * panels build it through the shared PanelChrome (js/ui/PanelChrome.js).
+ * This panel delegates to it: Save Level writes palettePanel.paletteForSave(),
+ * a loaded level installs palettePanel.install(...), the goal readout asks
+ * palettePanel.offers(...), and the palette panel's `palette:changed` event
+ * keeps this panel's anchored-scenery note (issue #67) honest.
  *
- * Minimize/maximize (sandbox usability report): the panel floats over the
- * play area's bottom-right corner, so its header row grows a ➖/➕ toggle
- * that collapses it to the title bar and restores it. The same header row
- * also drags the panel anywhere on screen (clamped to the viewport), so a
- * collapsed bar can be parked clear of the action — the dragged position
- * persists across sandbox visits like the minimized state does.
+ * Minimize/maximize + header drag (sandbox usability report): the panel
+ * floats over the play area's bottom-right corner, so its header row grows
+ * a ➖/➕ toggle that collapses it to the title bar and restores it, and the
+ * header row also drags the panel anywhere on screen (clamped to the
+ * viewport) — both states persist across sandbox visits like the minimized
+ * state does. The chrome is built and owned by the shared PanelChrome
+ * (js/ui/PanelChrome.js); _build() only hands it the container, the title
+ * and the expanded padding.
  */
 
 import { eventBus } from '../EventBus.js';
@@ -38,7 +42,8 @@ import {
     stampGoalZoneIds,
 } from '../goals/GoalChecker.js';
 import { dragDropManager } from './DragDropManager.js';
-import { toolbox } from './Toolbox.js';
+import { palettePanel } from './PalettePanel.js';
+import { PanelChrome } from './PanelChrome.js';
 import { levelObjectOptions } from './selectionHandles.js';
 import { sessionRecorder } from '../recorder/SessionRecorder.js';
 import { downloadJson } from '../recorder/browser.js';
@@ -51,13 +56,6 @@ import { setMode, AppMode } from '../main.js';
  * are explained side by side, in plain language.
  */
 const PIN_TIP = 'Tip: select a part and click its 📌 handle (or press P) to pin it — a pinned bucket is the goal zone, and only pinned parts are saved. The ⚓ handle (or A) anchors a part instead: the player cannot move it, but at play it still falls — Save Level keeps anchored parts too.';
-
-/**
- * The default per-type palette count (issue #69): what an untweaked editor
- * session has always written into saved levels (the sandbox posture — enough
- * for a generous build) and the count a re-included palette row returns to.
- */
-const DEFAULT_PALETTE_COUNT = 10;
 
 class EditorPanel {
     constructor() {
@@ -81,27 +79,6 @@ class EditorPanel {
         /** Display name of the loaded level (readout). */
         this._loadedLevelName = null;
 
-        /**
-         * The authored parts palette (issue #69): the type→count map the
-         * editor works from once a palette has been authored — either by
-         * editing rows here or by loading a level (its availableParts become
-         * the authored palette exactly as saved). Null — the unauthored
-         * sandbox posture (#63): the toolbox offers every registered type
-         * without limit and Save Level writes the default palette (every
-         * type ×10). Reset on every SANDBOX mode entry.
-         * @type {Object<string, number>|null}
-         */
-        this._authoredPalette = null;
-
-        /** Palette rows: checkbox + count per registered type (issue #69). */
-        this._paletteRows = [];
-
-        /** @type {HTMLElement|null} plain-language palette posture readout */
-        this._paletteReadout = null;
-
-        /** @type {HTMLButtonElement|null} ∞-clear button (issue #69) */
-        this._unlimitedBtn = null;
-
         /** @type {HTMLSelectElement|null} */
         this._goalSelect = null;
 
@@ -123,38 +100,16 @@ class EditorPanel {
          */
         this._importedGoalOption = null;
 
-        /** @type {HTMLButtonElement|null} header-row minimize/maximize toggle */
-        this._minimizeToggleBtn = null;
+        /**
+         * Shared floating-panel window chrome (js/ui/PanelChrome.js): the
+         * header row + ➖/➕ toggle, the body wrapper minimizing hides, the
+         * minimize state and the header drag. Built once in _build().
+         * @type {PanelChrome|null}
+         */
+        this._chrome = null;
 
         /** @type {HTMLElement|null} body wrapper hidden while minimized */
         this._panelBody = null;
-
-        /**
-         * Minimize state (sandbox usability report): collapsed, the panel is
-         * only its header row so it stops covering the play area. Persists
-         * across sandbox visits — _build runs once and nothing resets it.
-         * @type {boolean}
-         */
-        this._minimized = false;
-
-        /** @type {HTMLElement|null} draggable header row (title + toggle) */
-        this._headerRow = null;
-
-        /**
-         * Active header drag (sandbox usability report — movable panel):
-         * the pointer-to-panel-top-left offset, captured on header
-         * pointerdown (the ➖/➕ toggle excluded) and cleared on pointerup /
-         * pointercancel.
-         * @type {{dx: number, dy: number, pointerId: number|undefined}|null}
-         */
-        this._dragging = null;
-
-        /**
-         * Document-level drag listeners, bound once in the constructor so
-         * pointerup can remove the exact functions pointerdown added.
-         */
-        this._onHeaderDragMove = this._headerDragMove.bind(this);
-        this._onHeaderDragEnd = this._headerDragEnd.bind(this);
     }
 
     /**
@@ -178,14 +133,10 @@ class EditorPanel {
                 // previous visit loaded; Load Level re-installs it (#66).
                 this._loadedGoal = null;
                 this._loadedLevelName = null;
-                // A fresh sandbox visit is palette-less too (issue #69): the
-                // ∞-everything toolbox posture returns, the rows display the
-                // default values again and Save Level goes back to writing
-                // the default palette until rows are edited or a level loads.
-                this._authoredPalette = null;
-                toolbox.setPalette(null);
-                this._syncPaletteControls();
-                this._updatePaletteReadout();
+                // The palette's own panel (PalettePanel) resets the sandbox
+                // palette posture on entry and releases the toolbox on exit
+                // (issue #69) — this panel only follows along with its
+                // readouts.
                 this._updateBugStatus();
                 this._updateGoalReadout();
                 // The pin affordance opens each visit with its tip again —
@@ -193,18 +144,18 @@ class EditorPanel {
                 this._setPinNotice(PIN_TIP);
             } else {
                 this._hide();
-                // Leaving the editor releases the toolbox (issue #69): the
-                // constrained counts are an authoring affordance. Outside the
-                // editor the live inventory answers again; re-entering SANDBOX
-                // re-installs the authored palette.
-                toolbox.setPalette(null);
+                // The toolbox release on editor exit is PalettePanel's job
+                // now (issue #69): the constrained counts are an authoring
+                // affordance, and the palette panel owns that contract.
             }
         });
 
         // Recording status refresh on the events that change it (cheap poll);
         // board events also refresh the goal readout, since they move the
-        // goal-zone resolution (#66).
-        for (const topic of ['controls:play', 'controls:pause', 'controls:reset', 'object:placed', 'object:moved', 'object:pinned', 'object:anchored', 'object:removed']) {
+        // goal-zone resolution (#66); palette changes do too — the
+        // anchored-scenery note must never claim a type the palette excludes
+        // (issues #67/#69).
+        for (const topic of ['controls:play', 'controls:pause', 'controls:reset', 'object:placed', 'object:moved', 'object:pinned', 'object:anchored', 'object:removed', 'palette:changed']) {
             eventBus.on(topic, () => {
                 if (this._mode === 'SANDBOX') {
                     this._updateBugStatus();
@@ -249,37 +200,19 @@ class EditorPanel {
             box-shadow: 3px 3px 0 rgba(0,0,0,0.3);
         `;
 
-        // Header row: title + minimize/maximize toggle (sandbox usability
-        // report — the panel covered part of the play area and could not be
-        // collapsed). Minimizing hides _panelBody and flips the toggle glyph;
-        // the state persists across sandbox visits of the session.
-        this._minimized = false;
-
-        const header = document.createElement('div');
-        // grab cursor hints movability; user-select/touch-action keep a drag
-        // from selecting title text or scrolling the page on touch.
-        header.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; cursor: grab; user-select: none; touch-action: none;';
-        header.title = 'Drag to move the panel';
-        header.addEventListener('pointerdown', (e) => this._onHeaderPointerDown(e));
-        this.container.appendChild(header);
-        this._headerRow = header;
-
-        const title = document.createElement('h3');
-        title.textContent = '🔧 Editor';
-        title.style.cssText = 'margin: 0; font-family: Georgia, serif; font-size: 16px; color: #ffd700;';
-        header.appendChild(title);
-
-        this._minimizeToggleBtn = document.createElement('button');
-        this._minimizeToggleBtn.className = 'btn';
-        this._minimizeToggleBtn.style.cssText = 'width: 28px; height: 28px; padding: 0; font-size: 13px; line-height: 1; flex: 0 0 auto;';
-        this._minimizeToggleBtn.addEventListener('click', () => this._setMinimized(!this._minimized));
-        header.appendChild(this._minimizeToggleBtn);
-
-        // Body wrapper: every control below the header lives here, so
-        // minimizing collapses the panel by hiding exactly one element.
-        this._panelBody = document.createElement('div');
-        this.container.appendChild(this._panelBody);
-        this._setMinimized(false);
+        // Shared floating-panel window chrome (js/ui/PanelChrome.js): the
+        // header row (title + ➖/➕ toggle), the body wrapper minimizing
+        // hides, the minimize state and the header drag — the same chrome
+        // the palette panel wears, built and owned once over there. Both
+        // states persist across sandbox visits (_build runs once per
+        // session; no mode change resets them).
+        this._chrome = new PanelChrome(this.container, {
+            title: '🔧 Editor',
+            titleStyle: 'margin: 0; font-family: Georgia, serif; font-size: 16px; color: #ffd700;',
+            expandedPadding: '16px',
+            initialMinimized: false,
+        });
+        this._panelBody = this._chrome.body;
 
         // Save Level
         const saveBtn = document.createElement('button');
@@ -344,69 +277,9 @@ class EditorPanel {
 
         this._panelBody.appendChild(this._makeSep());
 
-        // Parts palette (issue #69): per registered type an include checkbox
-        // and a count. Nothing authored keeps the ∞-everything sandbox
-        // posture (#63) and Save Level writes the default palette; any row
-        // edit authors the palette the editor displays — the toolbox then
-        // offers exactly those counts (placed parts consume them, excluded
-        // types cannot be placed) and Save Level writes them verbatim.
-        const paletteLabel = document.createElement('label');
-        paletteLabel.textContent = 'Parts Palette:';
-        paletteLabel.style.cssText = 'display: block; margin-bottom: 4px; font-weight: bold;';
-        this._panelBody.appendChild(paletteLabel);
-
-        // Posture readout: says whether the palette is still the unlimited
-        // default and what Save Level will write — the same palette the save
-        // uses (_paletteForSave), so the message cannot drift from the
-        // download.
-        this._paletteRows = [];
-        this._paletteReadout = document.createElement('div');
-        this._paletteReadout.style.cssText = 'opacity: 0.9; font-size: 12px; line-height: 1.4; margin: 4px 0 6px;';
-        this._updatePaletteReadout();
-        this._panelBody.appendChild(this._paletteReadout);
-
-        for (const item of objectRegistry.getAll()) {
-            const row = document.createElement('div');
-            row.style.cssText = 'display: flex; align-items: center; gap: 6px; margin-bottom: 3px; font-size: 12px;';
-
-            const include = document.createElement('input');
-            include.type = 'checkbox';
-            include.title = `Offer "${item.displayName || item.type}" in the toolbox`;
-            include.addEventListener('change', () => this._onPaletteEdited(null));
-
-            const name = document.createElement('span');
-            name.textContent = item.displayName || item.type;
-
-            const label = document.createElement('label');
-            label.style.cssText = 'display: flex; align-items: center; gap: 6px; flex: 1; cursor: pointer;';
-            label.appendChild(include);
-            label.appendChild(name);
-
-            const count = document.createElement('input');
-            count.type = 'number';
-            count.min = '0';
-            count.step = '1';
-            count.title = 'How many of this part may be placed (0 = excluded)';
-            count.style.cssText = 'width: 56px; padding: 2px 4px; border: 1px solid #404040; border-radius: 4px; background: rgba(255, 255, 255, 0.95); color: #1e1e1e;';
-            count.addEventListener('input', () => this._onPaletteEdited(item.type));
-
-            row.appendChild(label);
-            row.appendChild(count);
-            this._panelBody.appendChild(row);
-            this._paletteRows.push({ type: item.type, include, count });
-        }
-        this._syncPaletteControls();
-
-        // The escape hatch back to the unlimited posture (issue #69): clears
-        // the authored palette — toolbox ∞ again, Save Level back to the
-        // default palette. Disabled while nothing is authored.
-        this._unlimitedBtn = document.createElement('button');
-        this._unlimitedBtn.className = 'btn btn-primary';
-        this._unlimitedBtn.textContent = '∞ Everything Unlimited';
-        this._unlimitedBtn.style.cssText = 'width: 100%; margin: 4px 0 8px;';
-        this._unlimitedBtn.addEventListener('click', () => this._clearPalette());
-        this._panelBody.appendChild(this._unlimitedBtn);
-        this._updatePaletteReadout();
+        // The parts palette (issue #69) lives in its own floating panel —
+        // PalettePanel (js/ui/PalettePanel.js) — so its header can collapse
+        // and move it independently; this panel keeps the editor controls.
 
         // Test button
         const testBtn = document.createElement('button');
@@ -481,119 +354,6 @@ class EditorPanel {
         return hr;
     }
 
-    /**
-     * Minimize/maximize the panel (sandbox usability report): minimized,
-     * only the header row remains, so the panel stops covering the play
-     * area. The body elements survive the collapse — the cheap event poll
-     * keeps refreshing status/readout on hidden nodes, so the next expand
-     * shows them current. The state persists across sandbox visits: _build
-     * runs once per session and no mode change resets it.
-     * @param {boolean} minimized - true collapses to the header row
-     * @private
-     */
-    _setMinimized(minimized) {
-        this._minimized = !!minimized;
-        if (this._panelBody) {
-            this._panelBody.style.display = this._minimized ? 'none' : 'block';
-        }
-        if (this._minimizeToggleBtn) {
-            // Window-chrome convention: ➖ collapses, ➕ restores.
-            this._minimizeToggleBtn.textContent = this._minimized ? '➕' : '➖';
-            this._minimizeToggleBtn.title = this._minimized ? 'Maximize panel' : 'Minimize panel';
-        }
-        // Compact chrome while minimized: hug the header row instead of the
-        // full floating card, same bottom-right corner.
-        this.container.style.padding = this._minimized ? '8px 12px' : '16px';
-        this.container.style.minWidth = this._minimized ? '0' : '240px';
-    }
-
-    // ── Header drag — movable panel (sandbox usability report) ──────────
-
-    /**
-     * pointerdown on the header row starts dragging the panel. Anything
-     * inside a button on the bar (the ➖/➕ toggle) stays a click affordance
-     * and never starts a drag.
-     * @param {PointerEvent} e
-     * @private
-     */
-    _onHeaderPointerDown(e) {
-        if (e.button !== undefined && e.button !== 0) return;
-        // Walk up from the event target to the header row; hitting a button
-        // first means the press belongs to that button, so don't drag.
-        for (let node = e.target ?? null; node != null && node !== this._headerRow; node = node.parentNode) {
-            if (node === this._minimizeToggleBtn) return;
-        }
-
-        const rect = this.container.getBoundingClientRect();
-        this._dragging = {
-            dx: e.clientX - rect.left,
-            dy: e.clientY - rect.top,
-            pointerId: e.pointerId,
-        };
-        if (e.preventDefault) e.preventDefault();
-        // Swap the right/bottom anchor for a left/top pair ONLY after the
-        // offset is captured: clearing the old anchor first drops the panel
-        // onto its static position at (0, 0) mid-read (observed in Chrome),
-        // which poisons dx/dy and teleports the whole drag to the corner.
-        // Re-anchoring first keeps the panel visually exactly where it was.
-        this.container.style.left = `${rect.left}px`;
-        this.container.style.top = `${rect.top}px`;
-        this.container.style.right = '';
-        this.container.style.bottom = '';
-        if (this._headerRow) this._headerRow.style.cursor = 'grabbing';
-        document.addEventListener('pointermove', this._onHeaderDragMove);
-        document.addEventListener('pointerup', this._onHeaderDragEnd);
-        document.addEventListener('pointercancel', this._onHeaderDragEnd);
-    }
-
-    /**
-     * Drag tracking: reapply the clamped position for the current pointer.
-     * @param {PointerEvent} e
-     * @private
-     */
-    _headerDragMove(e) {
-        if (!this._dragging) return;
-        if (e.pointerId !== undefined && e.pointerId !== this._dragging.pointerId) return;
-        this._setPanelPosition(
-            e.clientX - this._dragging.dx,
-            e.clientY - this._dragging.dy,
-        );
-    }
-
-    /**
-     * pointerup/pointercancel: release the drag and its document listeners.
-     * @private
-     */
-    _headerDragEnd() {
-        if (!this._dragging) return;
-        this._dragging = null;
-        if (this._headerRow) this._headerRow.style.cursor = 'grab';
-        document.removeEventListener('pointermove', this._onHeaderDragMove);
-        document.removeEventListener('pointerup', this._onHeaderDragEnd);
-        document.removeEventListener('pointercancel', this._onHeaderDragEnd);
-    }
-
-    /**
-     * Park the panel at (left, top), clamped so it can never be dragged
-     * fully outside the viewport — a bar parked off-screen would be hard to
-     * re-grab. Clamping needs the container's geometry and the viewport
-     * size; when either is missing it places as-is.
-     * @param {number} left
-     * @param {number} top
-     * @private
-     */
-    _setPanelPosition(left, top) {
-        const rect = this.container.getBoundingClientRect();
-        if (rect && window.innerWidth > 0) {
-            left = Math.min(Math.max(0, left), Math.max(0, window.innerWidth - rect.width));
-        }
-        if (rect && window.innerHeight > 0) {
-            top = Math.min(Math.max(0, top), Math.max(0, window.innerHeight - rect.height));
-        }
-        this.container.style.left = `${Math.round(left)}px`;
-        this.container.style.top = `${Math.round(top)}px`;
-    }
-
     // ── Goal honesty (issue #66) ─────────────────
 
     /**
@@ -664,7 +424,7 @@ class EditorPanel {
         // type is also offered by the palette, say so in plain language —
         // the anchored copy is scene content and does not consume the count.
         const anchoredTypes = [...new Set(objects.filter((o) => o.isAnchored).map((o) => o.type))];
-        const offered = anchoredTypes.filter((type) => this._paletteOffers(type));
+        const offered = anchoredTypes.filter((type) => palettePanel.offers(type));
         if (offered.length > 0) {
             const label = offered.join(', ');
             lines.push(`⚓ Anchored scenery: ${label} on the board is anchored scene content — it does not use any palette parts, though the palette also offers ${label}.`);
@@ -806,118 +566,6 @@ class EditorPanel {
             : anchoredLine);
     }
 
-    // ── Parts palette (issue #69) ──────────────
-
-    /**
-     * A palette row edit authors the palette (issue #69): the first touch
-     * turns the displayed default posture into a concrete palette — every
-     * registered type with what its row shows — and every edit keeps the
-     * palette equal to the controls' state, so the toolbox (constrained via
-     * setPalette), the readout and the next Save Level all agree.
-     * @param {string|null} editedType - the count row being typed into (its
-     *        display must not be rewritten mid-keystroke), or null for a
-     *        checkbox edit, where a full control sync is safe and wanted
-     * @private
-     */
-    _onPaletteEdited(editedType) {
-        if (editedType === null) {
-            // A checkbox edit: keep every included row's typed count, but a
-            // row re-included while its count reads 0 (excluded rows store 0)
-            // comes back at the default count — the default posture's value.
-            for (const { include, count } of this._paletteRows) {
-                if (include.checked && !(Number(count.value) > 0)) {
-                    count.value = String(DEFAULT_PALETTE_COUNT);
-                }
-            }
-        }
-        this._authoredPalette = this._paletteFromControls();
-        toolbox.setPalette({ ...this._authoredPalette });
-        if (editedType === null) this._syncPaletteControls();
-        this._updatePaletteReadout();
-        // Palette changes can move the anchored-scenery note's honest claim
-        // (issue #67): the readout refreshes on the same edit.
-        this._updateGoalReadout();
-    }
-
-    /** The palette the row controls display right now (0 = excluded). */
-    _paletteFromControls() {
-        const palette = {};
-        for (const { type, include, count } of this._paletteRows) {
-            const raw = include.checked ? Number(count.value) : 0;
-            palette[type] = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
-        }
-        return palette;
-    }
-
-    /**
-     * Clear the authored palette (issue #69): back to the unlimited sandbox
-     * posture — the toolbox is released (∞ every part) and Save Level
-     * returns to writing the default palette.
-     * @private
-     */
-    _clearPalette() {
-        this._authoredPalette = null;
-        toolbox.setPalette(null);
-        this._syncPaletteControls();
-        this._updatePaletteReadout();
-        this._updateGoalReadout();
-    }
-
-    /**
-     * Push the panel's palette state into the row controls — on build, on
-     * mode entry, after a clear and after a load. Unauthored rows display
-     * the default posture (included ×10): the exact palette an untweaked
-     * Save Level writes.
-     * @private
-     */
-    _syncPaletteControls() {
-        for (const { type, include, count } of this._paletteRows) {
-            const value = this._authoredPalette
-                ? (this._authoredPalette[type] || 0)
-                : DEFAULT_PALETTE_COUNT;
-            include.checked = value > 0;
-            count.value = String(value);
-            count.disabled = value <= 0;
-        }
-    }
-
-    /** Plain-language posture line for the palette section (issue #69). */
-    _updatePaletteReadout() {
-        if (!this._paletteReadout) return;
-        if (this._unlimitedBtn) this._unlimitedBtn.disabled = !this._authoredPalette;
-        if (!this._authoredPalette) {
-            this._paletteReadout.textContent =
-                'Palette not authored — the toolbox offers every part without limit (∞) and Save Level writes the default palette (every type ×10). Toggle a part or edit a count to author it.';
-        } else {
-            this._paletteReadout.textContent =
-                `Authored palette — the toolbox offers exactly these counts and Save Level writes them: ${this._paletteSummary()}. Excluded parts cannot be placed.`;
-        }
-    }
-
-    /** One-line rendering of the authored palette (type ×count or excluded). */
-    _paletteSummary() {
-        return this._paletteRows
-            .map(({ type }) => {
-                const n = this._authoredPalette?.[type] || 0;
-                return n > 0 ? `${type} ×${n}` : `${type} — excluded`;
-            })
-            .join(', ');
-    }
-
-    /**
-     * Whether the palette offers `type` in the live session (issues #67/#69):
-     * an authored palette — edited here or imported with a level — is the
-     * palette (0 = not offered); without one every registered type is
-     * offered (the #63 sandbox posture).
-     * @param {string} type
-     * @returns {boolean}
-     * @private
-     */
-    _paletteOffers(type) {
-        if (this._authoredPalette) return (this._authoredPalette[type] || 0) > 0;
-        return objectRegistry.has(type);
-    }
-
     // ── Bug file recorder (ADR 0006) ──────────────
 
     /** Always-on recorder: export the current sandbox session as a JSON download. */
@@ -1007,7 +655,7 @@ class EditorPanel {
             difficulty: 1,
             goal,
             fixedObjects,
-            availableParts: this._paletteForSave(),
+            availableParts: palettePanel.paletteForSave(),
             hints: [],
         };
 
@@ -1079,68 +727,16 @@ class EditorPanel {
         // to the live goal.
         this._loadedGoal = data.goal ?? null;
         // Issue #69: the imported palette becomes the authored palette —
+        // installed into the palette panel (its state lives there now):
         // normalized so absent rows read as 0 (nothing placeable), the
         // toolbox constrains to exactly what the level carries, the rows
         // display it and the next Save Level writes it back (round-trip).
-        this._authoredPalette = this._normalizeLoadedPalette(data.availableParts);
-        toolbox.setPalette({ ...this._authoredPalette });
+        palettePanel.install(palettePanel.normalizeLoaded(data.availableParts));
         this._loadedLevelName = data.name ?? data.id ?? 'loaded level';
         if (this._goalSelect) {
             this._rebuildGoalOptions(data.goal?.type ?? ZONE_GOAL_TYPE);
         }
         this._updateGoalReadout();
-        this._syncPaletteControls();
-        this._updatePaletteReadout();
-    }
-
-    /**
-     * The palette JSON Save Level writes (issue #69): the authored palette
-     * when one is — every registered type explicitly, exclusions as 0, so
-     * the saved file states exactly what the editor showed — or today's
-     * default palette (every registered type ×10) while nothing is
-     * authored.
-     * @returns {Object<string, number>}
-     * @private
-     */
-    _paletteForSave() {
-        return this._authoredPalette ? { ...this._authoredPalette } : this._inferAvailableParts();
-    }
-
-    /**
-     * Canonical palette from imported level JSON (issue #69): every
-     * registered type present with a finite non-negative integer — an
-     * absent row reads as 0, matching the player toolbox (and the editor
-     * rows) that treat an absent part as un-placeable. Unregistered scalar
-     * entries ride along untouched so hand-authored level JSON keeps its
-     * round-trip fidelity (such types simply cannot be dragged).
-     * @param {object|undefined} parts - the level's availableParts
-     * @returns {Object<string, number>}
-     * @private
-     */
-    _normalizeLoadedPalette(parts) {
-        const palette = {};
-        const registered = new Set(objectRegistry.getAll().map((item) => item.type));
-        for (const type of registered) {
-            const raw = Number(parts?.[type] || 0);
-            palette[type] = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
-        }
-        for (const [type, value] of Object.entries(parts || {})) {
-            if (registered.has(type)) continue;
-            if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-                palette[type] = Math.floor(value);
-            }
-        }
-        return palette;
-    }
-
-    _inferAvailableParts() {
-        // In sandbox mode, list all known types with generous quantities
-        const parts = {};
-        const allTypes = objectRegistry.getAll();
-        for (const { type } of allTypes) {
-            parts[type] = DEFAULT_PALETTE_COUNT;
-        }
-        return parts;
     }
 }
 

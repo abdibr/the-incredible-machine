@@ -1,6 +1,9 @@
 /**
- * EditorPanel + Toolbox parts palette — issue #69, on top of the unauthored
- * sandbox posture from #63.
+ * PalettePanel + EditorPanel + Toolbox parts palette — issue #69, on top of
+ * the unauthored sandbox posture from #63. The palette lives in its own
+ * floating panel now (PalettePanel; the editor panel is separate): palette
+ * state/rows/readout assertions target palettePanel, while save/load target
+ * the editor panel (which delegates paletteForSave/install to it).
  *
  * Covered here:
  * - The unauthored editor session: every registered part ∞ in the toolbox,
@@ -34,6 +37,7 @@ import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 let editorModule = null;
 let dragDropManager = null;
 let toolbox = null;
+let palettePanel = null;
 
 /** Minimal fake DOM node sufficient for EditorPanel builds and Toolbox init. */
 function fakeNode(tag = 'div', className = '') {
@@ -126,6 +130,7 @@ async function makeFreshEditor() {
         addEventListener: vi.fn(),
         getElementById: (id) => {
             if (id === 'editor-overlay') return fakeNode('div', 'editor-overlay');
+            if (id === 'palette-overlay') return fakeNode('div', 'palette-overlay');
             if (id === 'toolbox-categories') return fakeNode();
             return null;
         },
@@ -141,11 +146,16 @@ async function makeFreshEditor() {
     toolbox = toolboxModule.toolbox;
     dragDropManager = dragDropManager || (await import('../js/ui/DragDropManager.js')).dragDropManager;
 
-    // Mirror main.js boot order: toolbox first, editor panel second.
+    // Mirror main.js boot order: toolbox first, then the editor panel, then
+    // the palette panel — the palette's own floating panel, separate from
+    // the editor panel.
     toolbox.init();
     const { default: EditorPanel } = await import('../js/ui/EditorPanel.js');
+    const { palettePanel: palettePanelModule } = await import('../js/ui/PalettePanel.js');
+    palettePanel = palettePanelModule;
     const panel = new EditorPanel();
     panel.init();
+    palettePanel.init();
     eventBus.emit('mode:changed', { oldMode: 'MENU', newMode: 'SANDBOX' });
     return panel;
 }
@@ -169,6 +179,17 @@ afterEach(() => {
         toolbox._isSandbox = false;
         toolbox._enabled = false;
     }
+    // The palette panel is a module singleton too — reset so the next boot
+    // rebuilds its rows and starts unauthored.
+    if (palettePanel) {
+        palettePanel._authoredPalette = null;
+        palettePanel._built = false;
+        palettePanel._paletteRows = [];
+        palettePanel._paletteReadout = null;
+        palettePanel._unlimitedBtn = null;
+        palettePanel.container = null;
+        palettePanel._minimized = false;
+    }
 });
 
 /** Every registered part type, in registry order. */
@@ -177,8 +198,8 @@ function registeredTypes() {
 }
 
 /** The palette row controls for one type (throws if the row is missing). */
-function rowOf(panel, type) {
-    const row = panel._paletteRows.find((entry) => entry.type === type);
+function rowOf(source, type) {
+    const row = source._paletteRows.find((entry) => entry.type === type);
     if (!row) throw new Error(`no palette row for "${type}"`);
     return row;
 }
@@ -225,25 +246,25 @@ async function saveOnce(panel) {
     return JSON.parse(await blob.text());
 }
 
-describe('EditorPanel parts palette — unauthored sandbox posture (issues #63, #69)', () => {
+describe('Parts palette panel — unauthored sandbox posture (issues #63, #69)', () => {
     it('a fresh sandbox is unauthored: every part ∞, rows show the ×10 default, clear disabled', async () => {
         const panel = await makeFreshEditor();
 
-        expect(panel._authoredPalette).toBeNull();
+        expect(palettePanel._authoredPalette).toBeNull();
         expect(toolbox._palette).toBeNull();
         for (const type of registeredTypes()) {
             expect(toolbox.getCount(type)).toBe(Infinity);
         }
 
         // Rows display the default posture: the palette an untweaked save writes.
-        for (const { include, count } of panel._paletteRows) {
+        for (const { include, count } of palettePanel._paletteRows) {
             expect(include.checked).toBe(true);
             expect(count.value).toBe('10');
             expect(count.disabled).toBe(false);
         }
 
-        expect(panel._paletteReadout.textContent).toContain('not authored');
-        expect(panel._unlimitedBtn.disabled).toBe(true);
+        expect(palettePanel._paletteReadout.textContent).toContain('not authored');
+        expect(palettePanel._unlimitedBtn.disabled).toBe(true);
 
         expect(String(badge('rope').textContent)).toBe('∞');
         expect(toolbox._itemElements.get('rope').classList.contains('disabled')).toBe(false);
@@ -260,22 +281,22 @@ describe('EditorPanel parts palette — unauthored sandbox posture (issues #63, 
     });
 });
 
-describe('EditorPanel parts palette — authoring (issue #69)', () => {
+describe('Parts palette panel — authoring (issue #69)', () => {
     it('editing one count authors exactly the displayed posture and save writes it', async () => {
         const panel = await makeFreshEditor();
 
-        rowOf(panel, 'rope').count.value = '3';
-        rowOf(panel, 'rope').count.emit('input');
+        rowOf(palettePanel, 'rope').count.value = '3';
+        rowOf(palettePanel, 'rope').count.emit('input');
 
-        expect(panel._authoredPalette.rope).toBe(3);
+        expect(palettePanel._authoredPalette.rope).toBe(3);
         expect(toolbox._palette.rope).toBe(3);
         expect(toolbox.getCount('rope')).toBe(3);
         // The untouched rows keep their displayed default — they are authored
         // now, not ∞.
         expect(toolbox.getCount('ball')).toBe(10);
 
-        expect(panel._paletteReadout.textContent).toContain('Authored palette');
-        expect(panel._unlimitedBtn.disabled).toBe(false);
+        expect(palettePanel._paletteReadout.textContent).toContain('Authored palette');
+        expect(palettePanel._unlimitedBtn.disabled).toBe(false);
 
         const saved = await saveOnce(panel);
         expect(saved.availableParts.rope).toBe(3);
@@ -285,13 +306,13 @@ describe('EditorPanel parts palette — authoring (issue #69)', () => {
     it('excluding a type un-placeables it and saves an explicit 0', async () => {
         const panel = await makeFreshEditor();
 
-        rowOf(panel, 'ball').include.checked = false;
-        rowOf(panel, 'ball').include.emit('change');
+        rowOf(palettePanel, 'ball').include.checked = false;
+        rowOf(palettePanel, 'ball').include.emit('change');
 
-        expect(panel._authoredPalette.ball).toBe(0);
+        expect(palettePanel._authoredPalette.ball).toBe(0);
         expect(toolbox.getCount('ball')).toBe(0);
-        expect(rowOf(panel, 'ball').count.value).toBe('0');
-        expect(rowOf(panel, 'ball').count.disabled).toBe(true);
+        expect(rowOf(palettePanel, 'ball').count.value).toBe('0');
+        expect(rowOf(palettePanel, 'ball').count.disabled).toBe(true);
 
         const saved = await saveOnce(panel);
         expect(Object.hasOwn(saved.availableParts, 'ball')).toBe(true);
@@ -301,27 +322,27 @@ describe('EditorPanel parts palette — authoring (issue #69)', () => {
     it('re-including a row returns it to the default count', async () => {
         const panel = await makeFreshEditor();
 
-        rowOf(panel, 'ball').include.checked = false;
-        rowOf(panel, 'ball').include.emit('change');
-        rowOf(panel, 'ball').include.checked = true;
-        rowOf(panel, 'ball').include.emit('change');
+        rowOf(palettePanel, 'ball').include.checked = false;
+        rowOf(palettePanel, 'ball').include.emit('change');
+        rowOf(palettePanel, 'ball').include.checked = true;
+        rowOf(palettePanel, 'ball').include.emit('change');
 
-        expect(rowOf(panel, 'ball').count.value).toBe('10');
-        expect(rowOf(panel, 'ball').count.disabled).toBe(false);
-        expect(panel._authoredPalette.ball).toBe(10);
+        expect(rowOf(palettePanel, 'ball').count.value).toBe('10');
+        expect(rowOf(palettePanel, 'ball').count.disabled).toBe(false);
+        expect(palettePanel._authoredPalette.ball).toBe(10);
         expect(toolbox.getCount('ball')).toBe(10);
     });
 
     it('typing a 0 count also excludes on save, without rewriting mid-keystroke', async () => {
         const panel = await makeFreshEditor();
 
-        rowOf(panel, 'ball').count.value = '0';
-        rowOf(panel, 'ball').count.emit('input');
+        rowOf(palettePanel, 'ball').count.value = '0';
+        rowOf(palettePanel, 'ball').count.emit('input');
 
         // No mid-keystroke rewrite: the row stays editable, the palette says 0.
-        expect(rowOf(panel, 'ball').count.disabled).toBe(false);
-        expect(rowOf(panel, 'ball').include.checked).toBe(true);
-        expect(panel._authoredPalette.ball).toBe(0);
+        expect(rowOf(palettePanel, 'ball').count.disabled).toBe(false);
+        expect(rowOf(palettePanel, 'ball').include.checked).toBe(true);
+        expect(palettePanel._authoredPalette.ball).toBe(0);
         expect(toolbox.getCount('ball')).toBe(0);
 
         const saved = await saveOnce(panel);
@@ -331,24 +352,24 @@ describe('EditorPanel parts palette — authoring (issue #69)', () => {
     it('"∞ Everything Unlimited" clears back to the default posture', async () => {
         const panel = await makeFreshEditor();
 
-        rowOf(panel, 'rope').count.value = '3';
-        rowOf(panel, 'rope').count.emit('input');
+        rowOf(palettePanel, 'rope').count.value = '3';
+        rowOf(palettePanel, 'rope').count.emit('input');
         expect(toolbox._palette).not.toBeNull();
 
-        panel._unlimitedBtn.click();
+        palettePanel._unlimitedBtn.click();
 
-        expect(panel._authoredPalette).toBeNull();
+        expect(palettePanel._authoredPalette).toBeNull();
         expect(toolbox._palette).toBeNull();
         expect(toolbox.getCount('rope')).toBe(Infinity);
-        expect(rowOf(panel, 'rope').count.value).toBe('10');
-        expect(panel._unlimitedBtn.disabled).toBe(true);
+        expect(rowOf(palettePanel, 'rope').count.value).toBe('10');
+        expect(palettePanel._unlimitedBtn.disabled).toBe(true);
 
         const saved = await saveOnce(panel);
         expect(saved.availableParts.rope).toBe(10);
     });
 });
 
-describe('EditorPanel parts palette — load (issue #69)', () => {
+describe('Parts palette panel — load (issue #69)', () => {
     it('a loaded level installs its availableParts as the authored palette and constrains the toolbox', async () => {
         const panel = await makeFreshEditor();
         const data = mkLevelData();
@@ -357,15 +378,15 @@ describe('EditorPanel parts palette — load (issue #69)', () => {
 
         // Canonical palette: every registered type present, exactly as saved.
         for (const type of registeredTypes()) {
-            expect(panel._authoredPalette[type]).toBe(data.availableParts[type]);
+            expect(palettePanel._authoredPalette[type]).toBe(data.availableParts[type]);
         }
         expect(toolbox.getCount('bucket')).toBe(2);
         expect(toolbox.getCount('ramp')).toBe(3);
 
         // Rows display the imported posture; the clear button is live.
-        expect(rowOf(panel, 'bucket').count.value).toBe('2');
-        expect(panel._unlimitedBtn.disabled).toBe(false);
-        expect(panel._paletteReadout.textContent).toContain('Authored palette');
+        expect(rowOf(palettePanel, 'bucket').count.value).toBe('2');
+        expect(palettePanel._unlimitedBtn.disabled).toBe(false);
+        expect(palettePanel._paletteReadout.textContent).toContain('Authored palette');
 
         // Save Level now writes the imported palette, not the default.
         const saved = await saveOnce(panel);
@@ -380,22 +401,22 @@ describe('EditorPanel parts palette — load (issue #69)', () => {
         panel._applyLoadedLevel(data);
 
         for (const type of registeredTypes()) {
-            expect(panel._authoredPalette[type]).toBe(0);
+            expect(palettePanel._authoredPalette[type]).toBe(0);
             expect(toolbox.getCount(type)).toBe(0);
         }
-        expect(rowOf(panel, 'bucket').include.checked).toBe(false);
-        expect(rowOf(panel, 'bucket').count.disabled).toBe(true);
-        expect(panel._unlimitedBtn.disabled).toBe(false);
-        expect(panel._paletteReadout.textContent).toContain('Authored palette');
+        expect(rowOf(palettePanel, 'bucket').include.checked).toBe(false);
+        expect(rowOf(palettePanel, 'bucket').count.disabled).toBe(true);
+        expect(palettePanel._unlimitedBtn.disabled).toBe(false);
+        expect(palettePanel._paletteReadout.textContent).toContain('Authored palette');
     });
 
     it('save → load in a fresh session → save round-trips the palette verbatim', async () => {
         // Session A: author a distinctive palette and save it.
         let panel = await makeFreshEditor();
-        rowOf(panel, 'rope').count.value = '3';
-        rowOf(panel, 'rope').count.emit('input');
-        rowOf(panel, 'ball').include.checked = false;
-        rowOf(panel, 'ball').include.emit('change');
+        rowOf(palettePanel, 'rope').count.value = '3';
+        rowOf(palettePanel, 'rope').count.emit('input');
+        rowOf(palettePanel, 'ball').include.checked = false;
+        rowOf(palettePanel, 'ball').include.emit('change');
         const first = await saveOnce(panel);
         expect(Object.hasOwn(first.availableParts, 'ball')).toBe(true);
         expect(first.availableParts.ball).toBe(0);
@@ -404,10 +425,10 @@ describe('EditorPanel parts palette — load (issue #69)', () => {
         panel = await makeFreshEditor();
         panel._applyLoadedLevel(mkLevelData({ id: 'reimported', availableParts: first.availableParts }));
 
-        expect(panel._authoredPalette.rope).toBe(3);
-        expect(panel._authoredPalette.ball).toBe(0);
-        expect(rowOf(panel, 'rope').count.value).toBe('3');
-        expect(rowOf(panel, 'ball').include.checked).toBe(false);
+        expect(palettePanel._authoredPalette.rope).toBe(3);
+        expect(palettePanel._authoredPalette.ball).toBe(0);
+        expect(rowOf(palettePanel, 'rope').count.value).toBe('3');
+        expect(rowOf(palettePanel, 'ball').include.checked).toBe(false);
 
         const second = await saveOnce(panel);
         expect(second.availableParts).toEqual(first.availableParts);
@@ -422,8 +443,8 @@ describe('EditorPanel parts palette — load (issue #69)', () => {
         panel._updateGoalReadout();
         expect(panel._goalReadout.textContent).toContain('Anchored scenery');
 
-        rowOf(panel, 'bucket').include.checked = false;
-        rowOf(panel, 'bucket').include.emit('change');
+        rowOf(palettePanel, 'bucket').include.checked = false;
+        rowOf(palettePanel, 'bucket').include.emit('change');
         expect(panel._goalReadout.textContent).not.toContain('Anchored scenery');
 
         bucket.dispose();
@@ -463,8 +484,8 @@ describe('Constrained sandbox toolbox (issue #69)', () => {
 
     it('leaving the editor releases the toolbox to live inventory; a fresh sandbox visit is unlimited again', async () => {
         const panel = await makeFreshEditor();
-        rowOf(panel, 'rope').count.value = '5';
-        rowOf(panel, 'rope').count.emit('input');
+        rowOf(palettePanel, 'rope').count.value = '5';
+        rowOf(palettePanel, 'rope').count.emit('input');
         expect(toolbox.getCount('rope')).toBe(5);
 
         eventBus.emit('mode:changed', { oldMode: 'SANDBOX', newMode: 'EDITING' });
@@ -477,8 +498,8 @@ describe('Constrained sandbox toolbox (issue #69)', () => {
         eventBus.emit('mode:changed', { oldMode: 'EDITING', newMode: 'SANDBOX' });
         expect(toolbox._palette).toBeNull();
         expect(toolbox.getCount('rope')).toBe(Infinity);
-        expect(rowOf(panel, 'rope').count.value).toBe('10');
-        expect(panel._unlimitedBtn.disabled).toBe(true);
+        expect(rowOf(palettePanel, 'rope').count.value).toBe('10');
+        expect(palettePanel._unlimitedBtn.disabled).toBe(true);
     });
 
     it('badges mirror the authored palette exactly and gate at zero', async () => {
@@ -494,8 +515,8 @@ describe('Constrained sandbox toolbox (issue #69)', () => {
         expect(toolbox._itemElements.get('rope').classList.contains('disabled')).toBe(false);
 
         // Authoring live-updates badges too.
-        rowOf(panel, 'rope').count.value = '1';
-        rowOf(panel, 'rope').count.emit('input');
+        rowOf(palettePanel, 'rope').count.value = '1';
+        rowOf(palettePanel, 'rope').count.emit('input');
         expect(String(badge('rope').textContent)).toBe('1');
 
         eventBus.emit('object:placed', { type: 'rope', id: 1, object: null });

@@ -17,6 +17,7 @@ import { goalOverlay } from './ui/GoalOverlay.js';
 import { goalChecker } from './goals/GoalChecker.js';
 import { levelSelect } from './ui/LevelSelect.js';
 import { editorPanel } from './ui/EditorPanel.js';
+import { palettePanel } from './ui/PalettePanel.js';
 import { dragDropManager } from './ui/DragDropManager.js';
 import { objectRegistry } from './objects/ObjectRegistry.js';
 import { beginPlay, restorePlacedFromSnapshot, resetSandboxBoard } from './reset/levelReset.js';
@@ -153,7 +154,12 @@ function init() {
     // 8. Editor Panel
     editorPanel.init();
 
-    // 9. Drag-and-Drop (after Renderer + Toolbox)
+    // 9. Parts Palette panel (issue #69) — the parts palette lives in its
+    //    own floating panel (separate from the editor panel, same collapse/
+    //    move header chrome); EditorPanel delegates save/load/offers to it.
+    palettePanel.init();
+
+    // 10. Drag-and-Drop (after Renderer + Toolbox)
     dragDropManager.init(state.placedObjects);
     // The renderer paints the click-to-connect squares from the same flow
     // instance the drag-drop handler delegates square clicks to
@@ -164,7 +170,7 @@ function init() {
     // parked inside a wall. Same dims the engine was constructed with.
     dragDropManager.connectFlow.setPlayfield(state.physicsEngine.width, state.physicsEngine.height);
 
-    // 10. Session bug-file recorder (ADR 0006) — always-on in SANDBOX;
+    // 11. Session bug-file recorder (ADR 0006) — always-on in SANDBOX;
     //     the Editor panel surfaces export / recovery for it.
     sessionRecorder.init({
         getBoard: () => state.placedObjects,

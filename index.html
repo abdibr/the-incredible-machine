@@ -41,6 +41,12 @@
          ancestor would make the floating panel unrenderable no matter what its
          own styles say. Kept outside so it truly floats bottom-right. -->
     <div id="editor-overlay" class="overlay-panel hidden"></div>
+
+    <!-- Parts Palette panel â€” a deliberate SIBLING of #overlay-container too
+         (same rationale as #editor-overlay above): a second floating panel,
+         SANDBOX-only, draggable/collapsible from its own header. The editor
+         panel and the palette panel are separate panels by design. -->
+    <div id="palette-overlay" class="overlay-panel hidden"></div>
   </div>
 
   <script type="module" src="/js/main.js"></script>
