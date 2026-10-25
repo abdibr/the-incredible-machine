@@ -7,6 +7,10 @@
  * - Moving selected objects by dragging
  * - Rotating selected objects via handle
  * - Deleting selected objects (right-click or Delete key)
+ * - Pinning a selected object (pin handle or P key, issue #66 follow-up):
+ *   a pinned part cannot move during play, Save Level writes it into the
+ *   level's fixedObjects, and a pinned unnamed bucket is the goal zone the
+ *   readout, GOAL marker and Save all agree on
  *
  * Coordinates between the Toolbox (inventory) and Renderer (canvas).
  */
@@ -225,6 +229,10 @@ class DragDropManager {
                 this._startRotateObject(x, y);
                 return;
             }
+            if (handle === 'pin') {
+                this._togglePinSelected();
+                return;
+            }
         }
 
         // Click-to-connect squares (ADR 0007 decision 2)
@@ -234,8 +242,10 @@ class DragDropManager {
         const obj = renderer.getObjectAtPoint(x, y, this._objects);
         if (obj) {
             if (obj.isFixed) {
-                // Can't interact with fixed objects
-                this._selectObject(null);
+                // Pinned scenery is selectable so it can be unpinned — the
+                // pin handle is its only affordance (move/rotate/delete all
+                // refuse on isFixed); selecting it just never starts a drag.
+                this._selectObject(obj);
             } else {
                 this._selectObject(obj);
                 this._startMoveObject(x, y);
@@ -247,7 +257,7 @@ class DragDropManager {
 
     /**
      * Global keyboard handling: Esc cancels an in-flight seek; Delete or
-     * Backspace removes the selection.
+     * Backspace removes the selection; P pins/unpins it (issue #66 follow-up).
      * @param {KeyboardEvent} e
      * @private
      */
@@ -257,6 +267,12 @@ class DragDropManager {
 
         if (e.code === 'Escape') {
             this._connectFlow.cancel(); // AC: Esc cancels the seek
+            return;
+        }
+
+        if (e.code === 'KeyP' && this._selectedObject) {
+            e.preventDefault();
+            this._togglePinSelected();
             return;
         }
 
@@ -321,6 +337,24 @@ class DragDropManager {
         this._dragType = 'rotate';
         this._dragObject = this._selectedObject;
         this._dragStartAngle = this._selectedObject.angle;
+    }
+
+    /**
+     * Toggle the selected object's pin state (issue #66 follow-up): pinned
+     * parts are play-static scene elements — Save Level writes them into the
+     * level's fixedObjects — and a pinned unnamed bucket is the goal zone the
+     * readout, the GOAL marker and the stamp-fallback resolver all agree on.
+     * Announces `object:pinned { type, id, isFixed, object }` so the editor's
+     * goal message, goal readout and the bug-file build trace can react.
+     * @private
+     */
+    _togglePinSelected() {
+        if (!this._selectedObject) return;
+        const obj = this._selectedObject;
+        // Move/rotate/delete all refuse on isFixed; the pin toggle is the one
+        // operation that crosses the boundary, in both directions.
+        obj.isFixed = !obj.isFixed;
+        eventBus.emit('object:pinned', { type: obj.type, id: obj.id, isFixed: obj.isFixed, object: obj });
     }
 
     _placeObject(type, x, y) {

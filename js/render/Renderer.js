@@ -60,6 +60,7 @@ class Renderer {
             move: '#4080ff',
             rotate: '#40c040',
             delete: '#e04040',
+            pin: '#c98c1c',
         };
     }
 
@@ -284,7 +285,7 @@ class Renderer {
      * Get the selection handle hit at a canvas point.
      * @param {number} x
      * @param {number} y
-     * @returns {'move'|'rotate'|'delete'|null}
+     * @returns {'move'|'rotate'|'delete'|'pin'|null}
      */
     getHandleAtPoint(x, y) {
         if (!this.selectedObject) return null;
@@ -388,6 +389,9 @@ class Renderer {
             if (name === 'move') ctx.fillText('✥', hx, hy);
             else if (name === 'rotate') ctx.fillText('↻', hx, hy);
             else if (name === 'delete') ctx.fillText('✕', hx, hy);
+            // The pin handle (issue #66 follow-up): amber dot + pushpin —
+            // click toggles the object's pinned state.
+            else if (name === 'pin') ctx.fillText('📌', hx, hy);
         }
 
         ctx.restore();
@@ -395,10 +399,18 @@ class Renderer {
 
     _getHandlePositions(obj) {
         const b = obj.bounds;
+        // A pinned object offers ONLY the pin handle (its move/rotate/delete
+        // operations would all be isFixed-refused no-ops, so they are not
+        // even drawn or hit-tested); a movable part gets all four, with pin
+        // at the bottom-center slot mirroring the move handle above.
+        if (obj.isFixed) {
+            return [['pin', b.x + b.width / 2, b.y + b.height + 14]];
+        }
         return [
             ['move', b.x + b.width / 2, b.y - 14],
             ['rotate', b.x + b.width + 14, b.y + b.height / 2],
             ['delete', b.x - 14, b.y + b.height / 2],
+            ['pin', b.x + b.width / 2, b.y + b.height + 14],
         ];
     }
 

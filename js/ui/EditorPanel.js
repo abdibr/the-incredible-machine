@@ -27,6 +27,12 @@ import { sessionRecorder } from '../recorder/SessionRecorder.js';
 import { downloadJson } from '../recorder/browser.js';
 import { setMode, AppMode } from '../main.js';
 
+/**
+ * Standing pin tip (issue #66 follow-up): shown in the pin notice on every
+ * sandbox entry, before any pin action has produced a live message.
+ */
+const PIN_TIP = 'Tip: select a part and click its 📌 handle (or press P) to pin it — a pinned bucket is the goal zone, and only pinned parts are saved.';
+
 class EditorPanel {
     constructor() {
         /** @type {HTMLElement} */
@@ -54,6 +60,14 @@ class EditorPanel {
 
         /** @type {HTMLElement|null} plain-language goal readout (issue #66) */
         this._goalReadout = null;
+
+        /**
+         * One plain-language line about the last pin action (issue #66
+         * follow-up), or the standing pin tip before any action. Null until
+         * the panel is built.
+         * @type {HTMLElement|null}
+         */
+        this._pinNotice = null;
 
         /**
          * Temporary disabled option displaying an imported level's
@@ -86,13 +100,18 @@ class EditorPanel {
                 this._loadedLevelName = null;
                 this._updateBugStatus();
                 this._updateGoalReadout();
+                // The pin affordance opens each visit with its tip again —
+                // no stale pin claim from a previous board (issue #66).
+                this._setPinNotice(PIN_TIP);
             } else {
                 this._hide();
             }
         });
 
-        // Recording status refresh on the events that change it (cheap poll)
-        for (const topic of ['controls:play', 'controls:pause', 'controls:reset', 'object:placed', 'object:moved', 'object:removed']) {
+        // Recording status refresh on the events that change it (cheap poll);
+        // board events also refresh the goal readout, since they move the
+        // goal-zone resolution (#66).
+        for (const topic of ['controls:play', 'controls:pause', 'controls:reset', 'object:placed', 'object:moved', 'object:pinned', 'object:removed']) {
             eventBus.on(topic, () => {
                 if (this._mode === 'SANDBOX') {
                     this._updateBugStatus();
@@ -101,6 +120,12 @@ class EditorPanel {
                 }
             });
         }
+
+        // Pin affordance (issue #66 follow-up): announce what a pin toggle
+        // did to the goal, decided by the same resolver the readout, the
+        // field's GOAL marker and Save share (the readout refresh rides on
+        // the cheap poll above).
+        eventBus.on('object:pinned', (ev) => this._onPinned(ev));
 
         console.log('[EditorPanel] Initialized');
     }
@@ -183,6 +208,16 @@ class EditorPanel {
         this._goalReadout.style.cssText = 'opacity: 0.9; font-size: 12px; line-height: 1.4; margin: 6px 0 8px;';
         this._updateGoalReadout();
         this.container.appendChild(this._goalReadout);
+
+        // Pin notice (issue #66 follow-up): one plain-language line about the
+        // last pin action — what the pin did to the goal, said by the same
+        // resolver that the readout, the field's GOAL marker and Save use, so
+        // the message can never promise a goal the checker does not keep.
+        // Opens with the standing tip; every SANDBOX entry resets to it.
+        this._pinNotice = document.createElement('div');
+        this._pinNotice.style.cssText = 'font-size: 12px; line-height: 1.4; margin: 0 0 8px; padding: 4px 6px; background: rgba(255, 255, 255, 0.12); border-radius: 4px;';
+        this._pinNotice.textContent = PIN_TIP;
+        this.container.appendChild(this._pinNotice);
 
         this.container.appendChild(this._makeSep());
 
@@ -381,6 +416,57 @@ class EditorPanel {
                 : `get ${target} into the goal zone "${goal.zoneId}" — but that zone matches nothing on the board, so this session cannot reach the goal`;
         }
         return `get ${target} into the bucket marked GOAL on the field`;
+    }
+
+    /**
+     * Show the pin notice line's text (issue #66 follow-up).
+     * @param {string} text
+     * @private
+     */
+    _setPinNotice(text) {
+        if (!this._pinNotice) return;
+        this._pinNotice.textContent = text;
+    }
+
+    /**
+     * The pin message (issue #66 follow-up): right after a pin toggle, say in
+     * plain language what the pin did — the goal-zone pin the user was looking
+     * for, a decoy pin the field's GOAL marker does not point at, an unpin
+     * that removed the last zone, or the simple play-static note for
+     * non-bucket parts. Truth comes from resolveGoalZoneObject with the
+     * save-time stamp fallback — the same resolver the readout, the marker
+     * and Save share — so this message can never promise a goal the checker
+     * does not keep. Unimplemented goal types (imported levels) get the
+     * neutral part message: no zone claim while nothing can be won at all.
+     * @param {{ type?: string|null, id?: number|null, isFixed?: boolean,
+     *          object?: import('../objects/BaseObject.js').default|null }} [ev]
+     *        the object:pinned packet
+     * @private
+     */
+    _onPinned({ type = null, isFixed = false, object = null } = {}) {
+        if (!this._pinNotice) return;
+        const objects = dragDropManager.getObjects();
+        const label = type ? type[0].toUpperCase() + type.slice(1) : 'Object';
+        const saveGoal = this._computeSaveGoal(objects);
+
+        if (type !== 'bucket' || !IMPLEMENTED_GOAL_TYPES.includes(saveGoal.type)) {
+            this._setPinNotice(isFixed
+                ? `📌 ${label} pinned — it will not move during play, and Save Level will include it.`
+                : `${label} unpinned — it may fall during play. Only pinned parts are saved with a level.`);
+            return;
+        }
+
+        const zone = resolveGoalZoneObject(objects, saveGoal, { stampFallback: true });
+        const zoneIsThis = zone && object && zone.id === object.id;
+        if (isFixed && zoneIsThis) {
+            this._setPinNotice('📌 This bucket is the goal zone — the field marks it GOAL, and Save Level will include it.');
+        } else if (isFixed) {
+            this._setPinNotice('📌 Bucket pinned — but the goal zone is the bucket marked GOAL on the field.');
+        } else if (zone) {
+            this._setPinNotice('Bucket unpinned — the goal zone is the bucket marked GOAL on the field.');
+        } else {
+            this._setPinNotice('Bucket unpinned — no bucket on the board can be the goal zone now, so the saved level cannot be won. Pin a bucket to make it the goal.');
+        }
     }
 
     // ── Bug file recorder (ADR 0006) ──────────────

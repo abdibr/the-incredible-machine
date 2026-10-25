@@ -415,9 +415,9 @@ export class SessionRecorder {
     /** ── (part 4b: edit normalization + sampling) ── */
 
     /**
-     * Normalize an edit packet. `object:placed` carries the live object, so
-     * its snapshot (serialize + rope attachment refs) captures the exact
-     * post-snap state the toolbox drop produced.
+     * Normalize an edit packet. `object:placed` and `object:pinned` carry the
+     * live object, so their snapshots capture the exact post-action state the
+     * edit produced (a pin's snapshot records the new isFixed in the file).
      * @private
      */
     _normalizeEditEvent(topic, packet) {
@@ -427,6 +427,15 @@ export class SessionRecorder {
                 return {
                     ref: obj ? narrativeRef(obj.type, obj.id) : `?#${packet?.id ?? '?'}`,
                     type: obj?.type ?? packet?.type ?? null,
+                    snapshot: obj ? this._serializeWithAttachments(obj) : null,
+                };
+            }
+            case 'object:pinned': {
+                const obj = packet?.object;
+                return {
+                    ref: obj ? narrativeRef(obj.type, obj.id) : `?#${packet?.id ?? '?'}`,
+                    type: obj?.type ?? packet?.type ?? null,
+                    isFixed: !!packet?.isFixed,
                     snapshot: obj ? this._serializeWithAttachments(obj) : null,
                 };
             }

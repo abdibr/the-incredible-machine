@@ -37,6 +37,7 @@ export const EDIT_TOPICS = Object.freeze([
     'object:placed',
     'object:moved',
     'object:rotated',
+    'object:pinned',
     'object:removed',
     'level:loaded',
 ]);
