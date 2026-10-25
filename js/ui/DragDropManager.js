@@ -13,6 +13,14 @@
  *   readout, GOAL marker and Save all agree on
  *
  * Coordinates between the Toolbox (inventory) and Renderer (canvas).
+ *
+ * The selection-affordance set is state-driven (issue #68): which handles
+ * a part offers — and which move/rotate/delete verbs are accepted — come
+ * from the shared selectionHandles table (part state × stage posture).
+ * Sandbox authoring edits fixed scenery in place (dragging a pinned goal
+ * bucket IS the #66 goal-zone authoring move); every other stage leaves a
+ * pinned part only its pin handle. Future part states (issue #67's
+ * anchored parts) land as rows in that table.
  */
 
 import { eventBus } from '../EventBus.js';
@@ -20,6 +28,7 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { renderer } from '../render/Renderer.js';
 import { toolbox } from './Toolbox.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
+import { selectionHandleSet } from './selectionHandles.js';
 import ConnectFlow from './ConnectFlow.js';
 
 class DragDropManager {
@@ -163,11 +172,7 @@ class DragDropManager {
             if (!this._enabled) return;
 
             const pos = renderer.pageToCanvas(e.pageX, e.pageY);
-            const obj = renderer.getObjectAtPoint(pos.x, pos.y, this._objects);
-            if (obj && !obj.isFixed) {
-                this._selectObject(obj);
-                this._deleteSelected();
-            }
+            this._onCanvasContextMenu(pos.x, pos.y);
         });
 
         // ── Cursor leaves the canvas: no hover target ──
@@ -241,17 +246,32 @@ class DragDropManager {
         // Check for clicking on an object
         const obj = renderer.getObjectAtPoint(x, y, this._objects);
         if (obj) {
-            if (obj.isFixed) {
-                // Pinned scenery is selectable so it can be unpinned — the
-                // pin handle is its only affordance (move/rotate/delete all
-                // refuse on isFixed); selecting it just never starts a drag.
-                this._selectObject(obj);
-            } else {
-                this._selectObject(obj);
+            // Start a drag only when the part's state-driven handle set
+            // (issue #68) offers move — sandbox authoring drags fixed
+            // scenery in place; every other stage leaves it stationary.
+            this._selectObject(obj);
+            if (selectionHandleSet(obj, this._mode).includes('move')) {
                 this._startMoveObject(x, y);
             }
         } else {
             this._selectObject(null);
+        }
+    }
+
+    /**
+     * Right-click on the canvas body, in canvas coordinates: deletes the
+     * part under the cursor when its state-driven handle set offers delete
+     * (issue #68) — everywhere but sandbox authoring, fixed scenery stays
+     * put and only its pin handle remains offered.
+     * @param {number} x - canvas x
+     * @param {number} y - canvas y
+     * @private
+     */
+    _onCanvasContextMenu(x, y) {
+        const obj = renderer.getObjectAtPoint(x, y, this._objects);
+        if (obj && selectionHandleSet(obj, this._mode).includes('delete')) {
+            this._selectObject(obj);
+            this._deleteSelected();
         }
     }
 
@@ -322,8 +342,23 @@ class DragDropManager {
         eventBus.emit('object:selected', obj);
     }
 
+    /**
+     * Whether the current selection's state-driven handle set offers a
+     * handle (issue #68) — the one gate for the move/rotate/delete verbs,
+     * mirroring what the renderer draws and hit-tests.
+     * @param {'move'|'rotate'|'delete'} handle
+     * @returns {boolean}
+     * @private
+     */
+    _offersHandle(handle) {
+        return !!this._selectedObject &&
+            selectionHandleSet(this._selectedObject, this._mode).includes(handle);
+    }
+
     _startMoveObject(x, y) {
-        if (!this._selectedObject || this._selectedObject.isFixed) return;
+        // The state-driven handle set decides (issue #68): a fixed part is
+        // draggable in sandbox authoring, never elsewhere.
+        if (!this._offersHandle('move')) return;
         this._dragging = true;
         this._dragType = 'move';
         this._dragObject = this._selectedObject;
@@ -332,7 +367,9 @@ class DragDropManager {
     }
 
     _startRotateObject(x, y) {
-        if (!this._selectedObject || this._selectedObject.isFixed) return;
+        // The state-driven handle set decides (issue #68): a fixed part is
+        // rotatable in sandbox authoring, never elsewhere.
+        if (!this._offersHandle('rotate')) return;
         this._dragging = true;
         this._dragType = 'rotate';
         this._dragObject = this._selectedObject;
@@ -351,8 +388,10 @@ class DragDropManager {
     _togglePinSelected() {
         if (!this._selectedObject) return;
         const obj = this._selectedObject;
-        // Move/rotate/delete all refuse on isFixed; the pin toggle is the one
-        // operation that crosses the boundary, in both directions.
+        // Move/rotate/delete are state-driven offers now (issue #68): a
+        // fixed part keeps them only in sandbox authoring. The pin toggle
+        // is the one operation a fixed part still offers everywhere — the
+        // unpin escape hatch.
         obj.isFixed = !obj.isFixed;
         eventBus.emit('object:pinned', { type: obj.type, id: obj.id, isFixed: obj.isFixed, object: obj });
     }
@@ -383,7 +422,9 @@ class DragDropManager {
     }
 
     _deleteSelected() {
-        if (!this._selectedObject || this._selectedObject.isFixed) return;
+        // The state-driven handle set decides (issue #68): fixed scenery is
+        // deletable in sandbox authoring, never elsewhere.
+        if (!this._offersHandle('delete')) return;
 
         const obj = this._selectedObject;
         const idx = this._objects.indexOf(obj);

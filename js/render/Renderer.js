@@ -11,6 +11,21 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 import { resolveGoalZoneObject } from '../goals/GoalChecker.js';
 import { ROPE_TOO_SHORT } from '../ui/ConnectFlow.js';
+import { selectionHandleSet } from '../ui/selectionHandles.js';
+
+/**
+ * Fixed on-canvas slots for the selection handles, relative to the part's
+ * `bounds`: move above the bounds, rotate to its right, delete to its
+ * left, pin below (the pin slot mirroring the move slot). The offered
+ * NAMES come from the state-driven selectionHandles table (issue #68);
+ * this maps each name to its slot.
+ */
+const HANDLE_SLOTS = Object.freeze({
+    move: (b) => [b.x + b.width / 2, b.y - 14],
+    rotate: (b) => [b.x + b.width + 14, b.y + b.height / 2],
+    delete: (b) => [b.x - 14, b.y + b.height / 2],
+    pin: (b) => [b.x + b.width / 2, b.y + b.height + 14],
+});
 
 class Renderer {
     constructor() {
@@ -359,6 +374,14 @@ class Renderer {
         ctx.restore();
     }
 
+    /**
+     * Draw the dashed selection box plus the offered selection handles —
+     * the offered set is state-driven (issue #68): _getHandlePositions
+     * derives it from the shared selectionHandles table.
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {BaseObject} obj - the selected object
+     * @private
+     */
     _drawSelectionHandles(ctx, obj) {
         const b = obj.bounds;
 
@@ -397,21 +420,22 @@ class Renderer {
         ctx.restore();
     }
 
+    /**
+     * The selection handles offered for an object, in draw order, as
+     * [name, hx, hy] slots. The offered set is state-driven (issue #68):
+     * derived from the part's state × the stage posture via the shared
+     * selectionHandles table — the same rows getHandleAtPoint filters
+     * over and the drag-drop manager gates its verbs against, so draw,
+     * hit-test and interaction can never disagree. Issue #67's anchored
+     * parts extend that table without touching this method.
+     * @param {BaseObject} obj
+     * @returns {Array<[string, number, number]>} [name, x, y] slots
+     * @private
+     */
     _getHandlePositions(obj) {
         const b = obj.bounds;
-        // A pinned object offers ONLY the pin handle (its move/rotate/delete
-        // operations would all be isFixed-refused no-ops, so they are not
-        // even drawn or hit-tested); a movable part gets all four, with pin
-        // at the bottom-center slot mirroring the move handle above.
-        if (obj.isFixed) {
-            return [['pin', b.x + b.width / 2, b.y + b.height + 14]];
-        }
-        return [
-            ['move', b.x + b.width / 2, b.y - 14],
-            ['rotate', b.x + b.width + 14, b.y + b.height / 2],
-            ['delete', b.x - 14, b.y + b.height / 2],
-            ['pin', b.x + b.width / 2, b.y + b.height + 14],
-        ];
+        return selectionHandleSet(obj, this._mode)
+            .map((name) => [name, ...HANDLE_SLOTS[name](b)]);
     }
 
     /**
