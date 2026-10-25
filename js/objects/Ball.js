@@ -168,6 +168,7 @@ export default class Ball extends BaseObject {
         return new Ball(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            isAnchored: data.isAnchored,
             customId: data.id,
             variant: data.options?.variant || 'bowling',
         });

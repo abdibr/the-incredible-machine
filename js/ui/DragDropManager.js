@@ -11,16 +11,20 @@
  *   a pinned part cannot move during play, Save Level writes it into the
  *   level's fixedObjects, and a pinned unnamed bucket is the goal zone the
  *   readout, GOAL marker and Save all agree on
+ * - Anchoring a selected object (anchor handle or A key, issue #67): an
+ *   anchored part is pre-placed scene content the player cannot move or
+ *   delete in the edit stage, yet physically dynamic at play — Save Level
+ *   writes it into fixedObjects with its `isAnchored` marker
  *
  * Coordinates between the Toolbox (inventory) and Renderer (canvas).
  *
- * The selection-affordance set is state-driven (issue #68): which handles
- * a part offers — and which move/rotate/delete verbs are accepted — come
- * from the shared selectionHandles table (part state × stage posture).
+ * The selection-affordance set is state-driven (issues #68, #67): which
+ * handles a part offers — and which move/rotate/delete verbs are accepted —
+ * come from the shared selectionHandles table (part state × stage posture).
  * Sandbox authoring edits fixed scenery in place (dragging a pinned goal
  * bucket IS the #66 goal-zone authoring move); every other stage leaves a
- * pinned part only its pin handle. Future part states (issue #67's
- * anchored parts) land as rows in that table.
+ * pinned part only its pin handle and an anchored part only its anchor
+ * handle.
  */
 
 import { eventBus } from '../EventBus.js';
@@ -28,7 +32,7 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { renderer } from '../render/Renderer.js';
 import { toolbox } from './Toolbox.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
-import { selectionHandleSet } from './selectionHandles.js';
+import { selectionHandleSet, isAnchorCapable } from './selectionHandles.js';
 import ConnectFlow from './ConnectFlow.js';
 
 class DragDropManager {
@@ -238,6 +242,10 @@ class DragDropManager {
                 this._togglePinSelected();
                 return;
             }
+            if (handle === 'anchor') {
+                this._toggleAnchorSelected();
+                return;
+            }
         }
 
         // Click-to-connect squares (ADR 0007 decision 2)
@@ -296,6 +304,12 @@ class DragDropManager {
             return;
         }
 
+        if (e.code === 'KeyA' && this._selectedObject) {
+            e.preventDefault();
+            this._toggleAnchorSelected();
+            return;
+        }
+
         if ((e.code === 'Delete' || e.code === 'Backspace') && this._selectedObject) {
             e.preventDefault();
             this._deleteSelected();
@@ -315,7 +329,9 @@ class DragDropManager {
      */
     clearPlacedObjects() {
         for (let i = this._objects.length - 1; i >= 0; i--) {
-            if (!this._objects[i].isFixed) {
+            // Anchored parts are scene content, not placed parts (issue #67):
+            // they survive a clear exactly like fixed scenery.
+            if (!this._objects[i].isFixed && !this._objects[i].isAnchored) {
                 this._objects[i].dispose();
                 this._objects.splice(i, 1);
             }
@@ -394,6 +410,31 @@ class DragDropManager {
         // unpin escape hatch.
         obj.isFixed = !obj.isFixed;
         eventBus.emit('object:pinned', { type: obj.type, id: obj.id, isFixed: obj.isFixed, object: obj });
+    }
+
+    /**
+     * Toggle the selected object's anchor state (issue #67): anchored parts
+     * are pre-placed scene content — the player cannot move, rotate or
+     * delete them in the edit stage — yet at play they enter the world
+     * dynamic like any free part. Save Level writes them into the level's
+     * fixedObjects with their `isAnchored` marker.
+     *
+     * The toggle rides the state-driven handle set (issue #68): it only
+     * acts where the set offers 'anchor', so a pinned part outside sandbox
+     * authoring (whose escape hatch is the pin) refuses quietly, and the
+     * rope family — out of scope until the connector redesign — never
+     * anchors at all. Announces
+     * `object:anchored { type, id, isAnchored, object }` so the editor's
+     * notice, goal readout and the bug-file build trace can react.
+     * @private
+     */
+    _toggleAnchorSelected() {
+        if (!this._selectedObject) return;
+        const obj = this._selectedObject;
+        if (!isAnchorCapable(obj)) return; // rope scope exclusion (issue #67)
+        if (!this._offersHandle('anchor')) return; // same boundary the draw/hit-test set defines
+        obj.isAnchored = !obj.isAnchored;
+        eventBus.emit('object:anchored', { type: obj.type, id: obj.id, isAnchored: obj.isAnchored, object: obj });
     }
 
     _placeObject(type, x, y) {

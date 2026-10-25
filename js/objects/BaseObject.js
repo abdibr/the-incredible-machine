@@ -53,10 +53,11 @@ export default class BaseObject {
      * @param {object} [options={}] - Object-specific configuration
      */
     constructor(x, y, options = {}) {
-        // customId, angle, isFixed are lifecycle keys (id/pose/placement),
-        // not behavior options: they are consumed here and never land in
-        // _options, so serialize→deserialize round-trips stay stable (C3).
-        const { customId, angle, isFixed, ...behaviorOptions } = options;
+        // customId, angle, isFixed, isAnchored are lifecycle keys (id/pose/
+        // placement/state), not behavior options: they are consumed here and
+        // never land in _options, so serialize→deserialize round-trips stay
+        // stable (C3).
+        const { customId, angle, isFixed, isAnchored, ...behaviorOptions } = options;
 
         /** @type {number} Unique instance ID */
         this._id = _nextId++;
@@ -75,6 +76,14 @@ export default class BaseObject {
 
         /** @type {boolean} If true, this object is pre-placed and cannot be moved by the player */
         this._isFixed = isFixed || false;
+
+        /**
+         * @type {boolean} Anchored scene content (issue #67): authored in
+         * place, player-immovable in the edit stage, yet physically dynamic
+         * at play. Set through the isAnchored accessor — never write this
+         * field directly, it would break the fixed/anchored exclusivity.
+         */
+        this._isAnchored = isAnchored || false;
 
         /** @type {object} Original options for serialization */
         this._options = { ...behaviorOptions };
@@ -168,6 +177,9 @@ export default class BaseObject {
         const fixed = !!value;
         if (this._isFixed === fixed) return;
         this._isFixed = fixed;
+        // Pinning absorbs the anchor (issue #67): a pinned part is play-static
+        // scenery, the anchor flag is moot on it. Exclusivity invariant.
+        if (fixed && this._isAnchored) this._isAnchored = false;
         for (const body of this.bodies) {
             if (!body || body.isStatic === fixed) continue;
             Body.setStatic(body, fixed);
@@ -179,6 +191,34 @@ export default class BaseObject {
                 body.restitution = body._original.restitution;
             }
         }
+    }
+
+    /** @returns {boolean} whether this part is anchored scene content (issue #67) */
+    get isAnchored() { return this._isAnchored; }
+
+    /**
+     * Anchor-state setter — the editor's anchor affordance (the ⚓ selection
+     * handle or the A key, issue #67) toggles a solid part between movable
+     * and anchored scene content: pre-placed, immovable to the player in the
+     * edit stage, yet physically dynamic at play (it falls, rolls and is
+     * pushed like a free part — beginPlay adds its bodies to the world as
+     * they are).
+     *
+     * Anchoring deliberately touches NO bodies: the distinction to pinning
+     * is exactly that the anchor never statics anything. The three part
+     * states are mutually exclusive, enforced here so every reachable state
+     * keeps the invariant:
+     * - anchoring a pinned part un-pins it first — the isFixed setter
+     *   re-dynamic-izes the bodies (Bucket's welds rebuild via super);
+     * - pinning an anchored part absorbs the anchor (handled in the isFixed
+     *   setter above).
+     * @param {boolean} value
+     */
+    set isAnchored(value) {
+        const anchored = !!value;
+        if (this._isAnchored === anchored) return;
+        this._isAnchored = anchored;
+        if (anchored && this._isFixed) this.isFixed = false;
     }
 
     /**
@@ -322,6 +362,12 @@ export default class BaseObject {
         // editor-saved levels and round-trips keep named ids. Omitted when unset.
         if (this._customId !== null) {
             data.id = this._customId;
+        }
+        // The anchor marker (issue #67) round-trips like the pin: rows
+        // carrying it rebuild as dynamic-but-player-immovable scene content
+        // on load. Omitted when unset so the plain serial shape stays stable.
+        if (this._isAnchored) {
+            data.isAnchored = true;
         }
         return data;
     }

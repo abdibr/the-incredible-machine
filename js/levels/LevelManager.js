@@ -10,6 +10,7 @@ import { eventBus } from '../EventBus.js';
 /** All available level IDs (linear progression order) */
 const LEVEL_ORDER = [
     'level-01', 'level-02', 'level-03', 'level-04', 'level-05',
+    'level-06', // issue #67 campaign fixture: an anchored part demonstrates the flow end-to-end
 ];
 
 /** localStorage key for progress */

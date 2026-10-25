@@ -194,12 +194,12 @@ describe('The pin selection handle (Renderer)', () => {
 
     afterEach(() => bucket.dispose());
 
-    it('a movable part offers move/rotate/delete plus pin — pin at the bottom-center', () => {
+    it('a movable part offers move/rotate/delete, pin and anchor — pin at the bottom-center', () => {
         const r = new Renderer();
         r.selectedObject = bucket;
 
         const handles = r._getHandlePositions(bucket);
-        expect(handles.map(([name]) => name)).toEqual(['move', 'rotate', 'delete', 'pin']);
+        expect(handles.map(([name]) => name)).toEqual(['move', 'rotate', 'delete', 'pin', 'anchor']);
         const [pinX, pinY] = handles[3].slice(1);
         expect(pinX).toBe(bucket.bounds.x + bucket.bounds.width / 2);
         expect(pinY).toBe(bucket.bounds.y + bucket.bounds.height + 14);

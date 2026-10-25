@@ -30,15 +30,18 @@ import {
     stampGoalZoneIds,
 } from '../goals/GoalChecker.js';
 import { dragDropManager } from './DragDropManager.js';
+import { levelObjectOptions } from './selectionHandles.js';
 import { sessionRecorder } from '../recorder/SessionRecorder.js';
 import { downloadJson } from '../recorder/browser.js';
 import { setMode, AppMode } from '../main.js';
 
 /**
  * Standing pin tip (issue #66 follow-up): shown in the pin notice on every
- * sandbox entry, before any pin action has produced a live message.
+ * sandbox entry, before any pin action has produced a live message. Also
+ * introduces the anchor affordance (issue #67) so the two scenery markers
+ * are explained side by side, in plain language.
  */
-const PIN_TIP = 'Tip: select a part and click its 📌 handle (or press P) to pin it — a pinned bucket is the goal zone, and only pinned parts are saved.';
+const PIN_TIP = 'Tip: select a part and click its 📌 handle (or press P) to pin it — a pinned bucket is the goal zone, and only pinned parts are saved. The ⚓ handle (or A) anchors a part instead: the player cannot move it, but at play it still falls — Save Level keeps anchored parts too.';
 
 class EditorPanel {
     constructor() {
@@ -61,6 +64,15 @@ class EditorPanel {
 
         /** Display name of the loaded level (readout). */
         this._loadedLevelName = null;
+
+        /**
+         * The loaded level's palette (issue #67 readout): what parts the
+         * player may still place, so the anchored-scenery note can say
+         * honestly whether the palette also offers that type. Null in a
+         * goal-less sandbox — every registered type is offered.
+         * @type {object|null}
+         */
+        this._loadedAvailableParts = null;
 
         /** @type {HTMLSelectElement|null} */
         this._goalSelect = null;
@@ -137,6 +149,7 @@ class EditorPanel {
                 // A fresh sandbox visit is goal-less (#63): drop any goal a
                 // previous visit loaded; Load Level re-installs it (#66).
                 this._loadedGoal = null;
+                this._loadedAvailableParts = null;
                 this._loadedLevelName = null;
                 this._updateBugStatus();
                 this._updateGoalReadout();
@@ -151,7 +164,7 @@ class EditorPanel {
         // Recording status refresh on the events that change it (cheap poll);
         // board events also refresh the goal readout, since they move the
         // goal-zone resolution (#66).
-        for (const topic of ['controls:play', 'controls:pause', 'controls:reset', 'object:placed', 'object:moved', 'object:pinned', 'object:removed']) {
+        for (const topic of ['controls:play', 'controls:pause', 'controls:reset', 'object:placed', 'object:moved', 'object:pinned', 'object:anchored', 'object:removed']) {
             eventBus.on(topic, () => {
                 if (this._mode === 'SANDBOX') {
                     this._updateBugStatus();
@@ -166,6 +179,10 @@ class EditorPanel {
         // field's GOAL marker and Save share (the readout refresh rides on
         // the cheap poll above).
         eventBus.on('object:pinned', (ev) => this._onPinned(ev));
+
+        // Anchor affordance (issue #67): announce what anchoring did — the
+        // same plain-language pattern as the pin notice.
+        eventBus.on('object:anchored', (ev) => this._onAnchored(ev));
 
         console.log('[EditorPanel] Initialized');
     }
@@ -538,6 +555,17 @@ class EditorPanel {
             lines.push('This session has no active goal — sandbox play has no win/lose until a level is loaded.');
         }
         lines.push(`Save Level will use: ${this._goalSentence(this._computeSaveGoal(objects), objects, { sandboxFallback: true })}.`);
+
+        // Anchored scenery vs palette (issue #67): when an anchored part's
+        // type is also offered by the palette, say so in plain language —
+        // the anchored copy is scene content and does not consume the count.
+        const anchoredTypes = [...new Set(objects.filter((o) => o.isAnchored).map((o) => o.type))];
+        const offered = anchoredTypes.filter((type) => this._paletteOffers(type));
+        if (offered.length > 0) {
+            const label = offered.join(', ');
+            lines.push(`⚓ Anchored scenery: ${label} on the board is anchored scene content — it does not use any palette parts, though the palette also offers ${label}.`);
+        }
+
         this._goalReadout.textContent = lines.join(' ');
     }
 
@@ -648,6 +676,45 @@ class EditorPanel {
         }
     }
 
+    /**
+     * The anchor message (issue #67): right after an anchor toggle, say in
+     * plain language what anchoring did. Anchored parts are scene content —
+     * the player cannot move them, at play they stay physically dynamic, and
+     * Save Level keeps them. A bucket gets one honest caution: an anchored
+     * bucket cannot be the goal zone (goal zones are pinned buckets), so
+     * anchoring one is always a "saved level cannot be won" turn the readout
+     * will warn about on the next poll.
+     * @param {{ type?: string|null, id?: number|null, isAnchored?: boolean,
+     *          object?: import('../objects/BaseObject.js').default|null }} [ev]
+     *        the object:anchored packet
+     * @private
+     */
+    _onAnchored({ type = null, isAnchored = false } = {}) {
+        if (!this._pinNotice) return;
+        const label = type ? type[0].toUpperCase() + type.slice(1) : 'Object';
+        if (!isAnchored) {
+            this._setPinNotice(`${label} un-anchored — an ordinary movable part again.`);
+            return;
+        }
+        const anchoredLine = `⚓ ${label} anchored — the player cannot move it, but at play it still falls or rolls like a free part. Save Level will include it.`;
+        this._setPinNotice(type === 'bucket'
+            ? `${anchoredLine} However, an anchored bucket cannot be the goal zone — a pinned bucket is.`
+            : anchoredLine);
+    }
+
+    /**
+     * Whether the palette offers `type` in the live session (issue #67): a
+     * loaded level offers its availableParts; a goal-less sandbox offers
+     * every registered type (what the next Save will infer).
+     * @param {string} type
+     * @returns {boolean}
+     * @private
+     */
+    _paletteOffers(type) {
+        if (this._loadedAvailableParts) return (this._loadedAvailableParts[type] ?? 0) > 0;
+        return objectRegistry.has(type);
+    }
+
     // ── Bug file recorder (ADR 0006) ──────────────
 
     /** Always-on recorder: export the current sandbox session as a JSON download. */
@@ -708,7 +775,10 @@ class EditorPanel {
 
         for (const obj of objects) {
             const data = obj.serialize();
-            if (obj.isFixed) {
+            // Anchored parts are scene content (issue #67): Save keeps them
+            // beside the pinned ones — their rows carry the `isAnchored`
+            // marker and reload as player-immovable, play-dynamic parts.
+            if (obj.isFixed || obj.isAnchored) {
                 fixedObjects.push(data);
             } else {
                 placedObjects.push(data);
@@ -781,11 +851,10 @@ class EditorPanel {
         if (data.fixedObjects) {
             for (const objData of data.fixedObjects) {
                 try {
-                    const obj = objectRegistry.create(objData.type, objData.x, objData.y, {
-                        angle: objData.angle,
-                        isFixed: true,
-                        customId: objData.id, // same convention as main.js _setupLevel
-                    });
+                    // The shared rebuild-row rule (issue #67): legacy rows are
+                    // forced-fixed scenery; anchored rows load play-dynamic
+                    // but player-immovable, with their anchor marker applied.
+                    const obj = objectRegistry.create(objData.type, objData.x, objData.y, levelObjectOptions(objData));
                     objects.push(obj);
                 } catch (err) {
                     console.warn(`[EditorPanel] Could not create object: ${objData.type}`, err);
@@ -806,6 +875,7 @@ class EditorPanel {
         // disabled options, never silent choices) and the readout switches
         // to the live goal.
         this._loadedGoal = data.goal ?? null;
+        this._loadedAvailableParts = data.availableParts ?? null;
         this._loadedLevelName = data.name ?? data.id ?? 'loaded level';
         if (this._goalSelect) {
             this._rebuildGoalOptions(data.goal?.type ?? ZONE_GOAL_TYPE);

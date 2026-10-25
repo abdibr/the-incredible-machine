@@ -101,9 +101,12 @@ export function restorePlacedFromSnapshot(
     const restored = [];
     const rows = snapshot ?? [];
     for (const data of rows) {
-        // Default (level reload): fixed rows are level furniture rebuilt from
-        // level JSON. With includeFixed (sandbox rewind) they come back here.
-        if (!data || (!includeFixed && data.isFixed)) continue;
+        // Default (level reload): fixed AND anchored rows are level furniture
+        // rebuilt from level JSON — an anchored row (isFixed:false but
+        // player-immovable scene content, issue #67) must skip here too or the
+        // reload path would double-restore it beside the level rebuild. With
+        // includeFixed (sandbox rewind) they come back here.
+        if (!data || (!includeFixed && (data.isFixed || data.isAnchored))) continue;
         try {
             restored.push(registry.deserialize(data));
         } catch (e) {

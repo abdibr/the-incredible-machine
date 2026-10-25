@@ -202,6 +202,7 @@ export default class Balloon extends BaseObject {
         return new Balloon(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            isAnchored: data.isAnchored,
             customId: data.id,
             colorIndex: data.options?.colorIndex,
             bobPhase: data.options?.bobPhase, // restores the captured phase

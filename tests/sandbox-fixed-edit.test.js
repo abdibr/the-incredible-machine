@@ -119,7 +119,7 @@ describe('Renderer: the drawn + hit-tested set comes from the state-driven polic
         bucket = null;
     });
 
-    it('a movable part draws all four handles at their slots — in any posture', () => {
+    it('a movable part draws all five handles at their slots — in any posture', () => {
         bucket = mkPlacedBucket(300, 300);
         const b = bucket.bounds;
         for (const mode of ['SANDBOX', 'EDITING', 'MENU']) {
@@ -130,6 +130,7 @@ describe('Renderer: the drawn + hit-tested set comes from the state-driven polic
                 ['rotate', b.x + b.width + 14, b.y + b.height / 2],
                 ['delete', b.x - 14, b.y + b.height / 2],
                 ['pin', b.x + b.width / 2, b.y + b.height + 14],
+                ['anchor', b.x + b.width / 2, b.y + b.height + 32], // issue #67: fifth affordance, stacked below the pin
             ]);
         }
     });
@@ -147,6 +148,7 @@ describe('Renderer: the drawn + hit-tested set comes from the state-driven polic
             ['rotate', b.x + b.width + 14, b.y + b.height / 2],
             ['delete', b.x - 14, b.y + b.height / 2],
             ['pin', b.x + b.width / 2, b.y + b.height + 14],
+            ['anchor', b.x + b.width / 2, b.y + b.height + 32], // issue #67
         ]);
 
         // Every offered slot resolves to its own handle under the cursor...

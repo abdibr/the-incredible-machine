@@ -142,6 +142,7 @@ export default class Domino extends BaseObject {
         return new Domino(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            isAnchored: data.isAnchored,
             customId: data.id,
         });
     }

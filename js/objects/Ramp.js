@@ -152,6 +152,7 @@ export default class Ramp extends BaseObject {
         return new Ramp(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            isAnchored: data.isAnchored,
             customId: data.id,
             width: data.options?.width || RAMP_WIDTH,
         });

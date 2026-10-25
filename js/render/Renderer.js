@@ -14,6 +14,12 @@ import { ROPE_TOO_SHORT } from '../ui/ConnectFlow.js';
 import { selectionHandleSet } from '../ui/selectionHandles.js';
 
 /**
+ * The anchor color (issue #67): the handle dot and the field badge share it —
+ * violet, visibly distinct from the amber pin.
+ */
+const ANCHOR_COLOR = '#7a52c7';
+
+/**
  * Fixed on-canvas slots for the selection handles, relative to the part's
  * `bounds`: move above the bounds, rotate to its right, delete to its
  * left, pin below (the pin slot mirroring the move slot). The offered
@@ -25,6 +31,7 @@ const HANDLE_SLOTS = Object.freeze({
     rotate: (b) => [b.x + b.width + 14, b.y + b.height / 2],
     delete: (b) => [b.x - 14, b.y + b.height / 2],
     pin: (b) => [b.x + b.width / 2, b.y + b.height + 14],
+    anchor: (b) => [b.x + b.width / 2, b.y + b.height + 32], // stacked below the pin
 });
 
 class Renderer {
@@ -76,6 +83,7 @@ class Renderer {
             rotate: '#40c040',
             delete: '#e04040',
             pin: '#c98c1c',
+            anchor: ANCHOR_COLOR, // issue #67
         };
     }
 
@@ -199,6 +207,8 @@ class Renderer {
             }
         }
 
+        this._drawAnchorBadges(ctx, objs);
+
         // 4. Draw selection handles on the selected object (edit modes only)
         if (this.selectedObject && (this._mode === 'EDITING' || this._mode === 'SANDBOX')) {
             this._drawSelectionHandles(ctx, this.selectedObject);
@@ -300,7 +310,7 @@ class Renderer {
      * Get the selection handle hit at a canvas point.
      * @param {number} x
      * @param {number} y
-     * @returns {'move'|'rotate'|'delete'|'pin'|null}
+     * @returns {'move'|'rotate'|'delete'|'pin'|'anchor'|null}
      */
     getHandleAtPoint(x, y) {
         if (!this.selectedObject) return null;
@@ -415,6 +425,9 @@ class Renderer {
             // The pin handle (issue #66 follow-up): amber dot + pushpin —
             // click toggles the object's pinned state.
             else if (name === 'pin') ctx.fillText('📌', hx, hy);
+            // The anchor handle (issue #67): violet dot + anchor — click
+            // toggles the object's anchored state.
+            else if (name === 'anchor') ctx.fillText('⚓', hx, hy);
         }
 
         ctx.restore();
@@ -566,6 +579,39 @@ class Renderer {
         }
 
         ctx.restore();
+    }
+
+    /**
+     * The anchored-part badge (issue #67): a violet ⚓ dot at each anchored
+     * part's top-right bounds corner — the distinguishing field marker,
+     * visibly distinct from the amber 📌 pin affordance. Edit modes only
+     * (EDITING/SANDBOX): the author audits what Save will keep and the
+     * player sees which scenery refuses to move, while during play an
+     * anchored part is just a part.
+     * @private
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {BaseObject[]} objs
+     */
+    _drawAnchorBadges(ctx, objs) {
+        if (this._mode !== 'EDITING' && this._mode !== 'SANDBOX') return;
+        for (const obj of objs) {
+            if (!obj.isAnchored) continue;
+            const b = obj.bounds;
+            const cx = b.x + b.width;
+            const cy = b.y;
+            ctx.beginPath();
+            ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+            ctx.fillStyle = ANCHOR_COLOR;
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.font = 'bold 9px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#fff';
+            ctx.fillText('⚓', cx, cy);
+        }
     }
 
     /**

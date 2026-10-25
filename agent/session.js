@@ -16,6 +16,7 @@ import { objectRegistry } from '../js/objects/ObjectRegistry.js';
 import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
 import { GoalChecker } from '../js/goals/GoalChecker.js';
+import { levelObjectOptions } from '../js/ui/selectionHandles.js';
 import { EventRecorder } from './observe/events.js';
 
 /** Validate a level document — mirrors LevelManager._validate(). @private */
@@ -117,11 +118,7 @@ export class AgentSession {
         eventBus.emit('mode:changed', { oldMode: 'EDITING', newMode: 'PLAYING' });
         for (const d of this.levelData.fixedObjects) {
             try {
-                const obj = objectRegistry.create(d.type, d.x, d.y, {
-                    angle: d.angle || 0,
-                    isFixed: true,
-                    customId: d.id, // named id from level JSON (goal zone refs)
-                });
+                const obj = objectRegistry.create(d.type, d.x, d.y, levelObjectOptions(d));
                 this.engine.addObject(obj);
             } catch (e) {
                 console.warn(`[AgentSession] could not create fixed object: ${d.type}`, e);

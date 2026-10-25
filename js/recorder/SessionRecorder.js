@@ -439,6 +439,15 @@ export class SessionRecorder {
                     snapshot: obj ? this._serializeWithAttachments(obj) : null,
                 };
             }
+            case 'object:anchored': {
+                const obj = packet?.object;
+                return {
+                    ref: obj ? narrativeRef(obj.type, obj.id) : `?#${packet?.id ?? '?'}`,
+                    type: obj?.type ?? packet?.type ?? null,
+                    isAnchored: !!packet?.isAnchored,
+                    snapshot: obj ? this._serializeWithAttachments(obj) : null,
+                };
+            }
             case 'object:moved': {
                 const obj = this._findBoardObjectById(packet?.id);
                 return {

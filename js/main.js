@@ -20,6 +20,7 @@ import { editorPanel } from './ui/EditorPanel.js';
 import { dragDropManager } from './ui/DragDropManager.js';
 import { objectRegistry } from './objects/ObjectRegistry.js';
 import { beginPlay, restorePlacedFromSnapshot, resetSandboxBoard } from './reset/levelReset.js';
+import { levelObjectOptions } from './ui/selectionHandles.js';
 import { sessionRecorder } from './recorder/SessionRecorder.js';
 import { localMirrorStore } from './recorder/browser.js';
 
@@ -306,11 +307,7 @@ function _setupLevel(levelData) {
     if (levelData.fixedObjects) {
         for (const objData of levelData.fixedObjects) {
             try {
-                const obj = objectRegistry.create(objData.type, objData.x, objData.y, {
-                    angle: objData.angle || 0,
-                    isFixed: true,
-                    customId: objData.id, // named id from level JSON (goal zone refs)
-                });
+                const obj = objectRegistry.create(objData.type, objData.x, objData.y, levelObjectOptions(objData));
                 state.placedObjects.push(obj);
             } catch (e) {
                 console.warn(`[App] Could not create fixed object: ${objData.type}`, e);
