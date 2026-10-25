@@ -86,13 +86,24 @@ export function beginPlay(physics, placedObjects) {
  * @param {import('../objects/BaseObject.js').default[]} placedObjects — shared live board
  * @param {object[]|null} snapshot — serialized placed data (from beginPlay)
  * @param {import('../objects/ObjectRegistry.js').ObjectRegistry} [registry]
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeFixed=false] - also restore fixed rows. The
+ *   level-reload default leaves fixed objects to level JSON, but a full
+ *   sandbox rewind has cleared the whole board, so the snapshot rows are the
+ *   only source for parts the player pinned before playing (goal bucket,
+ *   scenery) — bug-20261025T193755Z, Bug B. Rows restore in snapshot order
+ *   either way, so the two-phase attachment-token bind stays ordinal-aligned.
  * @returns {import('../objects/BaseObject.js').default[]} restored instances
  */
-export function restorePlacedFromSnapshot(placedObjects, snapshot, registry = objectRegistry) {
+export function restorePlacedFromSnapshot(
+    placedObjects, snapshot, registry = objectRegistry, { includeFixed = false } = {}
+) {
     const restored = [];
     const rows = snapshot ?? [];
     for (const data of rows) {
-        if (!data || data.isFixed) continue; // fixed objects are rebuilt from level data
+        // Default (level reload): fixed rows are level furniture rebuilt from
+        // level JSON. With includeFixed (sandbox rewind) they come back here.
+        if (!data || (!includeFixed && data.isFixed)) continue;
         try {
             restored.push(registry.deserialize(data));
         } catch (e) {
@@ -142,12 +153,16 @@ export function resetSandboxBoard(physics, placedObjects, snapshot, registry = o
     physics?.clear();
 
     // Stale edit instances were already removed from (and disposed by) the
-    // physics clear above — just drop them from the board.
-    for (let i = placedObjects.length - 1; i >= 0; i--) {
-        if (!placedObjects[i].isFixed) {
-            placedObjects.splice(i, 1);
-        }
-    }
+    // physics clear above — drop them from the board. ALL of them, fixed
+    // included: a pinned part is not exempt from the clear, so leaving it on
+    // the board strands a disposed zombie — bodies nulled, its draw() crashing
+    // the frame and every edit affordance on it dead (bug-20261025T193755Z,
+    // Bug B: the sandbox goal bucket froze rendering and broke editing after
+    // a play/reset cycle). The play-start snapshot carries each part's pin
+    // (isFixed round-trips through serialize), so restoring the full board
+    // brings the pinned goal bucket back exactly as the player left it, fresh
+    // and fully editable.
+    placedObjects.length = 0;
 
-    return restorePlacedFromSnapshot(placedObjects, snapshot, registry);
+    return restorePlacedFromSnapshot(placedObjects, snapshot, registry, { includeFixed: true });
 }

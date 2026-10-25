@@ -11,6 +11,10 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
+import Matter from 'matter-js';
+
+const { Body } = Matter;
+
 let _nextId = 1;
 
 /**
@@ -135,6 +139,47 @@ export default class BaseObject {
 
     /** @returns {boolean} */
     get isFixed() { return this._isFixed; }
+
+    /**
+     * Pin-state setter — the editor's pin affordance (the 📌 selection handle
+     * or the P key, issue #66 follow-up) toggles a part between movable and
+     * fixed scene element. The value round-trips through serialize() like the
+     * constructor option does, so a pinned part lands in a saved level's
+     * fixedObjects and plays statically, exactly like level-JSON scenery.
+     *
+     * The flip must reach the bodies (bug-20261025T193755Z, Bug A). Bodies
+     * are created once — with `isStatic: this._isFixed` read at construction
+     * — so a part flagged after construction kept dynamic bodies: it fell or
+     * tensed during play while isFixed simultaneously barred the move /
+     * rotate / delete gates. Body.setStatic is the exact route Body.create's
+     * isStatic option takes (mass/inertia parked at Infinity/0, velocities
+     * reset), with one divergence ironed out for parity: setStatic parks
+     * every newly-static body at friction 1 and restitution 0, but a part
+     * born fixed keeps its optioned material (Body.create never touches those
+     * fields). So after the static flip the pre-pin material is re-applied
+     * from _original — a pinned part plays identically to its born-fixed
+     * twin. The isStatic guard leaves already-matching bodies untouched
+     * (setStatic early-continues those too). Subclasses needing companion
+     * updates on the flip (Bucket's welds) override this setter and delegate
+     * via super.
+     * @param {boolean} value
+     */
+    set isFixed(value) {
+        const fixed = !!value;
+        if (this._isFixed === fixed) return;
+        this._isFixed = fixed;
+        for (const body of this.bodies) {
+            if (!body || body.isStatic === fixed) continue;
+            Body.setStatic(body, fixed);
+            if (fixed && body._original) {
+                // Parity with born-fixed scenery: setStatic parks friction 1
+                // / restitution 0; the constructor path leaves both at the
+                // optioned values. Match it.
+                body.friction = body._original.friction;
+                body.restitution = body._original.restitution;
+            }
+        }
+    }
 
     /**
      * Get the bounding box of this object.

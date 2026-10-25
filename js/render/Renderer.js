@@ -164,11 +164,23 @@ class Renderer {
         // so drawing them keeps the limits of the play area visible.
         this._drawBoundaries(ctx, w, h);
 
-        // 3. Draw all placed objects
+        // 3. Draw all placed objects. Each object draws inside its own
+        // guard: one misbehaving part — e.g. a disposed-but-still-boarded
+        // zombie crashing on its nulled bodies, as the sandbox reset used to
+        // leave behind (bug-20261025T193755Z, Bug B) — must not kill the
+        // whole frame and, with it, every other object's paint. save/restore
+        // are bracketed in finally so a throwing draw cannot leak a
+        // transform/clip state that shifts all subsequent painting; the
+        // failure is logged, not swallowed silently.
         for (const obj of objs) {
             ctx.save();
-            obj.draw(ctx);
-            ctx.restore();
+            try {
+                obj.draw(ctx);
+            } catch (e) {
+                console.error(`[Renderer] draw failed for ${obj?.type ?? 'object'} #${obj?.id ?? '?'}:`, e);
+            } finally {
+                ctx.restore();
+            }
         }
 
         // 4. Draw selection handles on the selected object (edit modes only)

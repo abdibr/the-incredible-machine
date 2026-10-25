@@ -112,6 +112,42 @@ export default class Bucket extends BaseObject {
     }
 
     /**
+     * Pin sync (bug-20261025T193755Z): the BaseObject seam flips the flag and
+     * statics/restores the bodies; the welds are bucket-specific and follow
+     * here. Pinning drops live welds — static parts never move, and joints
+     * left behind would be construction-geometry ghosts when the bucket
+     * unpins later (weld() reads part positions at build time). Unpinning
+     * rebuilds them from the parts' CURRENT positions. The rebuild also
+     * serves buckets born fixed (level scenery, or a sandbox pin that
+     * round-tripped through a snapshot reset) whose weld set is empty by
+     * construction: the moment they become dynamic they must be welded
+     * containers, not four loose bodies (the pinwheel/fold bug). Bodies-null
+     * check: a disposed instance can no longer weld (and is off the board,
+     * so it never needs to).
+     * @param {boolean} value
+     */
+    /**
+     * Paired with the setter below: naming an accessor "isFixed" in this
+     * subclass hides BaseObject's getter - the prototype lookup stops at
+     * Bucket.prototype's set-only descriptor and every external read
+     * (renderer, panel, save flow, tests) would see undefined. The delegate
+     * keeps flag reads single-sourced through BaseObject.
+     * @returns {boolean}
+     */
+    get isFixed() { return super.isFixed; }
+
+    set isFixed(value) {
+        const wasFixed = this._isFixed;
+        super.isFixed = value;
+        if (this._isFixed === wasFixed || !this._leftWall) return;
+        if (this._isFixed) {
+            this._welds = [];
+        } else if (this._welds.length === 0) {
+            this._welds = this._buildWelds();
+        }
+    }
+
+    /**
      * Welds binding the bucket's four bodies into one rigid container
      * (issue 04; rigid scheme per ADR 0005 decision 12). Each body-to-body
      * joint is TWO zero-length constraints anchored at both ends of the
