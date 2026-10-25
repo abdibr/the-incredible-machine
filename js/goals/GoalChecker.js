@@ -18,7 +18,29 @@
 import { eventBus } from '../EventBus.js';
 
 /** The only goal type this checker implements (level JSON `goal.type`) */
-const ZONE_GOAL_TYPE = 'object_in_zone';
+export const ZONE_GOAL_TYPE = 'object_in_zone';
+
+/**
+ * Goal types the checker implements. The editor's Goal Type select offers
+ * exactly these as selectable choices (issue #66) — the other known types
+ * stay visible but disabled, so a selection can never silently produce a
+ * level that cannot be won. Expands alongside #43.
+ */
+export const IMPLEMENTED_GOAL_TYPES = Object.freeze([ZONE_GOAL_TYPE]);
+
+/**
+ * Every goal type the editor's Goal Type select knows (issue #66), with its
+ * implementation status. Single source for the select's option list: when
+ * #43 implements a type, GoalChecker.js flips its flag and the editor's
+ * select follows without another edit.
+ */
+export const KNOWN_GOAL_TYPES = Object.freeze([
+    { type: ZONE_GOAL_TYPE, implemented: true },
+    { type: 'pop_all_balloons', implemented: false },
+    { type: 'chain_complete', implemented: false },
+    { type: 'mouse_in_zone', implemented: false },
+    { type: 'custom', implemented: false },
+]);
 
 /**
  * The zone id EditorPanel hard-codes into custom levels' goals
@@ -47,6 +69,36 @@ export function stampGoalZoneIds(fixedObjects, zoneId = DEFAULT_GOAL_ZONE_ID) {
         }
     }
     return fixedObjects;
+}
+
+/**
+ * Resolve the object that plays a goal's win zone (issue #66).
+ *
+ * One resolver serves the editor's goal readout, the renderer's GOAL-zone
+ * marker and Save's zoneId choice, so the three can never disagree:
+ * - Zone-type goals (`object_in_zone`): the board object whose named id
+ *   matches `goal.zoneId` — exactly what GoalChecker._onCaught compares.
+ * - `stampFallback` (sandbox editing): when there is no explicit match,
+ *   the FIRST unnamed fixed bucket — the one stampGoalZoneIds will name
+ *   on the next Save. A null or unresolvable zone-type goal therefore
+ *   resolves to "the bucket Save would make the zone".
+ * - Foreign goal types have no zone and resolve to null.
+ * @param {Array<import('../objects/BaseObject.js').default>} objects - the
+ *        board (dragDropManager/renderer order defines "first")
+ * @param {object|null} goal - level JSON goal, or null (implied sandbox default)
+ * @param {{ stampFallback?: boolean }} [opts] - sandbox editing passes true
+ * @returns {object|null} the goal-zone object, or null when unresolvable
+ */
+export function resolveGoalZoneObject(objects, goal, { stampFallback = false } = {}) {
+    const zoneTypeGoal = goal?.type === ZONE_GOAL_TYPE;
+    if (zoneTypeGoal && goal.zoneId) {
+        const zone = objects.find((obj) => obj.customId === goal.zoneId);
+        if (zone) return zone;
+    }
+    if (stampFallback && (!goal || zoneTypeGoal)) {
+        return objects.find((obj) => obj.type === 'bucket' && obj.isFixed && obj.customId == null) ?? null;
+    }
+    return null;
 }
 
 export class GoalChecker {

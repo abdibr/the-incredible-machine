@@ -9,6 +9,7 @@
 import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
+import { resolveGoalZoneObject } from '../goals/GoalChecker.js';
 import { ROPE_TOO_SHORT } from '../ui/ConnectFlow.js';
 
 class Renderer {
@@ -32,6 +33,15 @@ class Renderer {
 
         /** Connect-flow board (ADR 0007 decision 2), injected via setConnectFlow */
         this._connectFlow = null;
+
+        /**
+         * Current level goal (level JSON `goal` field), tracked the same seam
+         * GoalChecker uses. Null in a goal-less sandbox (#63) — cleared on
+         * SANDBOX entry so the GOAL-zone marker marks what the next Save
+         * would stamp, never a stale zone from a previous visit (issue #66).
+         * @type {object|null}
+         */
+        this._goal = null;
 
         /** Cursor canvas position for hover-reveal squares (set by DragDropManager) */
         this.hoverPoint = null;
@@ -67,6 +77,18 @@ class Renderer {
             if (newMode === 'PLAYING' || newMode === 'PAUSED') {
                 this.selectedObject = null;
             }
+            if (newMode === 'SANDBOX') {
+                // Sandbox with no level load is goal-less (#63): drop a stale
+                // level goal so the GOAL-zone marker marks what the next Save
+                // would stamp, not a zone from a previous visit (issue #66).
+                this._goal = null;
+            }
+        });
+
+        // Track the current level goal for the GOAL-zone marker (issue #66) —
+        // the same level:loaded seam GoalChecker re-arms on.
+        eventBus.on('level:loaded', (levelData) => {
+            this._goal = levelData?.goal ?? null;
         });
 
         // Listen for object selection
@@ -160,6 +182,12 @@ class Renderer {
         if (this._mode === 'EDITING' || this._mode === 'SANDBOX') {
             this._drawRopeKnots(ctx, objs);
         }
+
+        // 4.6. Goal-zone marker (issue #66, edit modes only): highlight the
+        // object that plays the win zone — a loaded level's goal.zoneId
+        // bucket, or in sandbox the bucket Save would stamp. The drawer
+        // gates itself, so PLAY boards draw nothing.
+        this._drawGoalZoneMarker(ctx, objs);
 
         // 5. Draw drag ghost
         if (this._ghostObj && this.ghostState) {
@@ -489,6 +517,39 @@ class Renderer {
             ctx.fillText(ROPE_TOO_SHORT, refusal.x, refusal.y + 23);
         }
 
+        ctx.restore();
+    }
+
+    /**
+     * The GOAL-zone marker (issue #66): a dashed frame plus a "GOAL" caption
+     * around the object that plays the win zone, answering "reach the zone…
+     * what zone?" on the playfield itself. Two honest semantics:
+     * - a loaded level marks only the object matching `goal.zoneId` — what
+     *   GoalChecker can actually win on (nothing, if the zone is gone);
+     * - a goal-less sandbox (#63) marks the unnamed bucket the next Save
+     *   would stamp — the implied default zone.
+     * Edit modes (EDITING/SANDBOX) only, nothing in PLAY.
+     * @private
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {BaseObject[]} objs
+     */
+    _drawGoalZoneMarker(ctx, objs) {
+        if (this._mode !== 'EDITING' && this._mode !== 'SANDBOX') return;
+        const stampFallback = this._mode === 'SANDBOX' && !this._goal;
+        const zone = resolveGoalZoneObject(objs, this._goal, { stampFallback });
+        if (!zone) return;
+
+        const b = zone.bounds;
+        ctx.save();
+        ctx.strokeStyle = '#2f9e2f';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 4]);
+        ctx.strokeRect(b.x - 4, b.y - 4, b.width + 8, b.height + 8);
+        ctx.setLineDash([]);
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#2f9e2f';
+        ctx.fillText('GOAL', b.x + b.width / 2, b.y - 8);
         ctx.restore();
     }
 }
