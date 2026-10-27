@@ -1,5 +1,40 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-10-25 — Fixed bucket walls play their declared 0.3 friction (issue #72)
+
+A bucket born **fixed** — level-JSON scenery, or a sandbox pin that round-tripped through a
+snapshot restore — entered Matter with friction 1 on every wall/floor body instead of its
+declared 0.3. matter-js 0.20.0's `Body.setStatic` unconditionally parks friction 1 /
+restitution 0 over any body it flips static, and its `_original` stash is guarded by
+`if (!part.isStatic)` — and `Body.create` merges the `isStatic` option onto the body *before*
+that setter runs, so a born-static part keeps no stash and the declared friction dies with the
+park (the restitution twin of this is the trampoline, bug-20261023T174706Z-0oca; the ramp
+landed the same fix for friction). Pair friction blends at min(the two live frictions), so a
+wall parked at 1 can never be the slippier side of its own pair: a friction-0.5 tennis ball
+skidded inside the fixed goal bucket — intended pair 0.3, measured 0.5. A bucket **pinned at
+runtime** kept 0.3 via `BaseObject`'s `isFixed` seam (re-applying the late flip's stash), so
+the two "fixed" flavors played differently — the opposite of what the seam comment claimed.
+
+- **`js/objects/Bucket.js`** — the walls/floor surface material gets a named constant
+  `BUCKET_SURFACE_FRICTION` (0.3, referenced by all three body options) and is re-asserted
+  right after body creation — the established Trampoline/Ramp pattern for the same setStatic
+  behavior. No-op for dynamic parts; the catch sensor is deliberately untouched (sensors
+  exert no physical force, so surface material is dead weight).
+- **`js/objects/BaseObject.js`** — comment-only: the `isFixed`-seam JSDoc and the `_original`
+  re-apply note no longer claim a part born fixed *keeps* its optioned material
+  ("Body.create never touches those fields", "setStatic early-continues"). Measured reality:
+  born-static bodies are parked with no stash; only a late flip on a dynamic body stashes;
+  and the seam's own `body.isStatic === fixed` guard is what keeps setStatic away from
+  already-static bodies (whose re-park would otherwise wipe a re-asserted material).
+- **Tests (`tests/bucket-material.test.js`, new — 3 tests)** — born-fixed seam: walls/floor
+  at friction 0.3, matched by body label; parity: a pinned bucket plays exactly what a
+  born-fixed twin plays (plus the movable-bucket no-op); behavioral: a friction-0.5 tennis
+  ball dropped into a born-fixed bucket resolves its physical surface pair (`engine.pairs`)
+  at exactly 0.3, not the visitor's 0.5. Pre-fix all three failed (pair measured 0.5).
+- ADR 0006 replay invariant: the only committed bugfile, `tests/fixtures/bugfiles/ball-drop-ramp.json`
+  (ramp, no buckets), replays bit-exact — 6 events / 40 pose rows, replay-bugfile exit 0.
+- Full suite: **49 files / 559 tests, all green** (baseline for this change: 48/556).
+
 ## 2026-10-25 — Anchored part: pre-placed, player-immovable, still dynamic at play (issue #67)
 
 The author could pin scenery play-static (`isFixed`) or leave parts free, but a pre-placed ball that must *fall* while staying player-immovable had no state: a saved level kept only pinned parts, so the pre-placed ball was either static or silently dropped from the save. #67 lands the third part state, the **anchored part**, on the #68 selection-handle integration surface:
