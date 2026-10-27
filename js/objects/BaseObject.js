@@ -162,15 +162,25 @@ export default class BaseObject {
      * tensed during play while isFixed simultaneously barred the move /
      * rotate / delete gates. Body.setStatic is the exact route Body.create's
      * isStatic option takes (mass/inertia parked at Infinity/0, velocities
-     * reset), with one divergence ironed out for parity: setStatic parks
-     * every newly-static body at friction 1 and restitution 0, but a part
-     * born fixed keeps its optioned material (Body.create never touches those
-     * fields). So after the static flip the pre-pin material is re-applied
-     * from _original — a pinned part plays identically to its born-fixed
-     * twin. The isStatic guard leaves already-matching bodies untouched
-     * (setStatic early-continues those too). Subclasses needing companion
-     * updates on the flip (Bucket's welds) override this setter and delegate
-     * via super.
+     * reset), with one matter-js sharp edge this seam works around:
+     * setStatic unconditionally parks every body it flips at friction 1 and
+     * restitution 0, and the `_original` stash of the pre-flip material is
+     * guarded by `if (!part.isStatic)` — a body born static (the option is
+     * merged onto it before the flip) keeps no stash, so its declared
+     * friction is discarded with nothing to restore from (gh issue #72: a
+     * born-fixed bucket played friction 1). This seam's late flips are
+     * different: dynamic bodies still carry their declared material, the
+     * stash lands, and the re-apply below returns the pinned part to the
+     * material it played unpinned. Material-declaring classes also re-assert
+     * that material after body creation (Trampoline.js / Ramp.js / Bucket.js
+     * after their own born-static flips), so their parts play the declared
+     * material in BOTH fixed flavors; classes that declare no surface
+     * material simply keep whatever the park leaves. The
+     * `body.isStatic === fixed` guard below is load-bearing twice: it skips
+     * matching bodies cheaply, and it keeps setStatic away from an
+     * already-static body whose re-park would wipe a re-asserted material
+     * back to friction 1. Subclasses needing companion updates on the flip
+     * (Bucket's welds) override this setter and delegate via super.
      * @param {boolean} value
      */
     set isFixed(value) {
@@ -184,9 +194,10 @@ export default class BaseObject {
             if (!body || body.isStatic === fixed) continue;
             Body.setStatic(body, fixed);
             if (fixed && body._original) {
-                // Parity with born-fixed scenery: setStatic parks friction 1
-                // / restitution 0; the constructor path leaves both at the
-                // optioned values. Match it.
+                // The park above wrote friction 1 / restitution 0 over the
+                // body's live material; _original holds the pre-flip values
+                // the class declared. Re-apply them, so a pinned part plays
+                // the material it played unpinned (no friction-1 park).
                 body.friction = body._original.friction;
                 body.restitution = body._original.restitution;
             }
