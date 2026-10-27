@@ -3,6 +3,11 @@
  *
  * Renders a grid of level cards into #level-select-overlay showing
  * level number, name, difficulty stars, lock/unlock state, and completion.
+ *
+ * Import (issue #70): an "Import custom level" action picks a JSON file
+ * saved from the sandbox (Save Level) and opens it as a PLAYER — level
+ * solving, never the sandbox. The saved level is validated first; broken
+ * files report an inline error at level select instead of switching modes.
  */
 
 import { eventBus } from '../EventBus.js';
@@ -16,6 +21,12 @@ class LevelSelect {
 
         /** @type {HTMLElement} */
         this.overlayContainer = null;
+
+        /** @type {HTMLElement|null} the inline import-error line (issue #70) */
+        this._importErrorEl = null;
+
+        /** @type {string} the last import error — a re-render re-shows it */
+        this._lastImportError = '';
     }
 
     /**
@@ -68,6 +79,79 @@ class LevelSelect {
 
     // ── Private ──────────────────────────────────
 
+    /**
+     * File picked → read it as text and hand the JSON string to
+     * _importCustomLevelText (issue #70). The input resets after every
+     * read so re-selecting the same file fires change again.
+     * @param {Event} e - the hidden file input's change event
+     * @private
+     */
+    _onImportFileSelected(e) {
+        const input = e.target;
+        const file = input && input.files && input.files[0];
+        if (!file) return;
+        this._clearImportError();
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                this._importCustomLevelText(String(reader.result));
+            } finally {
+                input.value = '';
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    /**
+     * The import seam (issue #70): parse, validate, and open a saved custom
+     * level as a PLAYER. Follows the level-card flow exactly — hide level
+     * select, install the level (which emits level:loaded: the board builds
+     * with fixed furniture per levelObjectOptions, the toolbox receives the
+     * authored availableParts as the session palette, the header gains name
+     * + goal), then setMode(EDITING) — the same level-solving posture a
+     * campaign card gives. Never the sandbox: opening a saved level here is
+     * playing it, not authoring it. Failure refuses the mode switch and
+     * reports an inline error at level select instead.
+     * @param {string} text - the picked file's text
+     * @returns {object|null} the imported level JSON, or null when refused
+     * @private
+     */
+    _importCustomLevelText(text) {
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            this._showImportError('Could not import level: the file is not valid JSON.');
+            return null;
+        }
+        try {
+            levelManager.validateCustom(data); // throws with a readable reason
+        } catch (e) {
+            this._showImportError(`Could not import level: ${e.message}`);
+            return null;
+        }
+        this.hide();
+        levelManager.loadCustom(data);
+        setMode(AppMode.EDITING);
+        return data;
+    }
+
+    _showImportError(message) {
+        this._lastImportError = message;
+        if (this._importErrorEl) {
+            this._importErrorEl.textContent = message;
+            this._importErrorEl.style.display = 'block';
+        }
+    }
+
+    _clearImportError() {
+        this._lastImportError = '';
+        if (this._importErrorEl) {
+            this._importErrorEl.textContent = '';
+            this._importErrorEl.style.display = 'none';
+        }
+    }
+
     _render(levels) {
         this.container.innerHTML = '';
 
@@ -110,6 +194,33 @@ class LevelSelect {
             setMode(AppMode.SANDBOX);
         });
         this.container.appendChild(sandboxBtn);
+
+        // Import a saved custom level and open it as a player (issue #70)
+        this._importErrorEl = document.createElement('div');
+        this._importErrorEl.style.cssText = `
+            margin-top: 12px;
+            font-size: 13px;
+            color: #c0392b;
+            display: ${this._lastImportError ? 'block' : 'none'};
+        `;
+        this._importErrorEl.textContent = this._lastImportError || '';
+        this.container.appendChild(this._importErrorEl);
+
+        const importBtn = document.createElement('button');
+        importBtn.className = 'btn btn-primary';
+        importBtn.textContent = '📥 Import custom level';
+        importBtn.style.cssText = 'font-size: 15px; padding: 10px 24px; margin-top: 8px;';
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.json,application/json';
+        fileInput.style.display = 'none';
+        fileInput.addEventListener('change', (e) => this._onImportFileSelected(e));
+        importBtn.addEventListener('click', () => {
+            this._clearImportError();
+            fileInput.click();
+        });
+        this.container.appendChild(importBtn);
+        this.container.appendChild(fileInput);
     }
 
     _createLevelCard(level) {

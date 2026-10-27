@@ -87,12 +87,34 @@ class LevelManager {
      * the current level) and reset (`_resetLevel` reads `getCurrentLevel()`)
      * observe the data actually on screen — a direct bus emit left
      * `_currentLevel` pointing at the previous puzzle.
+     * The player path (LevelSelect import, issue #70) goes through
+     * validateCustom() first; the sandbox editor import stays lenient so a
+     * broken save can still be opened for repair.
      * @param {object} data - arbitrary level data (validated upstream)
      * @returns {object} the same data
      */
     loadCustom(data) {
         this._currentLevel = data;
         eventBus.emit('level:loaded', data);
+        return data;
+    }
+
+    /**
+     * Validate a custom level's JSON without installing it (issue #70).
+     *
+     * The player-facing import path (LevelSelect → open as player) checks
+     * before it opens: a broken or truncated save must be refused with a
+     * readable message at level select, never partially built on the board.
+     * Deliberately the same `_validate` the campaign loader runs, so a saved
+     * level and a shipped level answer to the identical schema. (The sandbox
+     * editor's own import stays lenient on purpose — it must be able to open
+     * broken files for repair.)
+     * @param {object} data - parsed custom level JSON
+     * @returns {object} the same data, on success
+     * @throws {Error} with a readable message on the first schema violation
+     */
+    validateCustom(data) {
+        this._validate(data);
         return data;
     }
 

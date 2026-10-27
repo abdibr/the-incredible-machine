@@ -100,6 +100,41 @@ export function resolveGoalZoneObject(objects, goal, { stampFallback = false } =
     }
     return null;
 }
+/**
+ * Say a goal in plain language (issue #70).
+ *
+ * One sentence builder serves the editor's goal readout and the player
+ * header's goal line (level solving shows the level name + goal), so both
+ * can never drift apart or promise a win the checker does not keep.
+ * Built on the same resolver above:
+ * - An implemented zone goal that resolves on the board says "get the X into
+ *   the bucket marked GOAL on the field" — the renderer draws that marker in
+ *   every posture that displays the sentence.
+ * - An implemented zone goal whose zoneId matches nothing on the board says
+ *   so honestly (no marker will be drawn either).
+ * - Unimplemented goal types (imported levels) say they cannot be won yet.
+ * - `sandboxFallback` keeps the editor's save-posture semantics: describe
+ *   "the bucket the next Save would stamp" instead of a dead zoneId.
+ * @param {object|null} goal - level JSON goal, or null (no goal)
+ * @param {Array<import('../objects/BaseObject.js').default>} objects - the
+ *        board (same order the resolver's "first" means)
+ * @param {{ sandboxFallback?: boolean }} [opts] - sandbox editing passes true
+ * @returns {string} a plain-language sentence fragment (no trailing period)
+ */
+export function goalSentence(goal, objects, { sandboxFallback = false } = {}) {
+    if (!goal) return 'no goal';
+    if (!IMPLEMENTED_GOAL_TYPES.includes(goal.type)) {
+        return `"${goal.type.replace(/_/g, ' ')}" is not implemented yet — a saved level with this goal cannot be won`;
+    }
+    const target = `the ${goal.targetType || 'ball'}`;
+    const zone = resolveGoalZoneObject(objects, goal, { stampFallback: sandboxFallback });
+    if (!zone) {
+        return sandboxFallback
+            ? `get ${target} into the goal zone — but no bucket on the board can be the goal zone, so the saved level cannot be won`
+            : `get ${target} into the goal zone "${goal.zoneId}" — but that zone matches nothing on the board, so this session cannot reach the goal`;
+    }
+    return `get ${target} into the bucket marked GOAL on the field`;
+}
 
 export class GoalChecker {
     constructor() {

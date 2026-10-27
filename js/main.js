@@ -14,7 +14,7 @@ import { toolbox } from './ui/Toolbox.js';
 import { playControls } from './ui/PlayControls.js';
 import { levelManager } from './levels/LevelManager.js';
 import { goalOverlay } from './ui/GoalOverlay.js';
-import { goalChecker } from './goals/GoalChecker.js';
+import { goalChecker, goalSentence } from './goals/GoalChecker.js';
 import { levelSelect } from './ui/LevelSelect.js';
 import { editorPanel } from './ui/EditorPanel.js';
 import { palettePanel } from './ui/PalettePanel.js';
@@ -68,6 +68,14 @@ const state = {
 export function setMode(newMode) {
     const oldMode = state.mode;
     state.mode = newMode;
+    // Entering the sandbox drops the header goal line (issue #70): a fresh
+    // sandbox has no win/lose until a level is loaded (issue #63 posture),
+    // and the editor panel's readout is the goal truth there. Player
+    // sessions (level solving from a campaign card or an imported custom
+    // level) keep the goal line through EDITING/PLAYING/PAUSED/WON.
+    if (newMode === AppMode.SANDBOX) {
+        clearHeaderGoal();
+    }
     eventBus.emit('mode:changed', { oldMode, newMode });
     console.log(`[App] Mode: ${oldMode} → ${newMode}`);
 }
@@ -78,6 +86,47 @@ export function setMode(newMode) {
  */
 export function getMode() {
     return state.mode;
+}
+
+/**
+ * Update the header readout for a loaded level — the level name and, since
+ * issue #70, a plain-language goal line. Exported separately from the
+ * level:loaded wiring so the header slice is unit-testable without a full
+ * DOM boot (the same way wireSpeedControl is). The sentence comes from the
+ * shared goalSentence() — the same truth the editor's goal readout uses —
+ * resolved against the freshly built board, so a goal zone that matches
+ * nothing on the field is said out loud here too.
+ * @param {object|null} levelData - the loaded level JSON
+ * @param {Array<import('./objects/BaseObject.js').default>} [objects] - the
+ *        freshly built board (fixed furniture + restored parts)
+ * @returns {{ name: string, goal: string }} what the header now shows
+ */
+export function setHeaderLevel(levelData, objects = []) {
+    const name = levelData?.name ? String(levelData.name) : '';
+    const goal = levelData?.goal
+        ? `🎯 Goal: ${goalSentence(levelData.goal, objects)}.`
+        : '';
+    const levelNameEl = document.getElementById('level-name');
+    if (levelNameEl) {
+        levelNameEl.textContent = name;
+    }
+    const goalEl = document.getElementById('goal-name');
+    if (goalEl) {
+        goalEl.textContent = goal;
+    }
+    return { name, goal };
+}
+
+/**
+ * Clear the header goal line (sandbox entry — issue #63 posture: sandbox
+ * play has no win/lose until a level is loaded; see setMode).
+ * @private
+ */
+function clearHeaderGoal() {
+    const goalEl = document.getElementById('goal-name');
+    if (goalEl) {
+        goalEl.textContent = '';
+    }
 }
 
 /**
@@ -266,11 +315,11 @@ function _wireEvents() {
         state.currentLevelId = levelData.id;
         _setupLevel(levelData);
 
-        // Update the level name in the header
-        const levelNameEl = document.getElementById('level-name');
-        if (levelNameEl) {
-            levelNameEl.textContent = `${levelData.name}`;
-        }
+        // Update the header: level name + a plain-language goal line
+        // (issue #70). The sentence resolves against the freshly built
+        // board — the same goalSentence() the editor's readout uses, so a
+        // zone that matches nothing on the board is said out loud here too.
+        setHeaderLevel(levelData, state.placedObjects);
     });
 
     // Next level
