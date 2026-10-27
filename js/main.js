@@ -17,9 +17,13 @@ import { goalOverlay } from './ui/GoalOverlay.js';
 import { goalChecker } from './goals/GoalChecker.js';
 import { levelSelect } from './ui/LevelSelect.js';
 import { editorPanel } from './ui/EditorPanel.js';
+import { palettePanel } from './ui/PalettePanel.js';
 import { dragDropManager } from './ui/DragDropManager.js';
 import { objectRegistry } from './objects/ObjectRegistry.js';
-import { beginPlay, restorePlacedFromSnapshot, resetSandboxBoard } from './reset/levelReset.js';
+import { beginPlay, restorePlacedFromSnapshot, resetSandboxBoard, resetReturnPosture } from './reset/levelReset.js';
+import { levelObjectOptions } from './ui/selectionHandles.js';
+import { sessionRecorder } from './recorder/SessionRecorder.js';
+import { localMirrorStore } from './recorder/browser.js';
 
 // ──────────────────────────────────────────────
 // Application Modes
@@ -43,6 +47,14 @@ const state = {
     placedObjects: [],
     /** Saved snapshot of placed objects for reset */
     _savedPlacedSnapshot: [],
+    /**
+     * The posture the current/last run was born in (issue #71): recorded at
+     * controls:play so the reset path can return to it — a sandbox-born run
+     * re-enters the sandbox even though a loaded level sets a level id.
+     * Null before the first play (the fallback then decides from the level
+     * id — the historical heuristic).
+     */
+    _runOriginPosture: null,
     /** @type {PhysicsEngine|null} */
     physicsEngine: null,
     /** @type {GameLoop|null} */
@@ -150,8 +162,41 @@ function init() {
     // 8. Editor Panel
     editorPanel.init();
 
-    // 9. Drag-and-Drop (after Renderer + Toolbox)
+    // 9. Parts Palette panel (issue #69) — the parts palette lives in its
+    //    own floating panel (separate from the editor panel, same collapse/
+    //    move header chrome); EditorPanel delegates save/load/offers to it.
+    palettePanel.init();
+
+    // 10. Drag-and-Drop (after Renderer + Toolbox)
     dragDropManager.init(state.placedObjects);
+    // The renderer paints the click-to-connect squares from the same flow
+    // instance the drag-drop handler delegates square clicks to
+    // (ADR 0007 decision 2).
+    renderer.setConnectFlow(dragDropManager.connectFlow);
+    // Fixed-end tie pulls clamp to the same world as the physics engine's
+    // boundary walls (ADR 0007 decision 4): a pulled target must never be
+    // parked inside a wall. Same dims the engine was constructed with.
+    dragDropManager.connectFlow.setPlayfield(state.physicsEngine.width, state.physicsEngine.height);
+
+    // 11. Session bug-file recorder (ADR 0006) — always-on in SANDBOX;
+    //     the Editor panel surfaces export / recovery for it.
+    sessionRecorder.init({
+        getBoard: () => state.placedObjects,
+        getSnapshot: () => (state._savedPlacedSnapshot.length > 0 ? state._savedPlacedSnapshot : null),
+        getEngine: () => state.physicsEngine?.engine ?? null,
+        getPlayfield: () => (state.physicsEngine
+            ? { width: state.physicsEngine.width, height: state.physicsEngine.height }
+            : null),
+        getEngineInfo: () => (state.physicsEngine
+            ? {
+                gravityX: state.physicsEngine.engine.gravity.x,
+                gravityY: state.physicsEngine.engine.gravity.y,
+                enableSleeping: state.physicsEngine.engine.enableSleeping,
+            }
+            : null),
+        mirrorStore: localMirrorStore(),
+    });
+    window.addEventListener('beforeunload', () => sessionRecorder.flushMirror());
 
     // ── Wire up mode transition events ──
     _wireEvents();
@@ -179,6 +224,10 @@ function _wireEvents() {
             // (GameLoop.play() takes the physics snapshot when STOPPED)
             if (mode === 'EDITING' || mode === 'SANDBOX') {
                 state._savedPlacedSnapshot = beginPlay(state.physicsEngine, state.placedObjects);
+                // Record the posture this run was born in: the reset path
+                // returns to it, not to a mode guessed from the level id —
+                // the sandbox Load Level path installs an id too (issue #71).
+                state._runOriginPosture = mode;
             }
             // Stop renderer's own loop — GameLoop will drive rendering
             renderer.stopLoop();
@@ -276,11 +325,7 @@ function _setupLevel(levelData) {
     if (levelData.fixedObjects) {
         for (const objData of levelData.fixedObjects) {
             try {
-                const obj = objectRegistry.create(objData.type, objData.x, objData.y, {
-                    angle: objData.angle || 0,
-                    isFixed: true,
-                    customId: objData.id, // named id from level JSON (goal zone refs)
-                });
+                const obj = objectRegistry.create(objData.type, objData.x, objData.y, levelObjectOptions(objData));
                 state.placedObjects.push(obj);
             } catch (e) {
                 console.warn(`[App] Could not create fixed object: ${objData.type}`, e);
@@ -296,9 +341,12 @@ function _setupLevel(levelData) {
  * Reset the current level — rebuild the board for edit mode.
  *
  * The player's machine survives: player-placed objects are restored from
- * the snapshot taken at the start of the last play (parts return to their
- * edit positions; their bodies are re-added on the next play). Fixed
- * objects are always rebuilt from the level data.
+ * the snapshot taken at the start of the last play. The app returns to the
+ * posture the run was born in (issue #71): a sandbox-born run rewinds to
+ * its play-start board and re-enters the sandbox — the sandbox Load Level
+ * path installs a level id too, so id presence cannot decide the posture —
+ * and a campaign-born run rebuilds the level and returns to campaign
+ * editing.
  */
 function _resetLevel() {
     const levelData = levelManager.getCurrentLevel();
@@ -306,7 +354,12 @@ function _resetLevel() {
     // Capture before _setupLevel() replaces the snapshot on board rebuild
     const savedPlacedSnapshot = state._savedPlacedSnapshot;
 
-    if (levelData) {
+    // The posture this run was born in, recorded at controls:play (issue
+    // #71); without a record (unreachable in practice) the historical
+    // level-id heuristic decides.
+    const returnPosture = resetReturnPosture(state._runOriginPosture, levelData);
+
+    if (returnPosture === AppMode.EDITING) {
         _setupLevel(levelData);
 
         // Restore the player's parts from the placed snapshot (bodies
@@ -316,12 +369,15 @@ function _resetLevel() {
 
         // Determine which mode to return to
         if (previousMode === 'WON' || previousMode === 'PLAYING' || previousMode === 'PAUSED') {
-            setMode(state.currentLevelId ? AppMode.EDITING : AppMode.SANDBOX);
+            setMode(AppMode.EDITING);
         }
     } else {
-        // Sandbox mode — rewind to the last play-start board (decided
+        // Sandbox run — rewind to the last play-start board (decided
         // semantic: reset never destroys a sandbox; without a prior play
-        // there is nothing to rewind to, so the sandbox is left untouched)
+        // there is nothing to rewind to, so the sandbox is left untouched).
+        // The play-start snapshot IS the board: a loaded level's fixed
+        // content round-trips inside it, so the stop re-enters the sandbox
+        // exactly as the run found it (issue #71).
         resetSandboxBoard(state.physicsEngine, state.placedObjects, savedPlacedSnapshot);
         setMode(AppMode.SANDBOX);
     }

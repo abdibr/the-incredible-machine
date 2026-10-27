@@ -1,0 +1,1746 @@
+{
+  "database": "The Incredible Machine — original DOS mechanics catalog",
+  "scope": {
+    "game": "The Incredible Machine",
+    "platform": "DOS",
+    "version_policy": "Exclude sequel-only objects and rules",
+    "normal_parts_count_reported_by_parts_reference": 45,
+    "special_date_parts_count": 4
+  },
+  "evidence_levels": {
+    "documented": "Explicitly described in the original-game parts reference or original-game manual",
+    "demonstrated": "Used in a described solution in the original-game walkthrough",
+    "inferred": "A possible causal chain derived from documented rules; not independently verified as a specific interaction",
+    "unverified": "Insufficient evidence; do not assume the rule"
+  },
+  "schema": {
+    "objects": {
+      "id": "stable snake_case identifier",
+      "name": "canonical object name",
+      "category": "physics | lever | transmission | rope | electrical | light_fire | projectile | container | animal | terrain | seasonal",
+      "gravity": "normal | inverted | none",
+      "trigger_conditions": [
+        "events that activate the object"
+      ],
+      "effects": [
+        "state changes or outputs"
+      ],
+      "can_affect": [
+        "known target classes or objects"
+      ],
+      "limitations": [
+        "documented constraints"
+      ],
+      "evidence_level": "documented | demonstrated | inferred | unverified",
+      "source_ids": [
+        "source identifiers below"
+      ]
+    },
+    "interactions": {
+      "id": "stable identifier",
+      "source_object": "object id or event id",
+      "relation": "hits | activates | cuts | pulls | restrains | powers | illuminates | ignites | launches | moves | frightens | attracts | breaks | redirects",
+      "target_object": "object id or state",
+      "preconditions": [
+        "necessary geometry, power, or state"
+      ],
+      "result": "effect",
+      "evidence_level": "documented | demonstrated | inferred | unverified",
+      "source_ids": [
+        "source identifiers below"
+      ]
+    },
+    "chains": {
+      "id": "stable identifier",
+      "steps": [
+        "ordered interaction IDs or descriptions"
+      ],
+      "status": "demonstrated | plausible_inference",
+      "notes": "layout-sensitive conditions"
+    }
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "title": "The Incredible Machine (game)/Parts",
+      "url": "https://the-incredible-machine.fandom.com/wiki/The_Incredible_Machine_(game)/Parts",
+      "type": "community-maintained parts reference scoped to the original game",
+      "use": "Inventory, object descriptions, connection rules"
+    },
+    {
+      "id": "S2",
+      "title": "The Incredible Machine Walkthrough by Fairlight PC/USA-DoX",
+      "url": "https://www.justadventure.com/walkthrough/incredible/",
+      "type": "original-game walkthrough",
+      "use": "Worked puzzle chains and contextual confirmation of mechanics"
+    },
+    {
+      "id": "S3",
+      "title": "Sierra Help Pages — The Incredible Machine series manuals",
+      "url": "https://sierrahelp.com/Documents/Manuals.html",
+      "type": "manual index",
+      "use": "Locating the original manual; verify exact edition before attributing a rule"
+    }
+  ],
+  "objects": [
+    {
+      "id": "bowling_ball",
+      "name": "Bowling Ball",
+      "category": "physics",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Falls under gravity; moves after impact"
+      ],
+      "effects": [
+        "Heavy ball; can strike and trigger movable mechanisms"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Yes; weight/impact strength is qualitative, not numerically specified"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "basketball",
+      "name": "Basketball",
+      "category": "physics",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Falls, rolls and collides"
+      ],
+      "effects": [
+        "Lighter and bouncier than bowling ball; can be transported by conveyor and bounce on trampoline"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Trajectory depends on placement and collisions"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "cannonball",
+      "name": "Cannonball",
+      "category": "physics",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Falls under gravity; can be launched by cannon"
+      ],
+      "effects": [
+        "Heaviest listed ball; does not bounce normally"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Cannon-launched state differs from a free fall"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "baseball",
+      "name": "Baseball",
+      "category": "physics",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Falls, rolls and collides"
+      ],
+      "effects": [
+        "Small/light; can trigger parts and be transported"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Low bounce relative to tennis/basketball"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "tennis_ball",
+      "name": "Tennis Ball",
+      "category": "physics",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Falls, rolls and collides"
+      ],
+      "effects": [
+        "Very light and very bouncy"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Exact bounce height is not specified"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "balloon",
+      "name": "Balloon",
+      "category": "physics",
+      "gravity": "inverted",
+      "trigger_conditions": [
+        "Rises under inverse gravity; can be moved by airflow"
+      ],
+      "effects": [
+        "Can be popped by bullet, closing scissors, or turning gear"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Rope can restrain/attach it; geometry and gear contact matter"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "teeter_totter",
+      "name": "Teeter-Totter",
+      "category": "lever",
+      "gravity": "none",
+      "trigger_conditions": [
+        "One side is pressed or pulled"
+      ],
+      "effects": [
+        "Opposite side moves; can translate impact to movement and rope pull"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Requires correct placement and contact/attachment"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "bellows",
+      "name": "Bellows",
+      "category": "lever",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Pressed from above or below"
+      ],
+      "effects": [
+        "Produces airflow; can move balloons and turn windmills"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Air direction/placement matters"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "boxing_glove",
+      "name": "Boxing Glove",
+      "category": "lever",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Button on one side is pressed"
+      ],
+      "effects": [
+        "Punches object in front"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Target must be in front and within reach"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "trampoline",
+      "name": "Trampoline",
+      "category": "physics",
+      "gravity": "none",
+      "trigger_conditions": [
+        "A moving object lands on it"
+      ],
+      "effects": [
+        "Bounces object; preserves horizontal movement"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Placement and height affect whether target is reached"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "fan_belt",
+      "name": "Fan Belt",
+      "category": "transmission",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Connected rotating part is powered"
+      ],
+      "effects": [
+        "Transfers rotational energy between connected parts"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Limited stretch distance; not a rope; scissors cannot cut it"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "gear",
+      "name": "Gear",
+      "category": "transmission",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Rotational power arrives through belt or adjacent meshed gear"
+      ],
+      "effects": [
+        "Rotates; adjacent meshed gear rotates in opposite direction; turning gear can pop balloon"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Gears must be correctly adjacent/meshed"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "conveyor_belt",
+      "name": "Conveyor Belt",
+      "category": "transmission",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Rotational power is supplied"
+      ],
+      "effects": [
+        "Moves objects touching its upper or lower surface; underside moves opposite direction"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Object must touch belt; orientation/direction matters"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "jack_in_the_box",
+      "name": "Jack-in-the-Box",
+      "category": "transmission",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Receives sufficient rotation through fan belt"
+      ],
+      "effects": [
+        "Pops up and launches objects above; can shatter fishbowl"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Needs adequate rotation and correct object placement"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "windmill",
+      "name": "Windmill",
+      "category": "transmission",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Nearby fan or bellows supplies airflow"
+      ],
+      "effects": [
+        "Converts airflow into rotational power"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Must be within effective airflow; direction can be configured"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "rope",
+      "name": "Rope",
+      "category": "rope",
+      "gravity": "none",
+      "trigger_conditions": [
+        "One endpoint moves or a connected object pulls"
+      ],
+      "effects": [
+        "Transfers translational pulling force; can restrain, suspend or actuate"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Longer reach than fan belt; only compatible attachment points; can be cut"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "metal_loop_hook",
+      "name": "Metal Loop / Hook",
+      "category": "rope",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Rope is attached during construction"
+      ],
+      "effects": [
+        "Provides fixed anchor for rope"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Stationary; does not itself supply force"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "pulley",
+      "name": "Pulley",
+      "category": "rope",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Rope is routed through it during construction"
+      ],
+      "effects": [
+        "Redirects rope's pulling direction"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Rope must be explicitly routed through pulley"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "gun",
+      "name": "Revolver / Gun",
+      "category": "projectile",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Trigger is pulled by rope/translational movement"
+      ],
+      "effects": [
+        "Fires bullet in facing direction; bullet can push items, pop balloons, shatter fishbowl and scare cat"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Trigger direction and gun orientation matter"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "scissors",
+      "name": "Scissors",
+      "category": "lever",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Struck/pushed from above or below"
+      ],
+      "effects": [
+        "Closes; cuts rope in its blades; can pop balloon"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Cannot cut fan belt"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "switched_outlet",
+      "name": "Outlet with Switch",
+      "category": "electrical",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Switch is toggled on"
+      ],
+      "effects": [
+        "Supplies electrical power continuously while on"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Can be toggled off; appliance must be connected/near enough"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "generator",
+      "name": "Generator",
+      "category": "electrical",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Receives rotational power through fan belt"
+      ],
+      "effects": [
+        "Produces electrical power"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Requires belt-driven rotation and electrical connection to load"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "solar_outlet",
+      "name": "Light-powered Outlet / Solar Panel Outlet",
+      "category": "electrical",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Receives nearby light"
+      ],
+      "effects": [
+        "Produces electrical power"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Requires suitable light source and placement"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "fan",
+      "name": "Fan",
+      "category": "electrical",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Receives electrical power"
+      ],
+      "effects": [
+        "Blows movable items; extinguishes lit candles; turns nearby windmills"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Airflow range and direction depend on placement/orientation"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "electric_motor",
+      "name": "Electrical Motor / Engine",
+      "category": "electrical",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Receives electrical power"
+      ],
+      "effects": [
+        "Produces rotational power for belt-driven mechanisms"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Must be electrically connected and mechanically connected to load"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "magnifying_glass",
+      "name": "Magnifying Glass",
+      "category": "light_fire",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Light source illuminates it with suitable alignment"
+      ],
+      "effects": [
+        "Focuses light to ignite a nearby fuse"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Light source, alignment and fuse proximity matter"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "flashlight",
+      "name": "Flashlight",
+      "category": "light_fire",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Button above it is pressed"
+      ],
+      "effects": [
+        "Emits light; can illuminate magnifying glass or light-powered outlet"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Orientation adjustable; documented as not subject to explosions"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "drawstring_light",
+      "name": "Drawstring Light / Bulb",
+      "category": "light_fire",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Rope pulls drawstring"
+      ],
+      "effects": [
+        "Turns on and emits light"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Requires rope attached to drawstring"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "cannon",
+      "name": "Cannon",
+      "category": "projectile",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Fuse is lit"
+      ],
+      "effects": [
+        "Launches cannonball at high speed"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Fuse must ignite; projectile direction is fixed by cannon orientation"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "dynamite",
+      "name": "Dynamite",
+      "category": "light_fire",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Fuse is lit"
+      ],
+      "effects": [
+        "Explodes; pushes objects and destroys weaker barriers"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Not all barriers are destructible"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "rocket",
+      "name": "Rocket",
+      "category": "projectile",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Fuse is lit"
+      ],
+      "effects": [
+        "Propels upward; can flick outlet switches or ignite fuses while rising"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Needs reachable switch/fuse and correct alignment"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "candle",
+      "name": "Candle",
+      "category": "light_fire",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Ignited by suitable flame/ignition event"
+      ],
+      "effects": [
+        "Portable flame and light source"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Fan airflow can extinguish it"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "dynamite_plunger",
+      "name": "Dynamite Plunger",
+      "category": "light_fire",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Plunger is pressed by object or rope"
+      ],
+      "effects": [
+        "Detonates dynamite"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Uses plunger rather than a lit fuse"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "bucket",
+      "name": "Bucket / Pail",
+      "category": "container",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Gravity or connected rope moves it"
+      ],
+      "effects": [
+        "Can hang from rope, fall, act as a weight and contact other objects"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Handle is rope attachment point"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "bird_cage",
+      "name": "Bird Cage",
+      "category": "container",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Gravity or connected rope moves it"
+      ],
+      "effects": [
+        "Can trap animals or objects; can be suspended by handle"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Capture depends on geometry and object behavior"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "pokey_cat",
+      "name": "Pokey the Cat",
+      "category": "animal",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Nearby visible mouse or startling moving object"
+      ],
+      "effects": [
+        "Chases visible mice; eats mouse within reach; may walk away when scared"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Visibility, distance and path accessibility matter"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "mort_mouse",
+      "name": "Mort the Mouse",
+      "category": "animal",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Cat is nearby / escape path available"
+      ],
+      "effects": [
+        "Runs away from cats; fits through holes too small for cat"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Path and opening geometry matter"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "mouse_motor",
+      "name": "Mouse Motor",
+      "category": "transmission",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Bumped by any object"
+      ],
+      "effects": [
+        "Produces rotational power for a limited time"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Temporary output; belt connection required to power another part"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "fishbowl",
+      "name": "Bob's Fish Bowl",
+      "category": "container",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Contact with a moving item"
+      ],
+      "effects": [
+        "Shatters; nearby cats attempt to reach it"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Needs moving-object contact; cat response requires proximity/path"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "monkey_bike",
+      "name": "Monkey Bike",
+      "category": "transmission",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Rope is pulled"
+      ],
+      "effects": [
+        "Curtains open; monkey sees banana, approaches it and pedals stationary bike to generate rotation"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Requires rope pull, visible banana and reachable route"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "brick",
+      "name": "Brick",
+      "category": "terrain",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Placed as barrier; explosion contacts it"
+      ],
+      "effects": [
+        "Blocks/redirects movement; can be destroyed by explosion"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Destructible by explosive force"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "metal_pipe",
+      "name": "Metal Pipe",
+      "category": "terrain",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Placed as barrier"
+      ],
+      "effects": [
+        "Blocks/redirects movement"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Cannot be blown up"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "curved_metal_pipe",
+      "name": "Metal Pipe Curve",
+      "category": "terrain",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Placed as barrier; orientation selected"
+      ],
+      "effects": [
+        "Curved barrier redirects movement; can be rotated to four directions"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Cannot be blown up"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "wood",
+      "name": "Wood",
+      "category": "terrain",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Placed as barrier; explosion contacts it"
+      ],
+      "effects": [
+        "Blocks/redirects movement; can be destroyed by explosion"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Destructible by explosive force"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "wood_slope",
+      "name": "Wood Slope",
+      "category": "terrain",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Placed as sloping surface"
+      ],
+      "effects": [
+        "Guides rolling/sliding objects"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Slope angle adjustable; not subject to explosions"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "pumpkin",
+      "name": "Pumpkin",
+      "category": "seasonal",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Freeform-only date-specific part; moves under gravity"
+      ],
+      "effects": [
+        "Moving object with frictional horizontal movement"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Seasonal availability; avoid assuming it appears in ordinary parts inventory"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "christmas_tree",
+      "name": "Christmas Tree",
+      "category": "seasonal",
+      "gravity": "none",
+      "trigger_conditions": [
+        "Freeform-only date-specific part placed as barrier"
+      ],
+      "effects": [
+        "Stationary decorative barrier"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Not subject to explosions; seasonal availability"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "irish_shamrock",
+      "name": "Irish Shamrock",
+      "category": "seasonal",
+      "gravity": "normal",
+      "trigger_conditions": [
+        "Freeform-only date-specific part moves under gravity"
+      ],
+      "effects": [
+        "Light and slightly bouncy object"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Seasonal availability"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    },
+    {
+      "id": "valentine_balloon",
+      "name": "Valentine Balloon",
+      "category": "seasonal",
+      "gravity": "inverted",
+      "trigger_conditions": [
+        "Freeform-only date-specific part rises"
+      ],
+      "effects": [
+        "Heart-shaped balloon behaves like balloon but cannot be popped"
+      ],
+      "can_affect_or_interact_with": [],
+      "limitations": [
+        "Cannot be popped by any means, per parts reference"
+      ],
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ],
+      "notes": "Behavior is transcribed/paraphrased from the original-game parts reference; not every possible pairwise collision has been tested."
+    }
+  ],
+  "interactions": [
+    {
+      "id": "I001",
+      "source_object": "falling_object",
+      "relation": "activates",
+      "target_object": "scissors",
+      "preconditions": [
+        "Object strikes scissors from above or below"
+      ],
+      "result": "Scissors close",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I002",
+      "source_object": "scissors",
+      "relation": "cuts",
+      "target_object": "rope",
+      "preconditions": [
+        "Rope passes through cutting area as scissors close"
+      ],
+      "result": "Rope is severed",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I003",
+      "source_object": "scissors",
+      "relation": "pops",
+      "target_object": "balloon",
+      "preconditions": [
+        "Balloon contacts the scissors' effective cutting/contact area"
+      ],
+      "result": "Balloon pops",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I004",
+      "source_object": "rope",
+      "relation": "pulls",
+      "target_object": "gun_trigger",
+      "preconditions": [
+        "Rope attached to trigger and pulled from appropriate direction"
+      ],
+      "result": "Gun fires in its facing direction",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I005",
+      "source_object": "pulley",
+      "relation": "redirects",
+      "target_object": "rope_force",
+      "preconditions": [
+        "Rope is routed through pulley"
+      ],
+      "result": "Direction of transmitted pull changes",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I006",
+      "source_object": "teeter_totter",
+      "relation": "moves",
+      "target_object": "opposite_end",
+      "preconditions": [
+        "One end is pressed or pulled"
+      ],
+      "result": "Opposite end moves, potentially moving an object or pulling attached rope",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I007",
+      "source_object": "boxing_glove_button",
+      "relation": "activates",
+      "target_object": "boxing_glove_punch",
+      "preconditions": [
+        "Button is pressed; target is in front"
+      ],
+      "result": "Glove punches target",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I008",
+      "source_object": "moving_object",
+      "relation": "bounces",
+      "target_object": "trampoline",
+      "preconditions": [
+        "Object lands on trampoline"
+      ],
+      "result": "Object rebounds and retains horizontal movement",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I009",
+      "source_object": "powered_rotator",
+      "relation": "powers",
+      "target_object": "fan_belt",
+      "preconditions": [
+        "Belt connects compatible parts and distance is within limit"
+      ],
+      "result": "Rotational power transmitted",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I010",
+      "source_object": "gear",
+      "relation": "rotates",
+      "target_object": "adjacent_gear",
+      "preconditions": [
+        "Gears are correctly adjacent/meshed; one receives rotation"
+      ],
+      "result": "Neighboring gear rotates in opposite direction",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I011",
+      "source_object": "rotational_power",
+      "relation": "powers",
+      "target_object": "conveyor_belt",
+      "preconditions": [
+        "Belt receives rotational power; object physically touches moving surface"
+      ],
+      "result": "Object moves along belt; underside direction is opposite to upper surface",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I012",
+      "source_object": "rotational_power",
+      "relation": "activates",
+      "target_object": "jack_in_the_box",
+      "preconditions": [
+        "Sufficient rotation delivered through fan belt"
+      ],
+      "result": "Jack pops up and launches object above it",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I013",
+      "source_object": "fan_or_bellows_airflow",
+      "relation": "powers",
+      "target_object": "windmill",
+      "preconditions": [
+        "Windmill is within effective airflow"
+      ],
+      "result": "Windmill generates rotational power",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I014",
+      "source_object": "windmill",
+      "relation": "powers",
+      "target_object": "fan_belt_connected_rotator",
+      "preconditions": [
+        "Windmill is connected by belt to compatible rotating part"
+      ],
+      "result": "Rotational power transferred",
+      "evidence_level": "demonstrated",
+      "source_ids": [
+        "S2"
+      ]
+    },
+    {
+      "id": "I015",
+      "source_object": "switched_outlet",
+      "relation": "powers",
+      "target_object": "electrical_appliance",
+      "preconditions": [
+        "Switch on; appliance connected and close enough"
+      ],
+      "result": "Appliance receives electricity",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I016",
+      "source_object": "rotational_power",
+      "relation": "powers",
+      "target_object": "generator",
+      "preconditions": [
+        "Generator connected through fan belt"
+      ],
+      "result": "Generator produces electricity",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I017",
+      "source_object": "solar_outlet",
+      "relation": "powers",
+      "target_object": "electrical_appliance",
+      "preconditions": [
+        "Suitable light reaches solar outlet; appliance connected"
+      ],
+      "result": "Electricity is supplied",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I018",
+      "source_object": "electrical_power",
+      "relation": "powers",
+      "target_object": "electric_motor",
+      "preconditions": [
+        "Motor electrically connected to power source"
+      ],
+      "result": "Motor generates rotational power",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I019",
+      "source_object": "electrical_power",
+      "relation": "powers",
+      "target_object": "fan",
+      "preconditions": [
+        "Fan connected to powered outlet"
+      ],
+      "result": "Airflow pushes movable objects and can drive windmills",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I020",
+      "source_object": "fan_airflow",
+      "relation": "extinguishes",
+      "target_object": "lit_candle",
+      "preconditions": [
+        "Airflow reaches lit candle"
+      ],
+      "result": "Candle goes out",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I021",
+      "source_object": "light_source",
+      "relation": "illuminates",
+      "target_object": "magnifying_glass_and_fuse",
+      "preconditions": [
+        "Light source, magnifier and fuse aligned and close enough"
+      ],
+      "result": "Magnified light ignites fuse",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I022",
+      "source_object": "rope",
+      "relation": "pulls",
+      "target_object": "drawstring_light",
+      "preconditions": [
+        "Rope attached to drawstring and pulled"
+      ],
+      "result": "Light turns on",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I023",
+      "source_object": "lit_fuse",
+      "relation": "ignites",
+      "target_object": "cannon",
+      "preconditions": [
+        "Fuse is successfully lit"
+      ],
+      "result": "Cannon launches cannonball",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I024",
+      "source_object": "lit_fuse",
+      "relation": "ignites",
+      "target_object": "dynamite",
+      "preconditions": [
+        "Fuse is successfully lit"
+      ],
+      "result": "Explosion pushes objects and may destroy weaker barriers",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I025",
+      "source_object": "lit_fuse",
+      "relation": "ignites",
+      "target_object": "rocket",
+      "preconditions": [
+        "Fuse is successfully lit"
+      ],
+      "result": "Rocket travels upward and may strike switch or ignite another fuse",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I026",
+      "source_object": "object_or_rope",
+      "relation": "activates",
+      "target_object": "dynamite_plunger",
+      "preconditions": [
+        "Object or rope presses plunger"
+      ],
+      "result": "Dynamite detonates",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I027",
+      "source_object": "moving_object",
+      "relation": "breaks",
+      "target_object": "fishbowl",
+      "preconditions": [
+        "Moving object contacts fishbowl"
+      ],
+      "result": "Fishbowl shatters; nearby cat may approach",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I028",
+      "source_object": "fishbowl_shattered",
+      "relation": "attracts",
+      "target_object": "pokey_cat",
+      "preconditions": [
+        "Cat is nearby and can reach bowl area"
+      ],
+      "result": "Cat attempts to reach broken bowl",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I029",
+      "source_object": "visible_mort_mouse",
+      "relation": "attracts",
+      "target_object": "pokey_cat",
+      "preconditions": [
+        "Mouse visible and nearby"
+      ],
+      "result": "Cat chases mouse; may eat it within reach",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I030",
+      "source_object": "pokey_cat",
+      "relation": "frightens",
+      "target_object": "mort_mouse",
+      "preconditions": [
+        "Cat approaches / mouse detects cat"
+      ],
+      "result": "Mouse runs away and may pass through a gap too small for cat",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I031",
+      "source_object": "object",
+      "relation": "activates",
+      "target_object": "mouse_motor",
+      "preconditions": [
+        "Any object bumps motor"
+      ],
+      "result": "Motor generates rotational power temporarily",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I032",
+      "source_object": "rope_pull",
+      "relation": "activates",
+      "target_object": "monkey_bike",
+      "preconditions": [
+        "Rope pull opens curtains; banana visible and reachable"
+      ],
+      "result": "Monkey approaches banana and pedals bike, producing rotation",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I033",
+      "source_object": "explosion",
+      "relation": "breaks",
+      "target_object": "brick_or_wood_barrier",
+      "preconditions": [
+        "Explosion reaches destructible barrier"
+      ],
+      "result": "Barrier destroyed",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I034",
+      "source_object": "explosion",
+      "relation": "fails_to_break",
+      "target_object": "metal_pipe_or_christmas_tree",
+      "preconditions": [
+        "Explosion reaches listed explosion-resistant barrier"
+      ],
+      "result": "Barrier remains",
+      "evidence_level": "documented",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I035",
+      "source_object": "cannonball",
+      "relation": "hits",
+      "target_object": "scissors",
+      "preconditions": [
+        "Cannonball trajectory intersects scissors"
+      ],
+      "result": "Scissors close; can cut a rope placed in blades",
+      "evidence_level": "demonstrated",
+      "source_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "I036",
+      "source_object": "bowling_ball",
+      "relation": "activates",
+      "target_object": "mouse_motor",
+      "preconditions": [
+        "Ball trajectory intersects motor"
+      ],
+      "result": "Motor runs temporarily; connected conveyor can move",
+      "evidence_level": "demonstrated",
+      "source_ids": [
+        "S2"
+      ]
+    },
+    {
+      "id": "I037",
+      "source_object": "balloon",
+      "relation": "moves",
+      "target_object": "windmill_or_scissors",
+      "preconditions": [
+        "Airflow moves balloon into target"
+      ],
+      "result": "Balloon can contact gear and pop, or hit scissors and pop",
+      "evidence_level": "demonstrated",
+      "source_ids": [
+        "S2"
+      ]
+    },
+    {
+      "id": "I038",
+      "source_object": "released_bucket",
+      "relation": "hits",
+      "target_object": "teeter_totter",
+      "preconditions": [
+        "Bucket released and positioned so its fall intersects lever"
+      ],
+      "result": "Lever moves and may pull a connected rope",
+      "evidence_level": "inferred",
+      "source_ids": [
+        "S1"
+      ]
+    },
+    {
+      "id": "I039",
+      "source_object": "rope_cut",
+      "relation": "releases",
+      "target_object": "bucket_or_balloon",
+      "preconditions": [
+        "Cut rope was restraining object"
+      ],
+      "result": "Object becomes unrestrained and responds to gravity/inverted gravity",
+      "evidence_level": "inferred",
+      "source_ids": [
+        "S1"
+      ]
+    }
+  ],
+  "chains": [
+    {
+      "id": "C001",
+      "name": "Ball → scissors → severed rope → released object",
+      "steps": [
+        "I035",
+        "I002",
+        "I039"
+      ],
+      "status": "demonstrated_components_plus_layout_dependent_inference",
+      "notes": "Scissors activation/cutting is documented and used in walkthrough puzzles. The released object and its next collision depend on the level layout."
+    },
+    {
+      "id": "C002",
+      "name": "Bowling ball → mouse motor → belt → conveyor → basketball target",
+      "steps": [
+        "I036",
+        "I009",
+        "I011"
+      ],
+      "status": "demonstrated",
+      "notes": "The original walkthrough's introductory puzzle uses successive bowling-ball impacts to start mouse motors connected to conveyors that transport the basketball toward a hoop."
+    },
+    {
+      "id": "C003",
+      "name": "Bellows → windmill → belt-driven conveyor/gear",
+      "steps": [
+        "I013",
+        "I014"
+      ],
+      "status": "demonstrated",
+      "notes": "The original walkthrough describes bellows blowing windmills connected to conveyors and a gear."
+    },
+    {
+      "id": "C004",
+      "name": "Light → magnifying glass → fuse → cannonball → scissors",
+      "steps": [
+        "I021",
+        "I023",
+        "I035"
+      ],
+      "status": "plausible_inference_from_documented_rules",
+      "notes": "Each component behavior is documented, but this exact complete chain should not be labelled a verified canonical solution without an original-level trace."
+    },
+    {
+      "id": "C005",
+      "name": "Rope pull → monkey curtains open → banana visible → bike rotation",
+      "steps": [
+        "I032"
+      ],
+      "status": "demonstrated",
+      "notes": "The original walkthrough includes a Monkey Business puzzle; exact route to the banana depends on layout."
+    }
+  ],
+  "quality_notes": [
+    "The parts reference is community-maintained, not a publisher-authored exhaustive interaction matrix.",
+    "No claim is made that all possible object pairs have been exhaustively tested.",
+    "Interaction records capture documented mechanics, not frame-accurate physics or numeric forces.",
+    "Date-specific parts are isolated as seasonal/freeform-only and should not be assumed in normal puzzle inventory.",
+    "Keep rules from The Even More! Incredible Machine, The Incredible Machine 2/3, and Incredible Toon Machine out of this database unless separately version-tagged."
+  ]
+}

@@ -10,7 +10,7 @@ import { eventBus } from '../EventBus.js';
 import { InteractionMatrix } from '../interactions/InteractionMatrix.js';
 import { DEFAULT_INTERACTION_ROWS } from '../interactions/rules.js';
 
-const { Engine, World, Bodies, Body, Composite, Events, Query, Bounds, Collision, Sleeping, Pairs } = Matter;
+const { Engine, World, Bodies, Body, Composite, Events, Query, Bounds, Collision, Sleeping, Pairs, Constraint, Vertices, Axes } = Matter;
 
 export class PhysicsEngine {
     /**
@@ -45,6 +45,12 @@ export class PhysicsEngine {
         /** @type {object|null} Serialized snapshot for reset */
         this._snapshot = null;
 
+        /** @type {Map<Matter.Constraint, object>} Engine-attached runtime constraint links (ADR 0004) */
+        this._attachedConstraints = new Map();
+
+        /** @type {object[]} Link records captured by takeSnapshot (ADR 0004 ride-along) */
+        this._snapshotConstraintRecords = [];
+
         // The single registry of object-to-object reactions (see
         // js/interactions/rules.js); collisionStart pairs route through it.
         this._interactions = new InteractionMatrix(DEFAULT_INTERACTION_ROWS);
@@ -57,6 +63,10 @@ export class PhysicsEngine {
 
         // Consume severing so a severed rope is physically detached
         this._setupSeveredEvents();
+
+        // Free-rope chain lifecycle (issue #55): the first tie on a bundle
+        // adds its newborn chain to the world; an unbundling pulls it out.
+        this._setupRopeLifecycleEvents();
 
         // Object removal events (popped balloons, etc.)
         this._setupRemovalEvents();
@@ -109,6 +119,11 @@ export class PhysicsEngine {
             this._bodyToObject.delete(body.id);
         }
 
+        // Co-terminate engine-attached links (ADR 0004): a link endpoined at
+        // a departing body would keep dragging its survivor toward a dead body.
+        this._detachConstraintsTouching(
+            new Set(gameObject.bodies.filter(Boolean).map((body) => body.id))
+        );
         this._objects.delete(gameObject);
         if (gameObject.dispose) gameObject.dispose();
     }
@@ -155,9 +170,18 @@ export class PhysicsEngine {
 
     /** Save the current state for later reset. */
     takeSnapshot() {
+        // Ride-along capture (ADR 0004): every snapshot carries the current
+        // engine-attached link set; the next take overwrites, so no clearing
+        // is needed anywhere.
+        this._captureConstraintRecords();
         this._snapshot = [];
         for (const obj of this._objects) {
             this._snapshot.push({
+                // Instance identity captured at snapshot time: serialize()
+                // carries the semantic payload but no object id, and the
+                // zero-body rewind matching (issue #55) needs a stable
+                // per-object key to reach restoreState.
+                objId: obj.id,
                 serialized: obj.serialize(),
                 bodyStates: obj.bodies.map(b => ({
                     id: b.id,
@@ -169,9 +193,41 @@ export class PhysicsEngine {
                     // step (floating point), so restored contacts would
                     // differ; store it to keep restores bit-deterministic.
                     vertices: b.vertices.map(v => ({ x: v.x, y: v.y })),
+                    // Recorded verbatim, not re-derived: bounds carry
+                    // one-sided velocity inflation from whenever each
+                    // sub-phase last wrote them (the constraint/solver
+                    // phases can skip idle bodies), so the recorded value
+                    // is not a pure function of vertices + velocity —
+                    // bounds.min.y can lag the live velocity by ~7e-3 px.
+                    bounds: {
+                        min: { x: b.bounds.min.x, y: b.bounds.min.y },
+                        max: { x: b.bounds.max.x, y: b.bounds.max.y },
+                    },
                     positionImpulse: { x: b.positionImpulse.x, y: b.positionImpulse.y },
+                    // Constraint-solver warm-start accumulator: solve() adds
+                    // to it per iteration, preSolveAll re-applies it to
+                    // body.position/angle at the start of the next step and
+                    // postSolveAll transfers it onto vertices/bounds before
+                    // damping it. A stale cache perturbs the first post-
+                    // restore solve, so it is recorded with the pose.
+                    constraintImpulse: {
+                        x: b.constraintImpulse.x,
+                        y: b.constraintImpulse.y,
+                        angle: b.constraintImpulse.angle,
+                    },
                     motion: b.motion,
                     sleepCounter: b.sleepCounter,
+                    // Mass model, including behavioral overrides such as
+                    // Body.setInertia(Infinity) rotation locks or setMass /
+                    // setDensity tweaks: Body.setVertices would otherwise
+                    // recompute all of these from the vertex set and erase
+                    // them. (Snapshots are in-memory only — Infinity
+                    // round-trips; this record is never JSON-serialized.)
+                    mass: b.mass,
+                    inverseMass: b.inverseMass,
+                    inertia: b.inertia,
+                    inverseInertia: b.inverseInertia,
+                    density: b.density,
                 })),
             });
         }
@@ -186,6 +242,11 @@ export class PhysicsEngine {
      */
     restoreSnapshot() {
         if (!this._snapshot) return;
+
+        // Converge engine-attached links to snapshot-time state (ADR 0004):
+        // links attached after the snapshot are dropped; snapshot-time links
+        // re-attach by body id only when both endpoints are still alive.
+        this._restoreConstraintLinks();
 
         // Reset the pair cache so contacts re-form cold after teleporting
         // bodies: Matter warm-starts the solver from accumulated contact
@@ -207,6 +268,22 @@ export class PhysicsEngine {
             }
             if (snap.serialized) snapByIdSet.set(ids, snap.serialized);
         }
+        // Zero-body snapshot entries (issue #55 — the free-rope bundle) have
+        // a vacuous body-id identity: match them by the object id recorded
+        // at snapshot time (objId; serialize() itself carries no identity
+        // field), so the rewind can reach their restoreState (a mid-play
+        // spawned chain collapses there via the wrapper's spawned-flag
+        // check, pulling its chain out of the world through the
+        // 'rope:unbundled' consumer).
+        const snapBodylessById = new Map();
+        for (const snap of this._snapshot) {
+            const key = snap.objId != null
+                ? snap.objId
+                : (snap.serialized ? snap.serialized.id : undefined);
+            if (snap.serialized && snap.bodyStates.length === 0 && key != null) {
+                snapBodylessById.set(key, snap.serialized);
+            }
+        }
         for (const obj of this._objects) {
             if (typeof obj.restoreState !== 'function') continue;
             let ids = '';
@@ -216,6 +293,17 @@ export class PhysicsEngine {
             }
             if (ids && snapByIdSet.has(ids)) {
                 obj.restoreState(snapByIdSet.get(ids));
+            } else if (!ids && snapBodylessById.has(obj.id)) {
+                obj.restoreState(snapBodylessById.get(obj.id));
+            } else if (ids && snapBodylessById.has(obj.id)) {
+                // Issue #55 rewind case: the snapshot caught this rope as a
+                // bodyless coil, play has since given birth to its chain —
+                // the body-id key cannot match a vacuous snapshot entry, so
+                // fall back to the object id recorded at snapshot time.
+                // restoreState sees
+                // spawned:false there and collapses the chain (the un-bundle
+                // consumer then pulls it out of the world).
+                obj.restoreState(snapBodylessById.get(obj.id));
             }
         }
 
@@ -249,18 +337,55 @@ export class PhysicsEngine {
                     body.positionImpulse.y = bodyState.positionImpulse.y;
                 }
 
+                // Constraint warm-start cache: preSolveAll adds this to
+                // body.position/angle next step (postSolveAll moves it onto
+                // vertices/bounds and damps it). Restoring the snapshot-time
+                // cache makes the first post-restore solve bit-reproducible.
+                if (bodyState.constraintImpulse) {
+                    body.constraintImpulse.x = bodyState.constraintImpulse.x;
+                    body.constraintImpulse.y = bodyState.constraintImpulse.y;
+                    body.constraintImpulse.angle = bodyState.constraintImpulse.angle;
+                }
+
                 // Sleeping is per-body numeric state; restore it so sleep
                 // evolution replays identically (engine has sleeping on).
                 body.motion = bodyState.motion ?? body.motion;
                 body.sleepCounter = bodyState.sleepCounter ?? body.sleepCounter;
 
-                // Restore exact vertex geometry LAST (setVertices() orients
-                // around body.position): per-step rotate/translate
-                // accumulate floating-point drift into vertices, so the
-                // SAT solver would otherwise see slightly different
-                // contacts than the original run.
+                // Restore exact vertex geometry and the snapshot-time mass
+                // model directly. The previous Body.setVertices(data) path
+                // recomputes mass/inertia from the vertex set (setVertices
+                // runs Body.setMass + Body.setInertia internally), erasing
+                // behavioral overrides like Body.setInertia(Infinity)
+                // rotation locks, and re-centers vertices through a centroid
+                // round-trip (Vertices.centre translate out/in) that shifts
+                // previously-drifted vertex sets by ~1e-2 px. Direct
+                // assignment round-trips vertices bit-exactly; axes and area
+                // are pure functions of the restored vertex set. Bounds are
+                // reinstated from the record below, not derived here.
                 if (bodyState.vertices) {
-                    Body.setVertices(body, bodyState.vertices);
+                    body.vertices = Vertices.create(bodyState.vertices, body);
+                    body.axes = Axes.fromVertices(body.vertices);
+                    body.area = Vertices.area(body.vertices);
+                    // Bounds are NOT re-derived from vertices + velocity:
+                    // each sub-phase's Bounds.update inflates only the side
+                    // the body is moving toward, and idle bodies can skip
+                    // updates entirely, so the recorded bounds carry stale
+                    // inflation no longer derivable from the final state.
+                    // Reinstate the snapshot-time value verbatim.
+                    if (bodyState.bounds) {
+                        body.bounds.min.x = bodyState.bounds.min.x;
+                        body.bounds.min.y = bodyState.bounds.min.y;
+                        body.bounds.max.x = bodyState.bounds.max.x;
+                        body.bounds.max.y = bodyState.bounds.max.y;
+                    }
+                }
+                if (bodyState.mass !== undefined) {
+                    body.mass = bodyState.mass;
+                    body.inverseMass = bodyState.inverseMass;
+                    body.inertia = bodyState.inertia;
+                    body.inverseInertia = bodyState.inverseInertia;
+                    body.density = bodyState.density;
                 }
 
                 appliedBodyIds.add(body.id);
@@ -299,11 +424,218 @@ export class PhysicsEngine {
     /** Clear the stored snapshot. */
     clearSnapshot() {
         this._snapshot = null;
+        this._snapshotConstraintRecords = [];
     }
 
     /** @returns {boolean} */
     hasSnapshot() {
         return this._snapshot !== null;
+    }
+
+    // ── Runtime constraint links (ADR 0004) ─────────────────────
+
+    /**
+     * Attaches a Matter constraint between two already-registered, live game
+     * object bodies at runtime. Unlike object-owned constraints (e.g. rope
+     * chains), engine-attached links are managed by the engine: they can be
+     * detached individually, they co-terminate when an endpoint object
+     * leaves, and they ride the snapshot/restore seam (ADR 0003).
+     *
+     * Both endpoints are woken on attach (wake-on-act, ADR 0002): sleeping
+     * bodies skip force integration, so a link attached to a sleeper would
+     * otherwise leave both bodies frozen.
+     *
+     * @param {Matter.Body} bodyA - body of a registered game object
+     * @param {Matter.Body} bodyB - body of a registered game object
+     * @param {object} [options] - Matter constraint options: { pointA,
+     *   pointB, length, stiffness, damping } (Matter defaults apply per key)
+     * @returns {Matter.Constraint} the created constraint instance (added to
+     *   the world and tracked by getAttachedConstraints())
+     * @throws {Error} if either endpoint is not a body of a registered game
+     *   object (boundary walls and raw bodies are not attachable)
+     */
+    attachConstraint(bodyA, bodyB, options = {}) {
+        this._assertAttachEndpoint(bodyA, 'bodyA');
+        this._assertAttachEndpoint(bodyB, 'bodyB');
+
+        // Build link options WITHOUT undefined keys: Matter's Constraint.create
+        // extends defaults unconditionally, so an explicit `length: undefined`
+        // would clobber the Matter-computed default instead of deferring to it.
+        const linkOptions = { bodyA, bodyB };
+        if (options.pointA !== undefined) linkOptions.pointA = options.pointA;
+        if (options.pointB !== undefined) linkOptions.pointB = options.pointB;
+        if (options.stiffness !== undefined) linkOptions.stiffness = options.stiffness;
+        if (options.damping !== undefined) linkOptions.damping = options.damping;
+        if (options.length !== undefined) linkOptions.length = options.length;
+
+        return this._registerAttachedConstraint(linkOptions);
+    }
+
+    /**
+     * Detaches one engine-attached constraint link. The endpointed objects
+     * and their bodies stay registered and in the world — only the link is
+     * removed. Both endpoints are woken on detach (wake-on-act): a freed
+     * sleeping body would otherwise float forever with force integration
+     * skipped.
+     *
+     * @param {Matter.Constraint} constraint - instance previously returned by
+     *   attachConstraint() or consumed from getAttachedConstraints()
+     * @returns {void}
+     * @throws {Error} if the constraint is not engine-attached — object-owned
+     *   constraints (e.g. rope chains) are managed by their objects, not by
+     *   this seam
+     */
+    detachConstraint(constraint) {
+        if (!this._attachedConstraints.has(constraint)) {
+            throw new Error('[PhysicsEngine] detachConstraint: constraint is not attached by this engine');
+        }
+        this._removeConstraint(constraint);
+    }
+
+    /**
+     * All engine-attached runtime constraint links, in attach order.
+     * Object-owned constraints (rope chains) are NOT included — they remain
+     * owned and managed by their game objects.
+     *
+     * @returns {Matter.Constraint[]}
+     */
+    getAttachedConstraints() {
+        return [...this._attachedConstraints.keys()];
+    }
+    /**
+     * @private
+     * @param {Matter.Body} body - candidate endpoint
+     * @param {string} name - parameter name for the error message
+     */
+    _assertAttachEndpoint(body, name) {
+        if (!body || !this._bodyToObject.has(body.id)) {
+            throw new Error(`[PhysicsEngine] attachConstraint: ${name} is not a body of a registered game object`);
+        }
+    }
+
+    /**
+     * @private
+     * Creates the Matter constraint and records its EFFECTIVE parameters
+     * (pointA/pointB/length read back after Constraint.create, so Matter-
+     * computed defaults capture faithfully for the snapshot seam), wakes the
+     * endpoints, adds to the world and registers.
+     *
+     * @param {object} linkOptions - { bodyA, bodyB, pointA?, pointB?,
+     *   length?, stiffness?, damping? }
+     * @returns {Matter.Constraint}
+     */
+    _registerAttachedConstraint(linkOptions) {
+        const constraint = Constraint.create(linkOptions);
+        const record = {
+            bodyAId: linkOptions.bodyA.id,
+            bodyBId: linkOptions.bodyB.id,
+            pointA: { x: constraint.pointA.x, y: constraint.pointA.y },
+            pointB: { x: constraint.pointB.x, y: constraint.pointB.y },
+            stiffness: constraint.stiffness,
+            damping: constraint.damping,
+            length: constraint.length,
+        };
+        // Wake-on-act (ADR 0002): asleep endpoints skip force integration.
+        this.wakeBodies([linkOptions.bodyA, linkOptions.bodyB]);
+        Composite.add(this.world, constraint);
+        this._attachedConstraints.set(constraint, record);
+        return constraint;
+    }
+
+    /**
+     * @private
+     * Removes one link from the world and the registry (endpoints untouched).
+     *
+     * @param {Matter.Constraint} constraint
+     */
+    _removeConstraint(constraint) {
+        const endpoints = [constraint.bodyA, constraint.bodyB].filter(Boolean);
+        // Wake-on-act (ADR 0002): a body losing its constraint force must
+        // integrate again, or it hangs/floats frozen.
+        this.wakeBodies(endpoints);
+        Composite.remove(this.world, constraint);
+        this._attachedConstraints.delete(constraint);
+    }
+    /**
+     * @private
+     * Detaches every engine-attached link endpointed at any of the given body
+     * ids (co-termination). Used when a body leaves the world — an orphaned
+     * endpoint would keep dragging its survivor toward a dead body.
+     *
+     * @param {Set<number>} bodyIds - Matter body ids of departing bodies
+     */
+    _detachConstraintsTouching(bodyIds) {
+        if (!bodyIds || bodyIds.size === 0 || this._attachedConstraints.size === 0) {
+            return;
+        }
+        for (const constraint of [...this._attachedConstraints.keys()]) {
+            const record = this._attachedConstraints.get(constraint);
+            if (bodyIds.has(record.bodyAId) || bodyIds.has(record.bodyBId)) {
+                this._removeConstraint(constraint);
+            }
+        }
+    }
+
+    /**
+     * @private
+     * Captures the current link set as plain records for the snapshot seam.
+     * Called from takeSnapshot() so every (re)snapshot carries the current
+     * link state; no explicit clearing needed — the next take overwrites.
+     */
+    _captureConstraintRecords() {
+        this._snapshotConstraintRecords = [...this._attachedConstraints.values()].map((record) => ({
+            bodyAId: record.bodyAId,
+            bodyBId: record.bodyBId,
+            pointA: { x: record.pointA.x, y: record.pointA.y },
+            pointB: { x: record.pointB.x, y: record.pointB.y },
+            stiffness: record.stiffness,
+            damping: record.damping,
+            length: record.length,
+        }));
+    }
+
+    /**
+     * @private
+     * Converges the live link set to snapshot-time state (ADR 0004): links
+     * attached after the snapshot are dropped, and snapshot-time links
+     * re-attach through the restore-by-id seam whenever BOTH endpoint bodies
+     * are still alive — a mid-play object removal never resurrects a dangling
+     * link. Called from restoreSnapshot() only when a snapshot is present.
+     */
+    _restoreConstraintLinks() {
+        // Detach every live link first: the world converges to snapshot state.
+        for (const constraint of [...this._attachedConstraints.keys()]) {
+            this._removeConstraint(constraint);
+        }
+        const linkRecords = this._snapshotConstraintRecords ?? [];
+        if (linkRecords.length === 0) {
+            return;
+        }
+        // Resolve current bodies by Matter body id (restore-by-id, ADR 0003).
+        const bodyById = new Map();
+        for (const gameObject of this._objects) {
+            for (const body of gameObject.bodies) {
+                if (body) {
+                    bodyById.set(body.id, body);
+                }
+            }
+        }
+        for (const record of linkRecords) {
+            const bodyA = bodyById.get(record.bodyAId);
+            const bodyB = bodyById.get(record.bodyBId);
+            if (!bodyA || !bodyB) {
+                continue; // an endpoint left mid-play — never resurrect a dangling link
+            }
+            this._registerAttachedConstraint({
+                bodyA,
+                bodyB,
+                pointA: { x: record.pointA.x, y: record.pointA.y },
+                pointB: { x: record.pointB.x, y: record.pointB.y },
+                stiffness: record.stiffness,
+                damping: record.damping,
+                length: record.length,
+            });
+        }
     }
 
     // ── Queries ───────────────────────────────────
@@ -468,6 +800,91 @@ export class PhysicsEngine {
     }
 
     /**
+     * Region-grade discovery, overlap semantics (ADR 0002 amendment): every
+     * world body whose BOUNDS overlap `zone` — the rect convention, frame
+     * rotation, enclosing-AABB broadphase, discovery policy and ordering of
+     * queryZone, but the exact test is bounds-vs-rotated-rect overlap (SAT on
+     * the four candidate axes), so a large body whose CENTRE sits outside the
+     * zone still matches when the body itself reaches in. Bounds-grade: a
+     * candidate merely grazing the zone with its bounds counts.
+     *
+     * queryZone (position-inside) is kept unchanged for centre-grade
+     * semantics; pick the variant that matches the interaction's sense:
+     * "what is inside this region" → queryZone, "what does this region
+     * reach" → queryZoneOverlap.
+     *
+     * Same discovery policy and ordering as queryZone.
+     *
+     * @param {Matter.Body} referenceBody - the zone lives in this body's frame
+     * @param {{ cx: number, cy: number, width: number, height: number }} zone
+     * @param {object} [opts] - { includeStatic: boolean, includeWalls: boolean }
+     * @returns {Matter.Body[]}
+     */
+    queryZoneOverlap(referenceBody, zone, opts = {}) {
+        const pos = referenceBody.position;
+        const cos = Math.cos(referenceBody.angle);
+        const sin = Math.sin(referenceBody.angle);
+        const halfW = zone.width / 2;
+        const halfH = zone.height / 2;
+
+        // Rect centre in world space (rotate the local offset by body angle)
+        const worldCx = pos.x + zone.cx * cos - zone.cy * sin;
+        const worldCy = pos.y + zone.cx * sin + zone.cy * cos;
+
+        // Exact enclosing AABB of the rotated rectangle (broadphase)
+        const extentX = halfW * Math.abs(cos) + halfH * Math.abs(sin);
+        const extentY = halfW * Math.abs(sin) + halfH * Math.abs(cos);
+        const rect = {
+            min: { x: worldCx - extentX, y: worldCy - extentY },
+            max: { x: worldCx + extentX, y: worldCy + extentY },
+        };
+
+        const owner = this._ownerOf(referenceBody);
+        const results = [];
+
+        for (const body of Query.region(Composite.allBodies(this.world), rect)) {
+            if (body === referenceBody) continue;
+            if (!opts.includeStatic && body.isStatic) continue;
+            if (!opts.includeWalls && this._isWallBody(body)) continue;
+            if (owner && this._bodyToObject.get(body.id) === owner) continue;
+
+            if (this._boundsOverlapZoneRect(body.bounds, worldCx, worldCy, cos, sin, halfW, halfH)) {
+                results.push(body);
+            }
+        }
+        return results;
+    }
+
+    /**
+     * Exact bounds-vs-rotated-rect overlap test (SAT). The candidate axes
+     * for an AABB and a rotated rectangle are the AABB's x/y axes plus the
+     * rectangle's two rotated local axes; the pair overlaps iff no axis
+     * separates them — the same separation relation Matter's Bounds.overlaps
+     * applies in the axis-aligned case, generalized to rotated rect axes.
+     * @private
+     */
+    _boundsOverlapZoneRect(bounds, cx, cy, cos, sin, halfW, halfH) {
+        const bx = (bounds.min.x + bounds.max.x) / 2;
+        const by = (bounds.min.y + bounds.max.y) / 2;
+        const ex = (bounds.max.x - bounds.min.x) / 2;
+        const ey = (bounds.max.y - bounds.min.y) / 2;
+
+        const axes = [
+            { x: 1, y: 0 }, { x: 0, y: 1 },          // AABB axes
+            { x: cos, y: sin }, { x: -sin, y: cos }, // rotated rect local axes
+        ];
+
+        for (const a of axes) {
+            const centreDelta = (cx - bx) * a.x + (cy - by) * a.y;
+            const boundsRadius = Math.abs(a.x) * ex + Math.abs(a.y) * ey;
+            const rectRadius = halfW * Math.abs(a.x * cos + a.y * sin) +
+                halfH * Math.abs(-a.x * sin + a.y * cos);
+            if (Math.abs(centreDelta) > boundsRadius + rectRadius) return false; // separated
+        }
+        return true;
+    }
+
+    /**
      * Probe-grade discovery (ADR 0002): every world body containing the
      * point (Matter Query.point — bounds pass, then per-part vertices test),
      * minus bodies owned by `opts.excludeOwner` so an actor never probes
@@ -503,6 +920,132 @@ export class PhysicsEngine {
         for (const body of list) {
             if (body) Sleeping.set(body, false);
         }
+    }
+
+    // ── Impulse-field primitive (ADR 0002 amendment: the shared force
+    //    delivery behind directional per-frame fields) ─────────────────────
+
+    /**
+     * Impulse-field primitive (ADR 0002 amendment): discover the movable
+     * bodies inside `field.zone` (a rect in `sourceBody`'s local frame, the
+     * queryZone convention — a fan's wind cone out of the face is
+     * {cx: 0, cy: -height/2, width, height}) and apply a linear
+     * distance-falloff force toward `field.direction` (expressed in the
+     * source body's local frame — default local "up", which rotates with the
+     * body), scaled by each candidate's mass:
+     *
+     *     force = direction * field.force * (1 − dist/range) * body.mass
+     *
+     * `dist` measures from the source body's centre (euclidean); candidates
+     * at or beyond `range`, or exactly on the source centre (degenerate
+     * direction), receive nothing. Every acted body is woken first — wake-on-
+     * act in the same seam call, so a field can never forget the wake while
+     * a sleeping body would skip force integration anyway.
+     *
+     * Zone matching is queryZone's position-inside semantics by default;
+     * `field.match: 'overlap'` switches to queryZoneOverlap's bounds-based
+     * test (bodies whose centre is outside but bounds reach in still act).
+     * Same discovery policy, ordering and return shape as the query methods:
+     * the list of acted bodies, in discovery order.
+     *
+     * @param {Matter.Body} sourceBody - anchor of the field (position + frame)
+     * @param {object} field
+     * @param {{ cx: number, cy: number, width: number, height: number }} field.zone
+     * @param {number} field.range - falloff radius from the source centre (px)
+     * @param {number} field.force - peak force magnitude at zero distance
+     * @param {{ x?: number, y?: number }} [field.direction] - source-local, default {x: 0, y: -1}
+     * @param {'position'|'overlap'} [field.match] - zone test, default 'position'
+     * @returns {Matter.Body[]} the bodies the field acted on
+     */
+    applyImpulseField(sourceBody, field) {
+        const { zone, range, force } = field;
+        const cos = Math.cos(sourceBody.angle);
+        const sin = Math.sin(sourceBody.angle);
+
+        // World direction: rotate the source-local direction by the body angle
+        const localDir = field.direction ?? { x: 0, y: -1 };
+        const dirX = localDir.x * cos - localDir.y * sin;
+        const dirY = localDir.x * sin + localDir.y * cos;
+
+        const candidates = field.match === 'overlap'
+            ? this.queryZoneOverlap(sourceBody, zone)
+            : this.queryZone(sourceBody, zone);
+
+        const pos = sourceBody.position;
+        const acted = [];
+        for (const body of candidates) {
+            const dx = body.position.x - pos.x;
+            const dy = body.position.y - pos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (!(dist < range) || dist === 0) continue;
+            const falloff = 1 - dist / range;
+            this.wakeBodies(body);
+            Body.applyForce(body, body.position, {
+                x: dirX * force * falloff * body.mass,
+                y: dirY * force * falloff * body.mass,
+            });
+            acted.push(body);
+        }
+        return acted;
+    }
+
+    // ── Object-level discovery (ADR 0002 amendment: registered game
+    //    objects, by canonical type / by Matter body label) ────────────────
+
+    /**
+     * Object-level discovery (ADR 0002 amendment): every REGISTERED game
+     * object whose canonical `type` matches. One level above the body-grade
+     * queries above — callers that reason in whole objects (per-type sweeps,
+     * handler dispatch) never hand-roll getObjects() + type filters.
+     *
+     * Pure read over the registered set like every query method: never
+     * wakes, registration order, empty for unknown types. `opts.excludeOwner`
+     * keeps an object from fetching itself (the same opt-in queryPoint uses —
+     * there is no scanned actor here whose owner could be resolved
+     * automatically).
+     *
+     * @param {string} type - canonical type string (e.g. 'rope', 'candle')
+     * @param {object} [opts] - { excludeOwner: BaseObject|null }
+     * @returns {import('../objects/BaseObject.js').default[]}
+     */
+    queryObjectsByType(type, opts = {}) {
+        const excluded = opts.excludeOwner ?? null;
+        const results = [];
+        for (const obj of this._objects) {
+            if (obj.type !== type) continue;
+            if (excluded && obj === excluded) continue;
+            results.push(obj);
+        }
+        return results;
+    }
+
+    /**
+     * Object-level discovery (ADR 0002 amendment): every registered game
+     * object owning at least one body labeled `label` — the per-family body
+     * discriminator the interaction matrix keys on ('candle-flame',
+     * 'scissors-blade', 'bucket-sensor'). The label query reaches across one
+     * object's bodies where the canonical type alone cannot discriminate;
+     * it returns whole objects, never individual bodies.
+     *
+     * Same policy and shape as queryObjectsByType.
+     *
+     * @param {string} label - Matter body label (e.g. 'candle-flame')
+     * @param {object} [opts] - { excludeOwner: BaseObject|null }
+     * @returns {import('../objects/BaseObject.js').default[]}
+     */
+    queryObjectsByBodyLabel(label, opts = {}) {
+        const excluded = opts.excludeOwner ?? null;
+        const results = [];
+        for (const obj of this._objects) {
+            if (excluded && obj === excluded) continue;
+            for (const body of obj.bodies) {
+                if (body && body.label === label) {
+                    results.push(obj);
+                    break;
+                }
+            }
+        }
+        return results;
     }
 
     // ── Boundaries ────────────────────────────────
@@ -548,6 +1091,66 @@ export class PhysicsEngine {
     _setupSeveredEvents() {
         this._onRopeSevered = ({ rope }) => this._detachRopeConstraints(rope);
         eventBus.on('rope:severed', this._onRopeSevered);
+
+        // Chain convergence (issue 04): Rope.restoreState rewinding a
+        // severed live rope to an intact snapshot rebuilds its chain — the
+        // rope owns the constraints, but only this engine can put them
+        // back into the world (addObject won't run again for a registered
+        // rope).
+        this._onRopeChainConverge = (packet) => this._restoreRopeConstraints(packet);
+        eventBus.on('rope:chain-converge', this._onRopeChainConverge);
+    }
+
+    /** @private */
+    _setupRopeLifecycleEvents() {
+        // Chain spawn (issue #55): the first tie on a free-rope bundle gives
+        // birth to its hanging chain — the rope owns the bodies/constraints,
+        // but only this engine can put them into the world (addObject already
+        // ran for the bodyless rope and will not run again).
+        this._onRopeChainSpawned = ({ rope }) => this._addRopeChain(rope);
+        eventBus.on('rope:chain-spawned', this._onRopeChainSpawned);
+
+        // Unbundle (issue #55): a spawned free rope collapsed back into its
+        // inert coil — remove the dying chain from the world (the refs ride
+        // the packet because the rope has already cleared its getters).
+        this._onRopeUnbundled = (packet) => this._removeRopeChain(packet);
+        eventBus.on('rope:unbundled', this._onRopeUnbundled);
+    }
+
+    /** @private */
+    _addRopeChain(rope) {
+        // Registration guard: the bus is global, so a rope belonging to
+        // ANOTHER engine must not leak its chain into this world.
+        if (!rope || !this._objects.has(rope)) return;
+        for (const constraint of rope.constraints) {
+            Composite.add(this.world, constraint);
+        }
+        for (const body of rope.bodies) {
+            Composite.add(this.world, body);
+            this._bodyToObject.set(body.id, rope);
+        }
+        this.wakeBodies(rope.bodies);
+    }
+
+    /**
+     * Pull a collapsed chain out of the world (issue #55). The rope emitted
+     * 'rope:unbundled' already in bundle state, so the dying constraints and
+     * bodies ride the packet as `previous`/`bodies`.
+     * @param {{rope: import('../objects/Rope.js').default,
+     *     previous?: Matter.Constraint[], bodies?: Matter.Body[]}} packet
+     * @private
+     */
+    _removeRopeChain(packet) {
+        const { rope, previous = [], bodies = [] } = packet ?? {};
+        if (!rope || !this._objects.has(rope)) return;
+        for (const constraint of previous) {
+            Composite.remove(this.world, constraint);
+        }
+        for (const body of bodies) {
+            if (!body) continue;
+            Composite.remove(this.world, body);
+            this._bodyToObject.delete(body.id);
+        }
     }
 
     /**
@@ -561,7 +1164,38 @@ export class PhysicsEngine {
         for (const constraint of rope.constraints) {
             Composite.remove(this.world, constraint);
         }
+        // Co-terminate engine-attached links at the rope (issue 04): a
+        // payload tied to a cut point is released the moment the chain
+        // parts.
+        this._detachConstraintsTouching(
+            new Set(rope.bodies.filter(Boolean).map((body) => body.id))
+        );
         // A rope held by constraints can be asleep; release it so it falls
+        this.wakeBodies(rope.bodies);
+    }
+
+    /**
+     * Exchange a rope's chain in the world. Consumes 'rope:chain-converge'
+     * — Rope.restoreState rewinding a severed live rope to an intact
+     * snapshot rebuilds the chain (its previous set is empty: sever already
+     * dropped it), and Rope.setEndpoints re-lays swap in a whole new chain
+     * (previous is the replaced one) — this drops the stale members from
+     * the world and adds the rebuilt chain (and wakes the rope so the new
+     * chain integrates immediately).
+     * @param {{rope: import('../objects/Rope.js').default, previous?: Matter.Constraint[]}} packet
+     * @private
+     */
+    _restoreRopeConstraints(packet) {
+        const { rope, previous = [] } = packet ?? {};
+        // Register guard: the bus is global, so a converge from a rope
+        // living in ANOTHER engine must not leak its chain into this world.
+        if (!rope?.bodies?.some((body) => body && this._bodyToObject.has(body.id))) return;
+        for (const constraint of previous) {
+            Composite.remove(this.world, constraint);
+        }
+        for (const constraint of rope.constraints) {
+            Composite.add(this.world, constraint);
+        }
         this.wakeBodies(rope.bodies);
     }
 
@@ -574,6 +1208,10 @@ export class PhysicsEngine {
             if (!body || !this._bodyToObject.has(body.id)) return;
             Composite.remove(this.world, body);
             this._bodyToObject.delete(body.id);
+            // Co-termination (ADR 0004): the evicted body takes its runtime
+            // links with it — its survivor would otherwise hang from a body
+            // that is no longer in the world.
+            this._detachConstraintsTouching(new Set([body.id]));
         };
 
         eventBus.on('balloon:popped', this._onBalloonPopped);
@@ -583,9 +1221,14 @@ export class PhysicsEngine {
 
     /** Tear down the engine completely. */
     dispose() {
+        this._attachedConstraints.clear();
+        this._snapshotConstraintRecords = [];
         eventBus.off('balloon:popped', this._onBalloonPopped);
-        Events.off(this.engine);
         eventBus.off('rope:severed', this._onRopeSevered);
+        eventBus.off('rope:chain-converge', this._onRopeChainConverge);
+        eventBus.off('rope:chain-spawned', this._onRopeChainSpawned);
+        eventBus.off('rope:unbundled', this._onRopeUnbundled);
+        Events.off(this.engine);
         this.clear();
         World.clear(this.world);
         Engine.clear(this.engine);

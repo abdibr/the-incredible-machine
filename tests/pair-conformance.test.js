@@ -12,10 +12,12 @@
  *  - scenarios: each row must fire through the REAL engine — Matter gravity,
  *    collisionStart dispatch, eventBus consumers — not synthetic resolve()
  *    calls. Sole exception: gear ✕ gear — both gears are static bodies and
- *    Matter never generates static×static collision pairs, so that row is
- *    driven through the engine's public resolve seam, the exact call its own
- *    collision feed makes. Geometry matches the proven rigs from the object
- *    suites.
+ *    Matter never generates static×static collision pairs, so the row is fed
+ *    live by the gears' own per-step mesh discovery (Gear._updateMeshContacts
+ *    makes the engine's single dispatch seam, the exact call its collision
+ *    feed would make). Its scenarios prove that live feeder end-to-end and
+ *    pin the radius-ratio drive exchange. Geometry matches the proven rigs
+ *    from the object suites.
  *
  * Silent types (ball variants, ramp, conveyor, fan, domino, pulley, candle
  * wax…) intentionally have no scenario: the `silent-objects-null` doc-only
@@ -53,7 +55,9 @@ const DOC_ONLY_ROW_IDS = ['boundary-null', 'silent-objects-null'];
 // The scenario registry under test: one entry per active matrix row.
 const SCENARIO_ROW_IDS = [
     'rope-candle-flame',
+    'free-rope-candle-flame',
     'rope-closed-scissors-blade',
+    'free-rope-closed-scissors-blade',
     'balloon-scissors',
     'balloon-candle',
     'bucket-catch',
@@ -76,7 +80,7 @@ const EXPECTED_REGISTRY_TYPES = [
     'ball', 'tennis-ball', 'baseball',
     'ramp', 'conveyor', 'trampoline',
     'fan', 'spring', 'domino', 'gear', 'pulley',
-    'balloon', 'bucket', 'candle', 'rope', 'scissors', 'mouse',
+    'balloon', 'bucket', 'candle', 'rope', 'free-rope', 'scissors', 'mouse',
 ];
 
 const interactionsTestPath = fileURLToPath(
@@ -197,6 +201,46 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         expect(rope.constraints.length, 'severing must drop the constraint chain').toBe(0);
     });
 
+    it('free-rope-candle-flame: the first tie births the chain and the flame cuts it', () => {
+        const engine = makeEngine();
+        // The bundle ties ONCE to the balloon knot — that first tie is the
+        // chain's birth (issue #55): it hangs straight down from the knot
+        // and, from spawn on, burns exactly like a laid rope.
+        const rope = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        const balloon = new Balloon(200, 10);
+        const candle = new Candle(200, 80);
+        engine.addObject(rope);
+        engine.addObject(balloon);
+        engine.addObject(candle);
+        rope.attachEndpoint(0, balloon, 'knot');
+        expect(rope.bodies.length, 'the first tie spawns the hanging chain').toBeGreaterThan(0);
+        const severed = trackEvent('rope:severed');
+
+        stepUntil(engine, () => rope.isSevered, 60, 'free-rope chain severing');
+        expect(severed.length).toBe(1);
+    });
+
+    it('free-rope-closed-scissors-blade: a spawned chain across the blades is cut when the scissors snap', () => {
+        const engine = makeEngine();
+        // Mirror of the laid-rope scissors rig: the chain dangles from a
+        // balloon knot above the open blades; the ball snapping the scissors
+        // cuts the spawned chain mid-span.
+        const rope = objectRegistry.create('free-rope', 400, 40, { length: 60 });
+        const balloon = new Balloon(400, -10);
+        const scissors = new Scissors(400, 55);
+        const ball = new Ball(379, 28, { variant: 'tennis' });
+        engine.addObject(rope);
+        engine.addObject(balloon);
+        engine.addObject(scissors);
+        engine.addObject(ball);
+        rope.attachEndpoint(0, balloon, 'knot');
+        expect(rope.constraints.length, 'the spawned chain holds itself by constraints').toBeGreaterThan(0);
+
+        stepUntil(engine, () => scissors.isClosed, 90, 'scissors snap');
+        stepUntil(engine, () => rope.isSevered, 90, 'chain cut');
+        expect(rope.constraints.length, 'severing must drop the constraint chain').toBe(0);
+    });
+
     it('balloon-scissors: contact with an open blade pops the balloon once, body gone', () => {
         const engine = makeEngine();
         const scissors = new Scissors(400, 300);
@@ -227,7 +271,11 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
 
     it('bucket-catch: a dropped ball is caught exactly once and settles inside', () => {
         const engine = makeEngine();
-        const bucket = new Bucket(400, 325);
+        // The conformance scenario pins the bucket: a goal bucket in real
+        // levels is fixed (bucket mobility itself is covered by
+        // tests/bucket.test.js). The ball drops in through the mouth,
+        // bounces once, and settles inside the sensor walls.
+        const bucket = new Bucket(400, 325, { isFixed: true });
         const ball = new Ball(400, 250, { variant: 'tennis' });
         engine.addObject(bucket);
         engine.addObject(ball);
@@ -242,29 +290,63 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         expect(bucket.caughtCount).toBe(1);
     });
 
-    it('gear-gear: two same-sign meshed gears flip both drive signs once and stay flipped', () => {
+    it('gear-gear: touching gears counter-rotate — the receiver turns opposite its driver and stays steady', () => {
         const engine = makeEngine();
         const a = new Gear(400, 300);
         const b = new Gear(450, 300);
         engine.addObject(a);
         engine.addObject(b);
+        let fired = 0;
+        engine.interactions.define({
+            id: 'test-gear-gear-spy',
+            actor: { type: 'gear' },
+            target: { type: 'gear' },
+            handler: () => { fired += 1; },
+        });
 
         expect(a.serialize().options.angularSpeed).toBe(0.03);
         expect(b.serialize().options.angularSpeed).toBe(0.03);
 
-        // Both gears are static, and Matter never generates collision pairs
-        // between two static bodies — real contact dispatch cannot fire the
-        // row. Drive it through the engine's public seam (the exact resolve
-        // call its collision feed makes) with a Matter-style pair fixture.
-        engine.interactions.resolve(a, b, {
-            bodyA: a.bodies[0],
-            bodyB: b.bodies[0],
-            normal: { x: 1, y: 0 },
-        });
+        // No scripted push: the gears discover each other mid-step through
+        // their per-step mesh scan (Gear._updateMeshContacts) and dispatch
+        // the row through the engine's single dispatch seam themselves.
+        stepUntil(engine, () => fired >= 1, 30, 'live mesh dispatch');
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03);
 
         for (let i = 0; i < 30; i += 1) engine.step(DT);
-        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+        // One dispatch per contact episode: the pin keeps the touching pair
+        // from re-firing every step, and the counter-rotating speeds are steady.
+        expect(fired).toBe(1);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03);
         expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03);
+    });
+
+    it('gear-gear: unequal radii exchange drive by the radius ratio (equal rim speeds)', () => {
+        const engine = makeEngine();
+        const small = new Gear(400, 300, { radius: 28 }); // ω = 0.03, added first → row actor
+        const large = new Gear(470, 300, { radius: 56 }); // centre gap 70 → rims overlap 14px
+        engine.addObject(small);
+        engine.addObject(large);
+        let fired = 0;
+        engine.interactions.define({
+            id: 'test-gear-gear-spy',
+            actor: { type: 'gear' },
+            target: { type: 'gear' },
+            handler: () => { fired += 1; },
+        });
+
+        stepUntil(engine, () => fired >= 1, 30, 'live mesh dispatch');
+        // Actor keeps its own spin; the counterpart adopts it scaled by the
+        // crossed ratio, turning opposite it — equal rim speeds:
+        // 0.03 * 28 = 0.015 * 56 px/step.
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(0.03);
+        expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015);
+
+        for (let i = 0; i < 30; i += 1) engine.step(DT);
+        expect(fired).toBe(1);
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(0.03);
+        expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015);
     });
 
     it('scissors-snap: a ball onto the handle snaps the scissors closed once', () => {

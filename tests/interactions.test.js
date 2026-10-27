@@ -23,6 +23,8 @@ import Conveyor from '../js/objects/Conveyor.js';
 import Fan from '../js/objects/Fan.js';
 import Domino from '../js/objects/Domino.js';
 import Pulley from '../js/objects/Pulley.js';
+import { objectRegistry } from '../js/objects/ObjectRegistry.js';
+import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import PhysicsEngine from '../js/engine/PhysicsEngine.js';
 import { InteractionMatrix } from '../js/interactions/InteractionMatrix.js';
 import { DEFAULT_INTERACTION_ROWS } from '../js/interactions/rules.js';
@@ -31,6 +33,10 @@ import { readFileSync } from 'node:fs';
 import { eventBus } from '../js/EventBus.js';
 
 const matrix = new InteractionMatrix(DEFAULT_INTERACTION_ROWS);
+
+// The free-rope rows (issue #55) build their actor through the registry —
+// the FreeRope wrapper class lives inside registerAllObjects.
+registerAllObjects();
 
 /** First rope segment body (non-static chain link). */
 const ropeSegOf = (rope) => rope.bodies.find((b) => b.label?.startsWith('rope-seg'));
@@ -133,6 +139,62 @@ describe('Row rope-closed-scissors-blade', () => {
     });
 });
 
+describe('Row free-rope-candle-flame', () => {
+    it('free-rope ✕ candle-flame severs; free-rope ✕ candle wax does not', () => {
+        const candle = new Candle(200, 80);
+        const flame = bodyWithLabel(candle, 'candle-flame');
+        expect(flame).toBeTruthy();
+
+        // Issue-#55 prep: a fresh free rope is a bodyless bundle, so the
+        // fixture ties once to spawn the hanging chain (exactly what the
+        // UI's first tie does) and resolves against a real chain segment.
+        const rope = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        rope.attachEndpoint(0, new Balloon(200, 200), 'knot');
+        const seg = ropeSegOf(rope);
+        expect(seg).toBeTruthy();
+
+        const fired = matrix.resolve(rope, candle, { bodyA: flame, bodyB: seg });
+        expect(fired).toContain('free-rope-candle-flame');
+        expect(rope.isSevered).toBe(true);
+
+        // The bundle itself can never reach a pair at all (no bodies), and
+        // the spawned chain's regression mirrors the laid rope's: the solid
+        // wax body alone must not sever it.
+        const rope2 = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        rope2.attachEndpoint(0, new Balloon(200, 200), 'knot');
+        const wax = bodyWithLabel(candle, 'candle');
+        expect(wax).toBeTruthy();
+        expect(matrix.resolve(rope2, candle, { bodyA: wax, bodyB: ropeSegOf(rope2) })).toEqual([]);
+        expect(rope2.isSevered).toBe(false);
+    });
+});
+
+describe('Row free-rope-closed-scissors-blade', () => {
+    it('free-rope ✕ closed-scissors blade severs; open blades and handles never cut', () => {
+        const scissors = new Scissors(400, 300);
+        const blade = bodyWithLabel(scissors, 'scissors-blade');
+        const handle = bodyWithLabel(scissors, 'scissors-handle');
+
+        // Spawned chain vs open blades / handles: never cut (mirror of the
+        // laid-rope gates).
+        const openRope = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        openRope.attachEndpoint(0, new Balloon(200, 200), 'knot');
+        expect(matrix.resolve(openRope, scissors, { bodyA: blade, bodyB: ropeSegOf(openRope) })).toEqual([]);
+        expect(matrix.resolve(openRope, scissors, { bodyA: handle, bodyB: ropeSegOf(openRope) })).toEqual([]);
+        expect(openRope.isSevered).toBe(false);
+
+        // Snap them shut (row scissors-snap: dynamic weight on a handle)
+        matrix.resolve(scissors, { type: 'ball' }, { bodyA: handle, bodyB: { isStatic: false } });
+        expect(scissors.isClosed).toBe(true);
+
+        const rope = objectRegistry.create('free-rope', 200, 40, { length: 60 });
+        rope.attachEndpoint(0, new Balloon(200, 200), 'knot');
+        const fired = matrix.resolve(rope, scissors, { bodyA: blade, bodyB: ropeSegOf(rope) });
+        expect(fired).toContain('free-rope-closed-scissors-blade');
+        expect(rope.isSevered).toBe(true);
+    });
+});
+
 describe('Rows balloon-scissors / balloon-candle', () => {
     it('balloon ✕ scissors pops (any body)', () => {
         const balloon = new Balloon(200, 200);
@@ -215,24 +277,41 @@ describe('Row gear-gear', () => {
         const fired = matrix.resolve(a, b, { bodyA: a.bodies[0], bodyB: b.bodies[0] });
         expect(fired).toContain('gear-gear');
 
-        // Same outcome as the old mutual double-dispatch: both gears
-        // counter-rotate at their own speed magnitude.
-        expect(a.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+        // True counter-rotation: the actor keeps its spin; the receiver
+        // turns opposite the actor at equal rim speed.
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
         expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
 
-        // Asymmetric speeds: d (−0.02) is driven to +0.03 by c, then drives
-        // c to −0.03 — exactly the pre-matrix call order.
+        // Asymmetric speeds: the drive anchors to the driver — d is driven
+        // to −0.03 (opposite c at c's magnitude, its own −0.02 irrelevant);
+        // the second leg re-drives c and lands exactly on its own spin, so
+        // the mutual dispatch converges instead of compounding.
         const c = new Gear(450, 300, { angularSpeed: 0.03 });
         const d = new Gear(500, 300, { angularSpeed: -0.02 });
         matrix.resolve(c, d, { bodyA: c.bodies[0], bodyB: d.bodies[0] });
-        expect(c.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
-        expect(d.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(c.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(d.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
     });
 
     it('the mesh seam is public state, not a reach-through', () => {
         const g = new Gear(400, 300, { angularSpeed: 0.05 });
-        g.applyGearDrive(-0.02); // receiving a drive reverses sign, adopts magnitude
-        expect(g.serialize().options.angularSpeed).toBeCloseTo(-0.02, 10);
+        g.applyGearDrive(-0.02); // receiving a drive: opposite the driver, at its magnitude
+        expect(g.serialize().options.angularSpeed).toBeCloseTo(0.02, 10);
+    });
+
+    it('unequal radii exchange drive by the radius ratio (equal rim speeds)', () => {
+        const small = new Gear(400, 300, { radius: 28 }); // ω = 0.03 (default)
+        const large = new Gear(560, 300, { radius: 56 }); // ω = 0.03 (default)
+        const fired = matrix.resolve(small, large, { bodyA: small.bodies[0], bodyB: large.bodies[0] });
+        expect(fired).toContain('gear-gear');
+
+        // Both drive directions fire with the crossed ratio: the large gear
+        // adopts 0.03 * (28 / 56) = 0.015 opposite the small gear; the second
+        // leg re-drives the small gear but lands exactly on its own spin —
+        // the mutual dispatch converges. Equal rim speeds:
+        // 0.03 * 28 = 0.015 * 56 px/step.
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015, 10);
     });
 });
 

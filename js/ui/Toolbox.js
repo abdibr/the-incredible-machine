@@ -4,6 +4,12 @@
  * Populates the #toolbox DOM element with available parts grouped by
  * category. Each item shows a canvas icon, name, and quantity.
  * Emits drag-start events for the DragDropManager to pick up.
+ *
+ * Sandbox posture (issue #69): the unauthored sandbox offers every part
+ * without limit (#63). Once the editor panel authors a palette — by editing
+ * rows or loading a level — the sandbox behaves exactly like a player's edit
+ * stage: placement consumes the authored counts, removal returns them, and a
+ * type at 0 cannot be placed (same drag gate as the player path).
  */
 
 import { eventBus } from '../EventBus.js';
@@ -16,6 +22,16 @@ class Toolbox {
 
         /** Available parts inventory: { type: count } */
         this._inventory = {};
+
+        /**
+         * The authored sandbox palette (issue #69): when set, the sandbox
+         * toolbox offers exactly these counts — placed parts consume them,
+         * removed parts return them and a type at 0 is un-placeable. Null
+         * keeps the unauthored sandbox posture (#63): every part unlimited.
+         * Installed via setPalette() (editor panel edit / load / clear).
+         * @type {Object<string, number>|null}
+         */
+        this._palette = null;
 
         /** Whether we're in sandbox mode (infinite parts) */
         this._isSandbox = false;
@@ -48,17 +64,22 @@ class Toolbox {
             this._updateAllItems();
         });
 
-        // Listen for object placed / removed to update counts
+        // Listen for object placed / removed to update counts. The player
+        // path tracks the level inventory; the sandbox tracks the authored
+        // palette (issue #69) exactly like a player's edit stage — the
+        // unauthored sandbox (∞ everything, #63) records nothing.
         eventBus.on('object:placed', ({ type }) => {
-            if (!this._isSandbox && this._inventory[type] !== undefined) {
-                this._inventory[type] = Math.max(0, this._inventory[type] - 1);
+            const counts = this._liveCounts();
+            if (counts && counts[type] !== undefined) {
+                counts[type] = Math.max(0, counts[type] - 1);
                 this._updateItemCount(type);
             }
         });
 
         eventBus.on('object:removed', ({ type }) => {
-            if (!this._isSandbox && this._inventory[type] !== undefined) {
-                this._inventory[type]++;
+            const counts = this._liveCounts();
+            if (counts && counts[type] !== undefined) {
+                counts[type]++;
                 this._updateItemCount(type);
             }
         });
@@ -83,13 +104,43 @@ class Toolbox {
     }
 
     /**
+     * Install or release the sandbox palette (issue #69). The editor panel
+     * drives this: an authored palette (edited rows or a loaded level's
+     * availableParts) makes sandbox items behave like player items — gated,
+     * counted, consumed and returned; null releases back to the
+     * ∞-everything posture the unauthored sandbox keeps (#63).
+     * @param {Object<string, number>|null} palette - type→count map or null
+     */
+    setPalette(palette) {
+        this._palette = palette ? { ...palette } : null;
+        this._updateAllItems();
+    }
+
+    /**
      * Get remaining count for a type.
      * @param {string} type
-     * @returns {number|Infinity}
+     * @returns {number|Infinity} Infinity in the unauthored sandbox (∞
+     *          everything, #63), the authored palette's count thereafter
+     *          (issue #69), or the level inventory count in player modes
      */
     getCount(type) {
-        if (this._isSandbox) return Infinity;
+        if (this._isSandbox) {
+            if (!this._palette) return Infinity;
+            return this._palette[type] || 0;
+        }
         return this._inventory[type] || 0;
+    }
+
+    /**
+     * The counts map the current posture consumes (issue #69): the authored
+     * sandbox palette, the player's level inventory, or null — the
+     * unauthored sandbox that records nothing.
+     * @returns {Object<string, number>|null}
+     * @private
+     */
+    _liveCounts() {
+        if (this._isSandbox) return this._palette;
+        return this._inventory;
     }
 
     // ── Private ──────────────────────────────────
@@ -191,8 +242,16 @@ class Toolbox {
         if (!countEl) return;
 
         if (this._isSandbox) {
-            countEl.textContent = '∞';
-            el.classList.remove('disabled');
+            if (!this._palette) {
+                // Unauthored sandbox posture (#63): every part unlimited.
+                countEl.textContent = '∞';
+                el.classList.remove('disabled');
+            } else {
+                // Authored palette (issue #69): exact counts, gated at 0.
+                const count = this._palette[type] || 0;
+                countEl.textContent = count > 0 ? count : '0';
+                el.classList.toggle('disabled', count <= 0);
+            }
         } else {
             const count = this._inventory[type] || 0;
             countEl.textContent = count > 0 ? count : '0';

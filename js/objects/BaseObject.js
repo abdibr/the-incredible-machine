@@ -11,6 +11,10 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
+import Matter from 'matter-js';
+
+const { Body } = Matter;
+
 let _nextId = 1;
 
 /**
@@ -49,10 +53,11 @@ export default class BaseObject {
      * @param {object} [options={}] - Object-specific configuration
      */
     constructor(x, y, options = {}) {
-        // customId, angle, isFixed are lifecycle keys (id/pose/placement),
-        // not behavior options: they are consumed here and never land in
-        // _options, so serialize→deserialize round-trips stay stable (C3).
-        const { customId, angle, isFixed, ...behaviorOptions } = options;
+        // customId, angle, isFixed, isAnchored are lifecycle keys (id/pose/
+        // placement/state), not behavior options: they are consumed here and
+        // never land in _options, so serialize→deserialize round-trips stay
+        // stable (C3).
+        const { customId, angle, isFixed, isAnchored, ...behaviorOptions } = options;
 
         /** @type {number} Unique instance ID */
         this._id = _nextId++;
@@ -71,6 +76,14 @@ export default class BaseObject {
 
         /** @type {boolean} If true, this object is pre-placed and cannot be moved by the player */
         this._isFixed = isFixed || false;
+
+        /**
+         * @type {boolean} Anchored scene content (issue #67): authored in
+         * place, player-immovable in the edit stage, yet physically dynamic
+         * at play. Set through the isAnchored accessor — never write this
+         * field directly, it would break the fixed/anchored exclusivity.
+         */
+        this._isAnchored = isAnchored || false;
 
         /** @type {object} Original options for serialization */
         this._options = { ...behaviorOptions };
@@ -135,6 +148,78 @@ export default class BaseObject {
 
     /** @returns {boolean} */
     get isFixed() { return this._isFixed; }
+
+    /**
+     * Pin-state setter — the editor's pin affordance (the 📌 selection handle
+     * or the P key, issue #66 follow-up) toggles a part between movable and
+     * fixed scene element. The value round-trips through serialize() like the
+     * constructor option does, so a pinned part lands in a saved level's
+     * fixedObjects and plays statically, exactly like level-JSON scenery.
+     *
+     * The flip must reach the bodies (bug-20261025T193755Z, Bug A). Bodies
+     * are created once — with `isStatic: this._isFixed` read at construction
+     * — so a part flagged after construction kept dynamic bodies: it fell or
+     * tensed during play while isFixed simultaneously barred the move /
+     * rotate / delete gates. Body.setStatic is the exact route Body.create's
+     * isStatic option takes (mass/inertia parked at Infinity/0, velocities
+     * reset), with one divergence ironed out for parity: setStatic parks
+     * every newly-static body at friction 1 and restitution 0, but a part
+     * born fixed keeps its optioned material (Body.create never touches those
+     * fields). So after the static flip the pre-pin material is re-applied
+     * from _original — a pinned part plays identically to its born-fixed
+     * twin. The isStatic guard leaves already-matching bodies untouched
+     * (setStatic early-continues those too). Subclasses needing companion
+     * updates on the flip (Bucket's welds) override this setter and delegate
+     * via super.
+     * @param {boolean} value
+     */
+    set isFixed(value) {
+        const fixed = !!value;
+        if (this._isFixed === fixed) return;
+        this._isFixed = fixed;
+        // Pinning absorbs the anchor (issue #67): a pinned part is play-static
+        // scenery, the anchor flag is moot on it. Exclusivity invariant.
+        if (fixed && this._isAnchored) this._isAnchored = false;
+        for (const body of this.bodies) {
+            if (!body || body.isStatic === fixed) continue;
+            Body.setStatic(body, fixed);
+            if (fixed && body._original) {
+                // Parity with born-fixed scenery: setStatic parks friction 1
+                // / restitution 0; the constructor path leaves both at the
+                // optioned values. Match it.
+                body.friction = body._original.friction;
+                body.restitution = body._original.restitution;
+            }
+        }
+    }
+
+    /** @returns {boolean} whether this part is anchored scene content (issue #67) */
+    get isAnchored() { return this._isAnchored; }
+
+    /**
+     * Anchor-state setter — the editor's anchor affordance (the ⚓ selection
+     * handle or the A key, issue #67) toggles a solid part between movable
+     * and anchored scene content: pre-placed, immovable to the player in the
+     * edit stage, yet physically dynamic at play (it falls, rolls and is
+     * pushed like a free part — beginPlay adds its bodies to the world as
+     * they are).
+     *
+     * Anchoring deliberately touches NO bodies: the distinction to pinning
+     * is exactly that the anchor never statics anything. The three part
+     * states are mutually exclusive, enforced here so every reachable state
+     * keeps the invariant:
+     * - anchoring a pinned part un-pins it first — the isFixed setter
+     *   re-dynamic-izes the bodies (Bucket's welds rebuild via super);
+     * - pinning an anchored part absorbs the anchor (handled in the isFixed
+     *   setter above).
+     * @param {boolean} value
+     */
+    set isAnchored(value) {
+        const anchored = !!value;
+        if (this._isAnchored === anchored) return;
+        this._isAnchored = anchored;
+        if (anchored && this._isFixed) this.isFixed = false;
+    }
 
     /**
      * Get the bounding box of this object.
@@ -206,6 +291,31 @@ export default class BaseObject {
         // Default: no behavioral state to restore
     }
 
+    // ── Attachment points (issue 04: rope as a connector) ─────────
+
+    /**
+     * Named points where a rope endpoint can tie to this object. Each
+     * entry carries the body that bears the point plus the offset from
+     * that body's center (in its local frame — it follows the body).
+     * Default: no attachment points.
+     * @returns {Array<{id: string, body: Matter.Body|null, offset: {x: number, y: number}}>}
+     */
+    get attachmentPoints() {
+        return [];
+    }
+
+    /**
+     * World position of a named attachment point right now.
+     * @param {string} id
+     * @returns {{x: number, y: number}|null} null if unknown or currently unavailable (e.g. popped balloon)
+     */
+    getAttachmentWorldPoint(id) {
+        const ap = this.attachmentPoints.find((p) => p.id === id);
+        const body = ap ? (ap.body ?? this.bodies[0]) : null;
+        if (!ap || !body) return null;
+        return { x: body.position.x + ap.offset.x, y: body.position.y + ap.offset.y };
+    }
+
     // ── Rendering ─────────────────────────────────
 
     /**
@@ -252,6 +362,12 @@ export default class BaseObject {
         // editor-saved levels and round-trips keep named ids. Omitted when unset.
         if (this._customId !== null) {
             data.id = this._customId;
+        }
+        // The anchor marker (issue #67) round-trips like the pin: rows
+        // carrying it rebuild as dynamic-but-player-immovable scene content
+        // on load. Omitted when unset so the plain serial shape stays stable.
+        if (this._isAnchored) {
+            data.isAnchored = true;
         }
         return data;
     }

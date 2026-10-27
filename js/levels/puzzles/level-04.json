@@ -1,7 +1,7 @@
 {
     "id": "level-04",
     "name": "Lighter Than Air",
-    "description": "Use balloons and a rope to lift a platform so the ball can roll into the bucket.",
+    "description": "Pin a rope and tie the balloons to it, then get the ball into the floating goal bucket.",
     "difficulty": 3,
     "goal": {
         "type": "object_in_zone",
@@ -30,6 +30,7 @@
         "ball": 1
     },
     "hints": [
-        "Attach the balloons to the rope, then connect the rope to the fixed ramp to lift it. Place the ball so it rolls down the raised ramp into the bucket."
+        "Ropes pin where you drop them and can tie to balloons: pin one end anywhere solid, then tie both balloons to the rope's end and they will strain against the tether instead of drifting off.",
+        "The goal bucket floats above the ground, so the ball must arrive from above — anything falling through the open mouth lands inside and counts."
     ]
 }

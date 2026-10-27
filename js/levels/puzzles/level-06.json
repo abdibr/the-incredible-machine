@@ -1,0 +1,44 @@
+{
+    "id": "level-06",
+    "name": "Roll In",
+    "description": "The anchored ball can't be moved — watch it roll! Get anything else you like out of the way first.",
+    "difficulty": 1,
+    "goal": {
+        "type": "object_in_zone",
+        "targetType": "ball",
+        "zoneId": "bucket-goal"
+    },
+    "fixedObjects": [
+        {
+            "type": "ramp",
+            "x": 660,
+            "y": 300,
+            "angle": 0.28,
+            "options": { "width": 200 }
+        },
+        {
+            "type": "ball",
+            "x": 615,
+            "y": 266,
+            "angle": 0,
+            "isFixed": false,
+            "isAnchored": true,
+            "options": { "variant": "bowling" }
+        },
+        {
+            "type": "bucket",
+            "x": 775,
+            "y": 480,
+            "angle": 0,
+            "id": "bucket-goal",
+            "options": {}
+        }
+    ],
+    "availableParts": {
+        "ball": 1,
+        "ramp": 1
+    },
+    "hints": [
+        "The ⚓-marked ball is anchored: you cannot drag or delete it in edit mode, but at play it still falls — press Play and watch it roll into the bucket marked GOAL. Your palette parts are spare."
+    ]
+}

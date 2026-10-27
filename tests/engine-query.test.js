@@ -17,6 +17,8 @@ import Spring from '../js/objects/Spring.js';
 import Conveyor from '../js/objects/Conveyor.js';
 import Gear from '../js/objects/Gear.js';
 import Balloon from '../js/objects/Balloon.js';
+import Candle from '../js/objects/Candle.js';
+import Scissors from '../js/objects/Scissors.js';
 
 const { Bodies, Composite, Sleeping } = Matter;
 const STEP_MS = 16.667;
@@ -179,6 +181,62 @@ describe('Discovery & wake seam (ADR 0002)', () => {
             expect(ball.isSleeping).toBe(true);
         });
     });
+    describe('queryZoneOverlap (overlap semantics on the zone query)', () => {
+        it('discovers a large body whose centre is outside the zone but whose bounds overlap it', () => {
+            const engine = createEngine();
+            const ref = Bodies.rectangle(400, 300, 40, 50, { isStatic: true, label: 'zone-ref' });
+            engine.addObject(wrapper(ref));
+            const ZONE = { cx: 0, cy: -100, width: 80, height: 200 }; // world rect x 360-440, y 100-300
+            // A 20x300 pillar centred just south of the zone: centre (400, 305)
+            // is outside (zone max y = 300), but its body reaches up to y = 155.
+            const pillar = Bodies.rectangle(400, 305, 20, 300);
+            engine.addObject(wrapper(pillar));
+
+            expect(engine.queryZone(ref, ZONE)).toEqual([]); // position-inside variant: invisible
+            expect(engine.queryZoneOverlap(ref, ZONE)).toEqual([pillar]); // bounds overlap: discovered
+        });
+
+        it('stays frame-accurate: enclosing-AABB corners do not match on a rotated zone', () => {
+            const engine = createEngine();
+            const ref = Bodies.rectangle(400, 300, 40, 50, { isStatic: true, angle: Math.PI / 4, label: 'zone-ref' });
+            engine.addObject(wrapper(ref));
+            // Band rotated 45°: spans from (400, 17) up-right to (683, 300);
+            // its enclosing AABB corners lie outside the band itself.
+            const ZONE45 = { cx: 0, cy: -200, width: 60, height: 400 };
+            const inBand = Bodies.rectangle(541.4, 158.6, 20, 20); // mid-band of the rotated rect
+            const stray = Bodies.rectangle(390.0, 310.0, 10, 10);  // AABB corner region, off the band
+            engine.addObject(wrapper(inBand, stray));
+
+            expect(engine.queryZoneOverlap(ref, ZONE45)).toEqual([inBand]);
+        });
+
+        it('honours the discovery policy: statics and own sibling bodies skipped unless opted in', () => {
+            const engine = createEngine();
+            const ref = Bodies.rectangle(400, 550, 40, 20, { isStatic: true, label: 'zone-ref' });
+            const sibling = Bodies.rectangle(430, 520, 20, 20); // same owner, overlaps the zone
+            engine.addObject(wrapper(ref, sibling));
+            const staticCrate = Bodies.rectangle(400, 480, 30, 30, { isStatic: true, label: 'static-crate' });
+            Composite.add(engine.world, staticCrate);
+            const ZONE = { cx: 0, cy: -50, width: 100, height: 100 }; // world rect x 350-450, y 450-550
+
+            expect(engine.queryZoneOverlap(ref, ZONE)).toEqual([]); // both skipped
+            expect(engine.queryZoneOverlap(ref, ZONE, { includeStatic: true })).toEqual([staticCrate]); // own sibling still skipped
+        });
+
+        it('discovery never wakes: a sleeping body overlapping the zone stays asleep', () => {
+            const engine = createEngine();
+            const ref = Bodies.rectangle(400, 300, 40, 50, { isStatic: true, label: 'zone-ref' });
+            engine.addObject(wrapper(ref));
+            const ZONE = { cx: 0, cy: -100, width: 80, height: 200 };
+            const ball = ballAt(engine, 400, 250);
+            Sleeping.set(ball, true);
+
+            engine.queryZoneOverlap(ref, ZONE);
+
+            expect(ball.isSleeping).toBe(true);
+        });
+    });
+
     describe('queryPoint', () => {
         it('finds the body containing the point, statics and walls included', () => {
             const engine = createEngine();
@@ -198,6 +256,72 @@ describe('Discovery & wake seam (ADR 0002)', () => {
 
             expect(engine.queryPoint(own.position)).toEqual([own]);
             expect(engine.queryPoint(own.position, { excludeOwner: actor })).toEqual([]);
+        });
+    });
+
+    describe('object-level discovery (ADR 0002: by canonical type, by body label)', () => {
+        it('queryObjectsByType fetches registered objects of a canonical type, in registration order', () => {
+            const engine = createEngine();
+            const first = new Ball(200, 100);
+            const second = new Ball(600, 100);
+            const spring = new Spring(400, 100);
+            engine.addObject(first);
+            engine.addObject(spring);
+            engine.addObject(second);
+
+            expect(engine.queryObjectsByType('ball')).toEqual([first, second]); // order pinned
+            expect(engine.queryObjectsByType('spring')).toEqual([spring]);
+            expect(engine.queryObjectsByType('no-such-type')).toEqual([]); // unknown → empty
+        });
+
+        it('queryObjectsByBodyLabel fetches registered objects owning a labeled body', () => {
+            const engine = createEngine();
+            const scissors = new Scissors(400, 100);
+            const candle = new Candle(600, 100);
+            engine.addObject(scissors);
+            engine.addObject(candle);
+
+            // either scissors body matches; the label query reaches across one object's bodies
+            expect(engine.queryObjectsByBodyLabel('scissors-blade')).toEqual([scissors]);
+            expect(engine.queryObjectsByBodyLabel('scissors-handle')).toEqual([scissors]);
+            expect(engine.queryObjectsByBodyLabel('candle-flame')).toEqual([candle]);
+            expect(engine.queryObjectsByBodyLabel('no-such-label')).toEqual([]);
+        });
+
+        it('removed objects stop being discoverable', () => {
+            const engine = createEngine();
+            const candle = new Candle(400, 100);
+            engine.addObject(candle);
+
+            expect(engine.queryObjectsByType('candle')).toEqual([candle]);
+            engine.removeObject(candle);
+
+            expect(engine.queryObjectsByType('candle')).toEqual([]);
+            expect(engine.queryObjectsByBodyLabel('candle-flame')).toEqual([]);
+        });
+
+        it('excludeOwner keeps an object from fetching itself', () => {
+            const engine = createEngine();
+            const a = new Candle(400, 100);
+            const b = new Candle(400, 400);
+            engine.addObject(a);
+            engine.addObject(b);
+
+            expect(engine.queryObjectsByType('candle', { excludeOwner: a })).toEqual([b]);
+            expect(engine.queryObjectsByBodyLabel('candle-flame', { excludeOwner: a })).toEqual([b]);
+        });
+
+        it('object-level discovery is a pure read (never wakes)', () => {
+            const engine = createEngine();
+            const candle = new Candle(400, 100);
+            engine.addObject(candle);
+            const body = candle.bodies[0];
+            Sleeping.set(body, true);
+
+            engine.queryObjectsByType('candle');
+            engine.queryObjectsByBodyLabel('candle-flame');
+
+            expect(body.isSleeping).toBe(true);
         });
     });
 
@@ -234,7 +358,7 @@ describe('Discovery & wake seam (ADR 0002)', () => {
             for (let i = 0; i < 13; i++) engine.step(STEP_MS); // 0.08/frame release fires on frame 13
 
             expect(ball.isSleeping).toBe(false);
-            expect(ball.velocity.y).toBeLessThan(-1); // launch impulse delivered (measured ≈ -2.5)
+            expect(ball.velocity.y).toBeLessThan(-10); // launch impulse delivered (mass-proportional burst; measured ≈ -22 for the default bowling ball)
         });
 
         it('a sleeping rider is awakened and carried by a conveyor belt', () => {
@@ -274,6 +398,101 @@ describe('Discovery & wake seam (ADR 0002)', () => {
 
             expect(body.isSleeping).toBe(false);
             expect(body.velocity.y).toBeLessThan(0);
+        });
+    });
+
+    describe('impulse-field primitive (ADR 0002: applyImpulseField)', () => {
+        const FIELD = { zone: { cx: 0, cy: -100, width: 80, height: 200 }, range: 200, force: 0.0008 };
+
+        function sourceAt(engine, x, y, angle = 0) {
+            const ref = Bodies.rectangle(x, y, 40, 50, { isStatic: true, angle, label: 'field-src' });
+            engine.addObject(wrapper(ref));
+            return ref;
+        }
+
+        it('applies a linearly-falloff force along the source body’s local up', () => {
+            const engine = createEngine();
+            const ref = sourceAt(engine, 400, 300);
+            const near = ballAt(engine, 400, 250); // dist 50 → falloff factor 0.75
+            const far = ballAt(engine, 400, 150);  // dist 150 → falloff factor 0.25
+
+            const acted = engine.applyImpulseField(ref, FIELD);
+
+            expect(acted).toEqual([near, far]); // world order; the source body itself is skipped
+            expect(near.force.x).toBeCloseTo(0, 12);
+            expect(near.force.y).toBeLessThan(0); // local up = "out of the face"
+            expect(Math.abs(near.force.y)).toBeCloseTo(FIELD.force * 0.75 * near.mass, 12);
+            expect(Math.abs(far.force.y)).toBeCloseTo(FIELD.force * 0.25 * far.mass, 12);
+        });
+
+        it('rotates the direction with the source body (90° maps local up to +x)', () => {
+            const engine = createEngine();
+            const ref = sourceAt(engine, 400, 300, Math.PI / 2);
+            const ahead = ballAt(engine, 500, 300); // 100px east — the rotated "up" cone
+            const north = ballAt(engine, 400, 200); // the unrotated cone's up — now off the zone
+
+            const acted = engine.applyImpulseField(ref, FIELD);
+
+            expect(acted).toEqual([ahead]);
+            expect(ahead.force.y).toBeCloseTo(0, 12);
+            expect(ahead.force.x).toBeGreaterThan(0);
+            expect(ahead.force.x).toBeCloseTo(FIELD.force * 0.5 * ahead.mass, 12); // dist 100 → factor 0.5
+        });
+
+        it('skips statics, walls, and its own sibling bodies', () => {
+            const engine = createEngine();
+            const ref = Bodies.rectangle(400, 300, 40, 50, { isStatic: true, label: 'field-src' });
+            const sibling = Bodies.rectangle(430, 250, 20, 20); // same owner, inside the zone
+            engine.addObject(wrapper(ref, sibling));
+            const staticCrate = Bodies.rectangle(400, 150, 30, 30, { isStatic: true, label: 'static-crate' });
+            Composite.add(engine.world, staticCrate);
+
+            const acted = engine.applyImpulseField(ref, FIELD);
+
+            expect(acted).toEqual([]);
+            expect(sibling.force.x).toBe(0);
+            expect(sibling.force.y).toBe(0);
+            expect(staticCrate.force.x).toBe(0);
+            expect(staticCrate.force.y).toBe(0);
+        });
+
+        it('wakes every body it acts on (wake-on-act) and leaves outsiders asleep', () => {
+            const engine = createEngine();
+            const ref = sourceAt(engine, 400, 300);
+            const inside = ballAt(engine, 400, 250);
+            const outside = ballAt(engine, 400, 80); // beyond the zone (zone starts at y 100)
+            Sleeping.set(inside, true);
+            Sleeping.set(outside, true);
+
+            engine.applyImpulseField(ref, FIELD);
+
+            expect(inside.isSleeping).toBe(false);
+            expect(outside.isSleeping).toBe(true);
+        });
+
+        it('bodies in the zone but beyond the falloff range receive no force', () => {
+            const engine = createEngine();
+            const ref = sourceAt(engine, 400, 300);
+            const corner = ballAt(engine, 440, 100); // rect corner, dist ≈ 203.96 > range 200
+            const centre = ballAt(engine, 400, 300); // exactly on the source centre: degenerate
+
+            const acted = engine.applyImpulseField(ref, FIELD);
+
+            expect(acted).toEqual([]);
+            expect(corner.force.x).toBe(0);
+            expect(corner.force.y).toBe(0);
+            expect(centre.force.x).toBe(0);
+            expect(centre.force.y).toBe(0);
+        });
+
+        it('match: "overlap" reaches bodies whose centre is outside the zone', () => {
+            const engine = createEngine();
+            const ref = sourceAt(engine, 400, 300);
+            const pillar = Bodies.rectangle(400, 305, 20, 300); // centre outside, body reaches in
+            engine.addObject(wrapper(pillar));
+
+            expect(engine.applyImpulseField(ref, FIELD)).toEqual([]); // position-inside default
+            expect(engine.applyImpulseField(ref, { ...FIELD, match: 'overlap' })).toEqual([pillar]);
         });
     });
 });

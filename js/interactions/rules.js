@@ -60,6 +60,32 @@ export const DEFAULT_INTERACTION_ROWS = [
         // Preserved from Rope.onCollision: this was the codebase's only
         // label-gated pair; open blades let a rope rest untouched.
     },
+    {
+        id: 'free-rope-candle-flame',
+        summary: 'A spawned free-rope chain touching a candle flame burns through and severs.',
+        actor: { type: 'free-rope', match: 'free-rope (any chain segment)' },
+        target: { type: 'candle', label: 'candle-flame', match: "candle flame (label 'candle-flame')" },
+        handler: (rope) => rope.sever(),
+        test: 'free-rope ✕ candle-flame severs; free-rope ✕ candle wax does not',
+        // Issue #55: the chain is born of the first tie; from spawn on it
+        // burns exactly like a laid rope. The bodyless bundle can never
+        // reach a pair at all — it has no bodies.
+    },
+    {
+        id: 'free-rope-closed-scissors-blade',
+        summary: 'A spawned free-rope chain touching the blade bodies of snapped-shut scissors is cut.',
+        actor: { type: 'free-rope', match: 'free-rope (any chain segment)' },
+        target: {
+            type: 'scissors',
+            label: 'scissors-blade',
+            predicate: (scissors) => scissors.isClosed,
+            match: "scissors, closed, via label 'scissors-blade'",
+        },
+        handler: (rope) => rope.sever(),
+        test: 'free-rope ✕ closed-scissors blade severs; open blades and handles never cut',
+        // Issue #55: mirrors rope-closed-scissors-blade for the spawned
+        // chain; the bundle (no bodies) is naturally immune.
+    },
 
     // ── Balloon reactions ──────────────────────────────────────
     {
@@ -99,7 +125,7 @@ export const DEFAULT_INTERACTION_ROWS = [
     // ── Gear reaction ──────────────────────────────────────────
     {
         id: 'gear-gear',
-        summary: 'Two touching gears mesh: each drives the other to counter-rotate at its own speed.',
+        summary: 'Two touching gears mesh live: they counter-rotate at equal rim speeds (drive scales by the radius ratio).',
         actor: { type: 'gear', match: 'gear' },
         target: { type: 'gear', match: 'gear' },
         handler: (a, b) => {
@@ -109,7 +135,13 @@ export const DEFAULT_INTERACTION_ROWS = [
         test: 'gear ✕ gear meshes mutually through the public mesh seam',
         // BUG-FIX: Gear.onCollision reached through to `other._angularSpeed`.
         // meshWith()/applyGearDrive() is the public seam; firing both
-        // directions here reproduces the old double-dispatch outcome exactly.
+        // directions converges: the actor keeps its spin, the receiver ends
+        // up opposite it at equal rim speed — identical either way the row
+        // is claimed, and stable across re-touches.
+        // Feeder: both gears are static bodies, so Matter never pairs
+        // static × static — in live play each gear's per-step mesh discovery
+        // (Gear._updateMeshContacts) dispatches this row through the same
+        // resolve seam, once per contact episode.
     },
 
     // ── Scissors reaction ──────────────────────────────────────
@@ -150,7 +182,7 @@ export const DEFAULT_INTERACTION_ROWS = [
             match: "spring, via its 'spring-platform' body, off cooldown",
         },
         target: ANY,
-        handler: (spring) => spring.armLaunch(),
+        handler: (spring, other) => spring.armLaunch(other),
         test: 'spring ✕ platform contact triggers; cooldown suppresses retriggers',
     },
 

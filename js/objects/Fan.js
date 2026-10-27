@@ -55,46 +55,29 @@ export default class Fan extends BaseObject {
     /**
      * Apply wind force to bodies in the fan's wind zone.
      * Wind blows outward from the fan face (upward by default).
+     *
+     * A thin wrapper over the engine's impulse-field primitive (ADR 0002
+     * amendment): the fan's law — rect zone out of the face, linear distance
+     * falloff, mass-scaled force along local "up" (default), wake-on-act —
+     * lives in one engine seam; the fan supplies only its dial settings and
+     * the blade animation.
      */
     onBeforeUpdate(engine) {
         this._isBlowing = true;
         this._bladeAngle += 0.3;
 
-        const pos = this._body.position;
-
-        // Face direction is fan-local "up" (0, -1) rotated by the body angle —
-        // the same direction the wind lines are drawn in.
-        const windDirX = Math.sin(this._body.angle);
-        const windDirY = -Math.cos(this._body.angle);
-
-        // Wind zone: a rectangle anchored to the fan, FAN_WIDTH wide across
-        // the face (|local x| <= FAN_WIDTH) and windRange long out of the face
-        // (local y from -windRange up to 0, matching the 0° zone exactly).
-        // Discovered through the engine's region-grade seam (ADR 0002):
-        // position-in-local-rect semantics, self/statics/walls pre-filtered.
-        const riders = engine.queryZone(this._body, {
-            cx: 0,
-            cy: -this._windRange / 2,
-            width: 2 * FAN_WIDTH,
-            height: this._windRange,
+        engine.applyImpulseField(this._body, {
+            // Rect zone out of the fan face — queryZone convention: cx/cy the
+            // rect's local centre offset, width/height its extents.
+            zone: {
+                cx: 0,
+                cy: -this._windRange / 2,
+                width: 2 * FAN_WIDTH,
+                height: this._windRange,
+            },
+            range: this._windRange,
+            force: this._windForce,
         });
-
-        for (const body of riders) {
-            // Distance-based falloff
-            const dx = body.position.x - pos.x;
-            const dy = body.position.y - pos.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-
-            if (dist < this._windRange && dist > 0) {
-                const factor = 1 - (dist / this._windRange);
-                const fx = windDirX * this._windForce * factor * body.mass;
-                const fy = windDirY * this._windForce * factor * body.mass;
-                // A sleeping body would skip force integration — waking is
-                // part of acting on it (ADR 0002).
-                engine.wakeBodies([body]);
-                Body.applyForce(body, body.position, { x: fx, y: fy });
-            }
-        }
     }
 
     draw(ctx) {
@@ -203,6 +186,7 @@ export default class Fan extends BaseObject {
         return new Fan(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            isAnchored: data.isAnchored,
             customId: data.id,
             windRange: data.options?.windRange || WIND_RANGE,
             windForce: data.options?.windForce || WIND_FORCE,

@@ -210,6 +210,38 @@ describe('Rope severing — physical detachment', () => {
         physics2.dispose();
         rope2.dispose();
     });
+
+    it('builds chain links that rest at the laid spacing (no contraction yank)', () => {
+        const physics = new PhysicsEngine(800, 600);
+        const rope = new Rope(200, 100);
+        physics.addObject(rope);
+
+        // Rest lengths equal the laid distances (segLength = 100/6):
+        // anchor→seg-0 half a segment, seg↔seg the full segment
+        const segLength = 100 / 6;
+        expect(rope.constraints).toHaveLength(6);
+        expect(rope.constraints[0].length).toBeCloseTo(segLength * 0.5, 6);
+        for (let i = 1; i < rope.constraints.length; i++) {
+            expect(rope.constraints[i].length).toBeCloseTo(segLength, 6);
+        }
+
+        // Hanging intact under its own weight: links settle AT their rest
+        // lengths (± solver slop), not contracted inboard by shorter
+        // constraints (the bug file 2026-10-23 contraction yank)
+        for (let i = 0; i < 60; i++) physics.step(16.67);
+        const bodies = rope.bodies;
+        for (let i = 1; i < bodies.length; i++) {
+            const rest = i === 1 ? segLength * 0.5 : segLength;
+            const gap = Math.hypot(
+                bodies[i].position.x - bodies[i - 1].position.x,
+                bodies[i].position.y - bodies[i - 1].position.y,
+            );
+            expect(gap).toBeGreaterThan(rest - 1);
+            expect(gap).toBeLessThan(rest + 4);
+        }
+
+        physics.dispose();
+    });
 });
 
 /** Minimal canvas 2D-context stub that records calls (no DOM/canvas in Node). */

@@ -11,9 +11,71 @@
  *   - main.js `controls:play` (EDITING/SANDBOX start)            → beginPlay
  *   - main.js `_resetLevel()` level branch (after _setupLevel)    → restorePlacedFromSnapshot
  *   - main.js `_resetLevel()` sandbox branch                      → resetSandboxBoard
+ *   - main.js `_resetLevel()` return posture                      → resetReturnPosture
  */
 
 import { objectRegistry } from '../objects/ObjectRegistry.js';
+
+/**
+ * The posture a stop returns to (issue #71): the posture the run was born
+ * in — recorded at controls:play. A sandbox-born run re-enters the sandbox
+ * even though its Load Level path installed a level id (id presence cannot
+ * decide the posture); a campaign-born run returns to campaign editing.
+ * Without a record (null — unreachable in practice) the historical
+ * level-id heuristic decides, so an unforeseen reset path preserves past
+ * behavior.
+ *
+ * Used by main.js `_resetLevel()` for the return mode AND the board
+ * branch: an 'EDITING' return implies level data is installed, so the
+ * campaign branch rebuilds the level; everything else rewinds the sandbox
+ * board from the play-start snapshot.
+ *
+ * @param {string|null} runOriginPosture — 'EDITING'|'SANDBOX', recorded at play start
+ * @param {object|null} levelData — levelManager.getCurrentLevel()
+ * @returns {'EDITING'|'SANDBOX'}
+ */
+export function resetReturnPosture(runOriginPosture, levelData) {
+    if (runOriginPosture === 'SANDBOX') return 'SANDBOX';
+    if (runOriginPosture === 'EDITING' && levelData) return 'EDITING';
+    return levelData ? 'EDITING' : 'SANDBOX';
+}
+
+/**
+ * Serialize the placed board with rope attachment tokens (issue 04).
+ *
+ * Each row is the object's own serialize() — ropes intentionally emit no
+ * attachment data of their own — and the annotator then writes live knot
+ * refs onto each rope's row as ordinal tokens:
+ * `{ endpoint, targetType, targetOrdinal, pointId }`. The ordinal indexes
+ * THIS array; board order is stable across play/reset cycles (fixed
+ * objects rebuilt from level JSON first, placed parts restored in snapshot
+ * order), which is what makes an ordinal restorable.
+ *
+ * @param {import('../objects/BaseObject.js').default[]} board — shared live board (fixed + placed, board order)
+ * @returns {object[]} serialized rows (rope rows may carry `attachments`)
+ */
+export function serializePlacedBoard(board) {
+    const entries = board.map((o) => o.serialize());
+    const ordinalByObject = new Map(board.map((obj, index) => [obj, index]));
+    for (let index = 0; index < board.length; index++) {
+        const obj = board[index];
+        if ((obj.type !== 'rope' && obj.type !== 'free-rope') || typeof obj.getAttachmentRefs !== 'function') continue;
+        const tokens = [];
+        for (const ref of obj.getAttachmentRefs()) {
+            // Target no longer on the board → the knot dies with it
+            const ordinal = ordinalByObject.get(ref.target);
+            if (ordinal === undefined) continue;
+            tokens.push({
+                endpoint: ref.endpoint,
+                targetType: ref.target.type,
+                targetOrdinal: ordinal,
+                pointId: ref.pointId,
+            });
+        }
+        if (tokens.length > 0) entries[index].attachments = tokens;
+    }
+    return entries;
+}
 
 /**
  * Enter play: serialize the placed board, then rebuild the physics world
@@ -27,7 +89,7 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
  * @returns {object[]} Placed snapshot entries (what serialize() wrote at play start).
  */
 export function beginPlay(physics, placedObjects) {
-    const snapshot = placedObjects.map((o) => o.serialize());
+    const snapshot = serializePlacedBoard(placedObjects);
     if (physics) {
         physics.clear();
         for (const obj of placedObjects) {
@@ -49,12 +111,27 @@ export function beginPlay(physics, placedObjects) {
  * @param {import('../objects/BaseObject.js').default[]} placedObjects — shared live board
  * @param {object[]|null} snapshot — serialized placed data (from beginPlay)
  * @param {import('../objects/ObjectRegistry.js').ObjectRegistry} [registry]
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeFixed=false] - also restore fixed rows. The
+ *   level-reload default leaves fixed objects to level JSON, but a full
+ *   sandbox rewind has cleared the whole board, so the snapshot rows are the
+ *   only source for parts the player pinned before playing (goal bucket,
+ *   scenery) — bug-20261025T193755Z, Bug B. Rows restore in snapshot order
+ *   either way, so the two-phase attachment-token bind stays ordinal-aligned.
  * @returns {import('../objects/BaseObject.js').default[]} restored instances
  */
-export function restorePlacedFromSnapshot(placedObjects, snapshot, registry = objectRegistry) {
+export function restorePlacedFromSnapshot(
+    placedObjects, snapshot, registry = objectRegistry, { includeFixed = false } = {}
+) {
     const restored = [];
-    for (const data of snapshot ?? []) {
-        if (!data || data.isFixed) continue; // fixed objects are rebuilt from level data
+    const rows = snapshot ?? [];
+    for (const data of rows) {
+        // Default (level reload): fixed AND anchored rows are level furniture
+        // rebuilt from level JSON — an anchored row (isFixed:false but
+        // player-immovable scene content, issue #67) must skip here too or the
+        // reload path would double-restore it beside the level rebuild. With
+        // includeFixed (sandbox rewind) they come back here.
+        if (!data || (!includeFixed && (data.isFixed || data.isAnchored))) continue;
         try {
             restored.push(registry.deserialize(data));
         } catch (e) {
@@ -62,6 +139,24 @@ export function restorePlacedFromSnapshot(placedObjects, snapshot, registry = ob
         }
     }
     placedObjects.push(...restored);
+
+    // Two-phase bind (issue 04): rope attachment tokens only resolve once
+    // every row has come back — they index the full snapshot order, and the
+    // rebuilt board (fixed from level JSON first, restored placed in
+    // snapshot order) mirrors it one-to-one. On any count disagreement the
+    // ordinals cannot be trusted: bind with no board so every token drops
+    // with a warning, instead of tying across a shifted layout.
+    const aligned = rows.length > 0 && placedObjects.length === rows.length;
+    if (!aligned) {
+        console.warn(
+            `[App] Placed snapshot/board size mismatch (${rows.length} rows vs ${placedObjects.length} objects) — dropping attachment tokens.`
+        );
+    }
+    for (const obj of restored) {
+        if (typeof obj.bindAttachment === 'function') {
+            obj.bindAttachment(aligned ? placedObjects : null);
+        }
+    }
     return restored;
 }
 
@@ -86,12 +181,16 @@ export function resetSandboxBoard(physics, placedObjects, snapshot, registry = o
     physics?.clear();
 
     // Stale edit instances were already removed from (and disposed by) the
-    // physics clear above — just drop them from the board.
-    for (let i = placedObjects.length - 1; i >= 0; i--) {
-        if (!placedObjects[i].isFixed) {
-            placedObjects.splice(i, 1);
-        }
-    }
+    // physics clear above — drop them from the board. ALL of them, fixed
+    // included: a pinned part is not exempt from the clear, so leaving it on
+    // the board strands a disposed zombie — bodies nulled, its draw() crashing
+    // the frame and every edit affordance on it dead (bug-20261025T193755Z,
+    // Bug B: the sandbox goal bucket froze rendering and broke editing after
+    // a play/reset cycle). The play-start snapshot carries each part's pin
+    // (isFixed round-trips through serialize), so restoring the full board
+    // brings the pinned goal bucket back exactly as the player left it, fresh
+    // and fully editable.
+    placedObjects.length = 0;
 
-    return restorePlacedFromSnapshot(placedObjects, snapshot, registry);
+    return restorePlacedFromSnapshot(placedObjects, snapshot, registry, { includeFixed: true });
 }

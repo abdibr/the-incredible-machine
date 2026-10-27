@@ -30,7 +30,11 @@ export default class Balloon extends BaseObject {
         this._colorIndex = options.colorIndex ?? Math.floor(Math.random() * COLORS.length);
         this._color = COLORS[this._colorIndex];
         this._popped = false;
-        this._bobPhase = Math.random() * Math.PI * 2;
+        // Bob-phase may arrive from serialize() (bug-file/board snapshots and
+        // editor-saved levels — ADR 0006): the live phase is the only
+        // physics-affecting construction randomness, so restore exactly it
+        // and only seed randomly when no recorded phase exists.
+        this._bobPhase = options.bobPhase ?? Math.random() * Math.PI * 2;
 
         this._body = Bodies.circle(x, y, this._radius, {
             density: 0.0003,
@@ -59,6 +63,22 @@ export default class Balloon extends BaseObject {
     setAngle(angle) {
         super.setAngle(angle);
         if (!this._popped) Body.setAngle(this._body, angle);
+    }
+
+    /**
+     * Rope anchor seam (issue 04): a balloon ties by its knot — the little
+     * triangle at the bottom of the drawn oval. The offset follows the
+     * balloon's own body, so a tethered balloon strains and bobs naturally.
+     * A popped balloon offers nothing to tie to.
+     * @returns {Array<{id: string, body: Matter.Body|null, offset: {x: number, y: number}}>}
+     */
+    get attachmentPoints() {
+        if (this._popped) return [];
+        return [{
+            id: 'knot',
+            body: this._body,
+            offset: { x: 0, y: this._radius * 1.2 + 4 },
+        }];
     }
 
     /** Apply upward buoyancy force each frame. */
@@ -167,7 +187,14 @@ export default class Balloon extends BaseObject {
     serialize() {
         return {
             ...super.serialize(),
-            options: { ...this._options, colorIndex: this._colorIndex },
+            // Write the LIVE phase (not the constructed one): the phase
+            // advances every step, so captured snapshots must reflect the
+            // moment they are taken (ADR 0006 decision 5).
+            options: {
+                ...this._options,
+                colorIndex: this._colorIndex,
+                bobPhase: this._bobPhase,
+            },
         };
     }
 
@@ -175,8 +202,10 @@ export default class Balloon extends BaseObject {
         return new Balloon(data.x, data.y, {
             angle: data.angle,
             isFixed: data.isFixed,
+            isAnchored: data.isAnchored,
             customId: data.id,
             colorIndex: data.options?.colorIndex,
+            bobPhase: data.options?.bobPhase, // restores the captured phase
         });
     }
 

@@ -105,15 +105,17 @@ describe('Object lifecycle contract (C3 / ADR 0003)', () => {
 
         it('Spring: trigger/compression/cooldown restart armed-fresh', () => {
             const spring = new Spring(200, 300);
-            spring.armLaunch();
+            spring.armLaunch({ bodies: [{}] }); // a remembered rider is a transient too
             // Mid-decay values the engine's per-step ticks would have produced
             spring._compression = 0.4;
             spring._cooldown = 17;
             expect(spring._triggered).toBe(true);
+            expect(spring._riders.length).toBe(1);
             spring.restoreState({});
             expect(spring._triggered).toBe(false);
             expect(spring._compression).toBe(0);
             expect(spring._cooldown).toBe(0);
+            expect(spring._riders.length).toBe(0);
         });
 
         it('Trampoline: a mid-decay stretch flattens', () => {

@@ -104,3 +104,125 @@ describe('Gear tooth interaction', () => {
         engine.dispose();
     });
 });
+
+describe('Gear live mesh discovery', () => {
+    it('a touching pair dispatches the mesh row exactly once per contact episode', () => {
+        const engine = new PhysicsEngine(400, 400);
+        const a = new Gear(120, 200);          // r = 28, ω = 0.03
+        const b = new Gear(170, 200);          // centre gap 50 → rims overlap 6px
+        engine.addObject(a);
+        engine.addObject(b);
+        let fired = 0;
+        engine.interactions.define({
+            id: 'test-gear-gear-spy',
+            actor: { type: 'gear' },
+            target: { type: 'gear' },
+            handler: () => { fired += 1; },
+        });
+
+        engine.step(STEP_MS);
+        expect(fired).toBe(1); // discovered and dispatched on the first step
+        // True counter-rotation: equal magnitudes, opposite signs.
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+
+        for (let i = 0; i < 29; i++) engine.step(STEP_MS);
+        expect(fired).toBe(1); // one dispatch per contact episode, not per step
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+
+        // Separation ends the episode; a re-touch may fire the row again.
+        a.setPosition(320, 200); // centre gap 200 → rims clear
+        engine.step(STEP_MS);
+        a.setPosition(170, 200); // touch again → a fresh contact episode
+        engine.step(STEP_MS);
+        expect(fired).toBe(2); // exactly one dispatch for the second episode
+
+        engine.dispose();
+    });
+
+    it('unequal radii mesh at equal rim speeds — drive scales by the radius ratio', () => {
+        const engine = new PhysicsEngine(500, 400);
+        const small = new Gear(150, 200, { radius: 28 }); // ω = 0.03, added first → row actor
+        const large = new Gear(220, 200, { radius: 56 }); // centre gap 70 → rims overlap 14px
+        engine.addObject(small);
+        engine.addObject(large);
+
+        engine.step(STEP_MS);
+        // Actor (small) keeps its own spin; the large gear counter-rotates
+        // at 0.03 * (28 / 56) = 0.015. Equal rim speeds: 0.03 * 28 = 0.015 * 56.
+        expect(small.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(large.serialize().options.angularSpeed).toBeCloseTo(-0.015, 10);
+
+        engine.dispose();
+    });
+
+    it('teeth touching alone fires the mesh — bare rims need not overlap', () => {
+        const engine = new PhysicsEngine(400, 400);
+        const a = new Gear(120, 200);          // r = 28, tooth tip reach 33
+        // Centre gap 61 = rA + rB + 5: tooth tip bands (r + 5 = 33) interlock
+        // by 5px while the bare rims (28 + 28 = 56) are still 5px apart —
+        // meshing is judged on the teeth, not the rims (old trigger: 54).
+        const b = new Gear(181, 200);
+        engine.addObject(a);
+        engine.addObject(b);
+
+        engine.step(STEP_MS);
+        // Same counter-rotating pair as a rim-overlapping placement.
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+
+        engine.dispose();
+    });
+
+    it('tooth tips just short of contact leave the gears unmeshed', () => {
+        const engine = new PhysicsEngine(400, 400);
+        const a = new Gear(120, 200);          // r = 28, tooth tip reach 33
+        // Tip circles touch only at centre gap 33 + 33 = 66; gap 68 leaves a
+        // 2px air gap between tooth tips, so nothing must fire.
+        const b = new Gear(188, 200);
+        engine.addObject(a);
+        engine.addObject(b);
+
+        engine.step(STEP_MS);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+
+        engine.dispose();
+    });
+
+    it('tooth tips exactly touching fire the mesh — kissing teeth couple', () => {
+        const engine = new PhysicsEngine(400, 400);
+        const a = new Gear(120, 200);          // tooth tip reach 28 + 5 = 33
+        // Centre gap 66 = tip reach + tip reach: the tooth tip circles touch
+        // exactly. Touching teeth are meshed teeth — the pair must fire here
+        // (was broken: the trigger sat 2px deeper, silently ignoring every
+        // just-touching placement).
+        const b = new Gear(186, 200);
+        engine.addObject(a);
+        engine.addObject(b);
+
+        engine.step(STEP_MS);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(-0.03, 10);
+
+        engine.dispose();
+    });
+
+    it('a hairline air gap between the tooth tips keeps the pair silent', () => {
+        const engine = new PhysicsEngine(400, 400);
+        const a = new Gear(120, 200);          // tooth tip reach 33
+        // Centre gap 67 = touch distance 66 + 1: a visible air gap between
+        // the tip circles — that is separation, not contact. Pins the upper
+        // boundary so no extra slop can creep past the kiss point.
+        const b = new Gear(187, 200);
+        engine.addObject(a);
+        engine.addObject(b);
+
+        engine.step(STEP_MS);
+        expect(a.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+        expect(b.serialize().options.angularSpeed).toBeCloseTo(0.03, 10);
+
+        engine.dispose();
+    });
+});

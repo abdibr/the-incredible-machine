@@ -7,8 +7,24 @@
  * - Moving selected objects by dragging
  * - Rotating selected objects via handle
  * - Deleting selected objects (right-click or Delete key)
+ * - Pinning a selected object (pin handle or P key, issue #66 follow-up):
+ *   a pinned part cannot move during play, Save Level writes it into the
+ *   level's fixedObjects, and a pinned unnamed bucket is the goal zone the
+ *   readout, GOAL marker and Save all agree on
+ * - Anchoring a selected object (anchor handle or A key, issue #67): an
+ *   anchored part is pre-placed scene content the player cannot move or
+ *   delete in the edit stage, yet physically dynamic at play — Save Level
+ *   writes it into fixedObjects with its `isAnchored` marker
  *
  * Coordinates between the Toolbox (inventory) and Renderer (canvas).
+ *
+ * The selection-affordance set is state-driven (issues #68, #67): which
+ * handles a part offers — and which move/rotate/delete verbs are accepted —
+ * come from the shared selectionHandles table (part state × stage posture).
+ * Sandbox authoring edits fixed scenery in place (dragging a pinned goal
+ * bucket IS the #66 goal-zone authoring move); every other stage leaves a
+ * pinned part only its pin handle and an anchored part only its anchor
+ * handle.
  */
 
 import { eventBus } from '../EventBus.js';
@@ -16,11 +32,17 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { renderer } from '../render/Renderer.js';
 import { toolbox } from './Toolbox.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
+import { selectionHandleSet, isAnchorCapable } from './selectionHandles.js';
+import ConnectFlow from './ConnectFlow.js';
 
 class DragDropManager {
     constructor() {
         /** @type {BaseObject[]} — the live objects list (shared with renderer) */
         this._objects = [];
+
+        /** Click-to-connect flow (ADR 0007 decision 2): this manager delegates
+         * square clicks (seek entry, tie, cancel, untie) to it. */
+        this._connectFlow = new ConnectFlow();
 
         /** Current edit mode */
         this._mode = 'MENU';
@@ -61,50 +83,28 @@ class DragDropManager {
             eventBus.emit('drag:ghost-update', { type, x: canvasPos.x, y: canvasPos.y });
         });
 
+        // ── Click-to-connect flow (ADR 0007 decision 2) ──
+        this._connectFlow.init();
+
         // ── Canvas mousedown ──
         canvas.addEventListener('mousedown', (e) => {
             if (!this._enabled) return;
             if (e.button !== 0) return; // Left button only
 
             const pos = renderer.pageToCanvas(e.pageX, e.pageY);
-
-            // Check for selection handle clicks first
-            if (this._selectedObject) {
-                const handle = renderer.getHandleAtPoint(pos.x, pos.y);
-                if (handle === 'delete') {
-                    this._deleteSelected();
-                    return;
-                }
-                if (handle === 'move') {
-                    this._startMoveObject(pos.x, pos.y);
-                    return;
-                }
-                if (handle === 'rotate') {
-                    this._startRotateObject(pos.x, pos.y);
-                    return;
-                }
-            }
-
-            // Check for clicking on an object
-            const obj = renderer.getObjectAtPoint(pos.x, pos.y, this._objects);
-            if (obj) {
-                if (obj.isFixed) {
-                    // Can't interact with fixed objects
-                    this._selectObject(null);
-                } else {
-                    this._selectObject(obj);
-                    this._startMoveObject(pos.x, pos.y);
-                }
-            } else {
-                this._selectObject(null);
-            }
+            this._onCanvasPointerDown(pos.x, pos.y);
         });
 
         // ── Global mousemove ──
         document.addEventListener('mousemove', (e) => {
-            if (!this._dragging) return;
-
             const pos = renderer.pageToCanvas(e.pageX, e.pageY);
+
+            // Hover-reveal for the connect-flow squares; the seek preview
+            // line aims wherever the cursor is while a seek is in flight.
+            renderer.hoverPoint = pos;
+            if (this._connectFlow.seek) this._connectFlow.setPreview(pos.x, pos.y);
+
+            if (!this._dragging) return;
 
             if (this._dragType === 'toolbox') {
                 eventBus.emit('drag:ghost-update', { type: this._dragObjType, x: pos.x, y: pos.y });
@@ -143,10 +143,24 @@ class DragDropManager {
                 this._placeObject(this._dragObjType, pos.x, pos.y);
                 eventBus.emit('drag:ghost-clear');
             } else if (this._dragType === 'move' && this._dragObject) {
+                // A moved rope drags its knots off their points (issue 04):
+                // untie at release — the drop-scan reconcile releases the
+                // physical links on the next play.
+                if (this._dragObject.type === 'rope' || this._dragObject.type === 'free-rope') {
+                    this._dragObject.clearAttachments();
+                }
                 eventBus.emit('object:moved', {
                     id: this._dragObject.id,
                     x: this._dragObject.x,
                     y: this._dragObject.y,
+                });
+            } else if (this._dragType === 'rotate' && this._dragObject) {
+                // Rotate drops previously emitted nothing — a build-trace gap
+                // (ADR 0006): announce the final angle like move announces
+                // its pose, so the recorded trace can reconstruct pose history.
+                eventBus.emit('object:rotated', {
+                    id: this._dragObject.id,
+                    angle: this._dragObject.angle,
                 });
             }
 
@@ -162,23 +176,16 @@ class DragDropManager {
             if (!this._enabled) return;
 
             const pos = renderer.pageToCanvas(e.pageX, e.pageY);
-            const obj = renderer.getObjectAtPoint(pos.x, pos.y, this._objects);
-            if (obj && !obj.isFixed) {
-                this._selectObject(obj);
-                this._deleteSelected();
-            }
+            this._onCanvasContextMenu(pos.x, pos.y);
         });
 
-        // ── Delete key ──
-        document.addEventListener('keydown', (e) => {
-            if (!this._enabled) return;
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-
-            if ((e.code === 'Delete' || e.code === 'Backspace') && this._selectedObject) {
-                e.preventDefault();
-                this._deleteSelected();
-            }
+        // ── Cursor leaves the canvas: no hover target ──
+        canvas.addEventListener('mouseleave', () => {
+            renderer.hoverPoint = null;
         });
+
+        // ── Keyboard (Esc / Delete) ──
+        document.addEventListener('keydown', (e) => this._onKeyDown(e));
 
         // ── Mode changes ──
         eventBus.on('mode:changed', ({ newMode }) => {
@@ -188,11 +195,125 @@ class DragDropManager {
             if (!this._enabled) {
                 this._selectObject(null);
                 this._dragging = false;
+                this._connectFlow.cancel(); // leaving the edit stage ends any seek
+                renderer.hoverPoint = null;
                 eventBus.emit('drag:ghost-clear');
             }
         });
 
         console.log('[DragDropManager] Initialized');
+    }
+
+    /**
+     * The flow the drag-drop handler delegates square clicks to — the
+     * renderer draws from the same instance (main.js wires it in).
+     * @returns {ConnectFlow}
+     */
+    get connectFlow() {
+        return this._connectFlow;
+    }
+
+    /**
+     * Pointer-down on the canvas body, in canvas coordinates. Order matters:
+     * selection handles first, then the click-to-connect squares (a seek
+     * entry, untie, tie or swallowed seek-click consumes the pointer before
+     * selection can claim it), then normal selection/move.
+     * @param {number} x - canvas x
+     * @param {number} y - canvas y
+     * @private
+     */
+    _onCanvasPointerDown(x, y) {
+        // Check for selection handle clicks first
+        if (this._selectedObject) {
+            const handle = renderer.getHandleAtPoint(x, y);
+            if (handle === 'delete') {
+                this._deleteSelected();
+                return;
+            }
+            if (handle === 'move') {
+                this._startMoveObject(x, y);
+                return;
+            }
+            if (handle === 'rotate') {
+                this._startRotateObject(x, y);
+                return;
+            }
+            if (handle === 'pin') {
+                this._togglePinSelected();
+                return;
+            }
+            if (handle === 'anchor') {
+                this._toggleAnchorSelected();
+                return;
+            }
+        }
+
+        // Click-to-connect squares (ADR 0007 decision 2)
+        if (this._connectFlow.handlePointerDown(x, y, this._objects)) return;
+
+        // Check for clicking on an object
+        const obj = renderer.getObjectAtPoint(x, y, this._objects);
+        if (obj) {
+            // Start a drag only when the part's state-driven handle set
+            // (issue #68) offers move — sandbox authoring drags fixed
+            // scenery in place; every other stage leaves it stationary.
+            this._selectObject(obj);
+            if (selectionHandleSet(obj, this._mode).includes('move')) {
+                this._startMoveObject(x, y);
+            }
+        } else {
+            this._selectObject(null);
+        }
+    }
+
+    /**
+     * Right-click on the canvas body, in canvas coordinates: deletes the
+     * part under the cursor when its state-driven handle set offers delete
+     * (issue #68) — everywhere but sandbox authoring, fixed scenery stays
+     * put and only its pin handle remains offered.
+     * @param {number} x - canvas x
+     * @param {number} y - canvas y
+     * @private
+     */
+    _onCanvasContextMenu(x, y) {
+        const obj = renderer.getObjectAtPoint(x, y, this._objects);
+        if (obj && selectionHandleSet(obj, this._mode).includes('delete')) {
+            this._selectObject(obj);
+            this._deleteSelected();
+        }
+    }
+
+    /**
+     * Global keyboard handling: Esc cancels an in-flight seek; Delete or
+     * Backspace removes the selection; P pins/unpins it (issue #66 follow-up).
+     * @param {KeyboardEvent} e
+     * @private
+     */
+    _onKeyDown(e) {
+        if (!this._enabled) return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        if (e.code === 'Escape') {
+            this._connectFlow.cancel(); // AC: Esc cancels the seek
+            return;
+        }
+
+        if (e.code === 'KeyP' && this._selectedObject) {
+            e.preventDefault();
+            this._togglePinSelected();
+            return;
+        }
+
+        if (e.code === 'KeyA' && this._selectedObject) {
+            e.preventDefault();
+            this._toggleAnchorSelected();
+            return;
+        }
+
+        if ((e.code === 'Delete' || e.code === 'Backspace') && this._selectedObject) {
+            e.preventDefault();
+            this._deleteSelected();
+        }
     }
 
     /**
@@ -208,7 +329,9 @@ class DragDropManager {
      */
     clearPlacedObjects() {
         for (let i = this._objects.length - 1; i >= 0; i--) {
-            if (!this._objects[i].isFixed) {
+            // Anchored parts are scene content, not placed parts (issue #67):
+            // they survive a clear exactly like fixed scenery.
+            if (!this._objects[i].isFixed && !this._objects[i].isAnchored) {
                 this._objects[i].dispose();
                 this._objects.splice(i, 1);
             }
@@ -235,8 +358,23 @@ class DragDropManager {
         eventBus.emit('object:selected', obj);
     }
 
+    /**
+     * Whether the current selection's state-driven handle set offers a
+     * handle (issue #68) — the one gate for the move/rotate/delete verbs,
+     * mirroring what the renderer draws and hit-tests.
+     * @param {'move'|'rotate'|'delete'} handle
+     * @returns {boolean}
+     * @private
+     */
+    _offersHandle(handle) {
+        return !!this._selectedObject &&
+            selectionHandleSet(this._selectedObject, this._mode).includes(handle);
+    }
+
     _startMoveObject(x, y) {
-        if (!this._selectedObject || this._selectedObject.isFixed) return;
+        // The state-driven handle set decides (issue #68): a fixed part is
+        // draggable in sandbox authoring, never elsewhere.
+        if (!this._offersHandle('move')) return;
         this._dragging = true;
         this._dragType = 'move';
         this._dragObject = this._selectedObject;
@@ -245,11 +383,58 @@ class DragDropManager {
     }
 
     _startRotateObject(x, y) {
-        if (!this._selectedObject || this._selectedObject.isFixed) return;
+        // The state-driven handle set decides (issue #68): a fixed part is
+        // rotatable in sandbox authoring, never elsewhere.
+        if (!this._offersHandle('rotate')) return;
         this._dragging = true;
         this._dragType = 'rotate';
         this._dragObject = this._selectedObject;
         this._dragStartAngle = this._selectedObject.angle;
+    }
+
+    /**
+     * Toggle the selected object's pin state (issue #66 follow-up): pinned
+     * parts are play-static scene elements — Save Level writes them into the
+     * level's fixedObjects — and a pinned unnamed bucket is the goal zone the
+     * readout, the GOAL marker and the stamp-fallback resolver all agree on.
+     * Announces `object:pinned { type, id, isFixed, object }` so the editor's
+     * goal message, goal readout and the bug-file build trace can react.
+     * @private
+     */
+    _togglePinSelected() {
+        if (!this._selectedObject) return;
+        const obj = this._selectedObject;
+        // Move/rotate/delete are state-driven offers now (issue #68): a
+        // fixed part keeps them only in sandbox authoring. The pin toggle
+        // is the one operation a fixed part still offers everywhere — the
+        // unpin escape hatch.
+        obj.isFixed = !obj.isFixed;
+        eventBus.emit('object:pinned', { type: obj.type, id: obj.id, isFixed: obj.isFixed, object: obj });
+    }
+
+    /**
+     * Toggle the selected object's anchor state (issue #67): anchored parts
+     * are pre-placed scene content — the player cannot move, rotate or
+     * delete them in the edit stage — yet at play they enter the world
+     * dynamic like any free part. Save Level writes them into the level's
+     * fixedObjects with their `isAnchored` marker.
+     *
+     * The toggle rides the state-driven handle set (issue #68): it only
+     * acts where the set offers 'anchor', so a pinned part outside sandbox
+     * authoring (whose escape hatch is the pin) refuses quietly, and the
+     * rope family — out of scope until the connector redesign — never
+     * anchors at all. Announces
+     * `object:anchored { type, id, isAnchored, object }` so the editor's
+     * notice, goal readout and the bug-file build trace can react.
+     * @private
+     */
+    _toggleAnchorSelected() {
+        if (!this._selectedObject) return;
+        const obj = this._selectedObject;
+        if (!isAnchorCapable(obj)) return; // rope scope exclusion (issue #67)
+        if (!this._offersHandle('anchor')) return; // same boundary the draw/hit-test set defines
+        obj.isAnchored = !obj.isAnchored;
+        eventBus.emit('object:anchored', { type: obj.type, id: obj.id, isAnchored: obj.isAnchored, object: obj });
     }
 
     _placeObject(type, x, y) {
@@ -278,7 +463,9 @@ class DragDropManager {
     }
 
     _deleteSelected() {
-        if (!this._selectedObject || this._selectedObject.isFixed) return;
+        // The state-driven handle set decides (issue #68): fixed scenery is
+        // deletable in sandbox authoring, never elsewhere.
+        if (!this._offersHandle('delete')) return;
 
         const obj = this._selectedObject;
         const idx = this._objects.indexOf(obj);
