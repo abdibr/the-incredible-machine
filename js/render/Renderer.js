@@ -96,7 +96,7 @@ class Renderer {
         this.ctx = canvas.getContext('2d');
 
         // Listen for mode changes
-        eventBus.on('mode:changed', ({ newMode }) => {
+        eventBus.on('mode:changed', ({ oldMode, newMode }) => {
             this._mode = newMode;
             if (newMode === 'PLAYING' || newMode === 'PAUSED') {
                 this.selectedObject = null;
@@ -105,7 +105,15 @@ class Renderer {
                 // Sandbox with no level load is goal-less (#63): drop a stale
                 // level goal so the GOAL-zone marker marks what the next Save
                 // would stamp, not a zone from a previous visit (issue #66).
-                this._goal = null;
+                // A SANDBOX entry arriving from the run family (PLAYING/
+                // PAUSED/WON) is the reset path returning to the posture the
+                // run was born in — the same visit, so the loaded goal keeps
+                // marking its zone (issue #71).
+                const returningFromRun =
+                    oldMode === 'PLAYING' || oldMode === 'PAUSED' || oldMode === 'WON';
+                if (!returningFromRun) {
+                    this._goal = null;
+                }
             }
         });
 

@@ -120,7 +120,7 @@ class PalettePanel {
 
         // Show/hide based on mode — a SANDBOX-only float, in its own element
         // next to the editor overlay.
-        eventBus.on('mode:changed', ({ newMode }) => {
+        eventBus.on('mode:changed', ({ oldMode, newMode }) => {
             this._mode = newMode;
             if (newMode === 'SANDBOX') {
                 this._build();
@@ -128,14 +128,26 @@ class PalettePanel {
                 // A fresh sandbox visit is palette-less too (issue #69): the
                 // ∞-everything toolbox posture returns, the rows display the
                 // default values again and Save Level goes back to writing
-                // the default palette until rows are edited or a level loads.
-                this._authoredPalette = null;
-                toolbox.setPalette(null);
-                this._syncPaletteControls();
-                this._updatePaletteReadout();
-                // The editor's readouts answer to this palette (issue #67
-                // anchored-scenery note); announce the reset.
-                eventBus.emit('palette:changed', { palette: null });
+                // the default palette until rows are edited or a level
+                // loads. A SANDBOX entry arriving from the run family
+                // (PLAYING/PAUSED/WON) is the reset path returning to the
+                // posture the run was born in — the same visit, so the
+                // authored palette survives (issue #71): the away-side
+                // release freed the toolbox, so re-arm it to the authored
+                // counts here.
+                const returningFromRun =
+                    oldMode === 'PLAYING' || oldMode === 'PAUSED' || oldMode === 'WON';
+                if (!returningFromRun) {
+                    this._authoredPalette = null;
+                    toolbox.setPalette(null);
+                    this._syncPaletteControls();
+                    this._updatePaletteReadout();
+                    // The editor's readouts answer to this palette (issue #67
+                    // anchored-scenery note); announce the reset.
+                    eventBus.emit('palette:changed', { palette: null });
+                } else {
+                    toolbox.setPalette(this._authoredPalette);
+                }
             } else {
                 this._hide();
                 // Leaving the editor releases the toolbox (issue #69): the

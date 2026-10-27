@@ -124,24 +124,35 @@ class EditorPanel {
         }
 
         // Show/hide based on mode
-        eventBus.on('mode:changed', ({ newMode }) => {
+        eventBus.on('mode:changed', ({ oldMode, newMode }) => {
             this._mode = newMode;
             if (newMode === 'SANDBOX') {
                 this._build();
                 this._show();
                 // A fresh sandbox visit is goal-less (#63): drop any goal a
-                // previous visit loaded; Load Level re-installs it (#66).
-                this._loadedGoal = null;
-                this._loadedLevelName = null;
+                // previous visit loaded; Load Level re-installs it (#66). A
+                // SANDBOX entry arriving from the run family (PLAYING/PAUSED/
+                // WON) is the reset path returning to the posture the run
+                // was born in — the same visit, so the loaded goal survives
+                // (issue #71): the readout keeps reporting it and the
+                // board's GOAL-zone marker keeps marking its zone.
+                const returningFromRun =
+                    oldMode === 'PLAYING' || oldMode === 'PAUSED' || oldMode === 'WON';
+                if (!returningFromRun) {
+                    this._loadedGoal = null;
+                    this._loadedLevelName = null;
+                    // The pin affordance opens each visit with its tip
+                    // again — no stale pin claim from a previous board
+                    // (issue #66); a return keeps the running session's
+                    // notice instead.
+                    this._setPinNotice(PIN_TIP);
+                }
                 // The palette's own panel (PalettePanel) resets the sandbox
                 // palette posture on entry and releases the toolbox on exit
                 // (issue #69) — this panel only follows along with its
                 // readouts.
                 this._updateBugStatus();
                 this._updateGoalReadout();
-                // The pin affordance opens each visit with its tip again —
-                // no stale pin claim from a previous board (issue #66).
-                this._setPinNotice(PIN_TIP);
             } else {
                 this._hide();
                 // The toolbox release on editor exit is PalettePanel's job

@@ -11,9 +11,34 @@
  *   - main.js `controls:play` (EDITING/SANDBOX start)            → beginPlay
  *   - main.js `_resetLevel()` level branch (after _setupLevel)    → restorePlacedFromSnapshot
  *   - main.js `_resetLevel()` sandbox branch                      → resetSandboxBoard
+ *   - main.js `_resetLevel()` return posture                      → resetReturnPosture
  */
 
 import { objectRegistry } from '../objects/ObjectRegistry.js';
+
+/**
+ * The posture a stop returns to (issue #71): the posture the run was born
+ * in — recorded at controls:play. A sandbox-born run re-enters the sandbox
+ * even though its Load Level path installed a level id (id presence cannot
+ * decide the posture); a campaign-born run returns to campaign editing.
+ * Without a record (null — unreachable in practice) the historical
+ * level-id heuristic decides, so an unforeseen reset path preserves past
+ * behavior.
+ *
+ * Used by main.js `_resetLevel()` for the return mode AND the board
+ * branch: an 'EDITING' return implies level data is installed, so the
+ * campaign branch rebuilds the level; everything else rewinds the sandbox
+ * board from the play-start snapshot.
+ *
+ * @param {string|null} runOriginPosture — 'EDITING'|'SANDBOX', recorded at play start
+ * @param {object|null} levelData — levelManager.getCurrentLevel()
+ * @returns {'EDITING'|'SANDBOX'}
+ */
+export function resetReturnPosture(runOriginPosture, levelData) {
+    if (runOriginPosture === 'SANDBOX') return 'SANDBOX';
+    if (runOriginPosture === 'EDITING' && levelData) return 'EDITING';
+    return levelData ? 'EDITING' : 'SANDBOX';
+}
 
 /**
  * Serialize the placed board with rope attachment tokens (issue 04).
