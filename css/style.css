@@ -94,6 +94,13 @@ html, body {
   opacity: 0.8;
 }
 
+/* Level goal readout for player sessions (issue #70) */
+#goal-name {
+  font-size: 14px;
+  color: var(--text-light);
+  opacity: 0.9;
+}
+
 #play-controls {
   display: flex;
   align-items: center;

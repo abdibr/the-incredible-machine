@@ -38,6 +38,7 @@ import {
     IMPLEMENTED_GOAL_TYPES,
     KNOWN_GOAL_TYPES,
     ZONE_GOAL_TYPE,
+    goalSentence,
     resolveGoalZoneObject,
     stampGoalZoneIds,
 } from '../goals/GoalChecker.js';
@@ -486,18 +487,10 @@ class EditorPanel {
      * @private
      */
     _goalSentence(goal, objects, { sandboxFallback = false } = {}) {
-        if (!goal) return 'no goal';
-        if (!IMPLEMENTED_GOAL_TYPES.includes(goal.type)) {
-            return `"${goal.type.replace(/_/g, ' ')}" is not implemented yet — a saved level with this goal cannot be won`;
-        }
-        const target = `the ${goal.targetType || 'ball'}`;
-        const zone = resolveGoalZoneObject(objects, goal, { stampFallback: sandboxFallback });
-        if (!zone) {
-            return sandboxFallback
-                ? `get ${target} into the goal zone — but no bucket on the board can be the goal zone, so the saved level cannot be won`
-                : `get ${target} into the goal zone "${goal.zoneId}" — but that zone matches nothing on the board, so this session cannot reach the goal`;
-        }
-        return `get ${target} into the bucket marked GOAL on the field`;
+        // Delegates to the shared goalSentence (issue #70): the editor
+        // readout and the player sessions' header goal line say the same
+        // sentences, built on the same resolver — they cannot drift apart.
+        return goalSentence(goal, objects, { sandboxFallback });
     }
 
     /**

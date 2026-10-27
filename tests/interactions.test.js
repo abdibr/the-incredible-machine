@@ -525,6 +525,8 @@ describe('Row silent-objects-null', () => {
 describe('docs/interactions.md sync', () => {
     it('the generated doc matches the current table', () => {
         const onDisk = readFileSync(new URL('../docs/interactions.md', import.meta.url), 'utf8');
-        expect(onDisk).toBe(renderInteractionDoc(DEFAULT_INTERACTION_ROWS));
+        // Editors on this repo's house platform (Windows) may save the doc
+        // with CRLF; the generated doc is LF. Compare content, not line endings.
+        expect(onDisk.replace(/\r\n/g, '\n')).toBe(renderInteractionDoc(DEFAULT_INTERACTION_ROWS));
     });
 });
