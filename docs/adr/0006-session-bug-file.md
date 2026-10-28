@@ -36,5 +36,6 @@ Two hard facts shape the design:
 ## Related
 
 - ADR 0001 (interaction matrix), ADR 0003 (lifecycle contract / restore seam, `AgentSession` precedent), ADR 0005 (rope connector / `serializePlacedBoard` tokens)
+- ADR 0008 — fixed-timestep stepping: the browser-loop variable-dt fact in Context is superseded (rows are now uniform `1000/60`); decision 2's dt-tape mechanism stands unchanged
 - `js/recorder/*`, `scripts/replay-bugfile.mjs`, `js/reset/levelReset.js`, `js/engine/GameLoop.js`, `agent/session.js`
 - `docs/plans/session-bug-file-recorder.md`

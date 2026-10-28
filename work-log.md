@@ -1,5 +1,36 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-10-27 — Fixed-timestep physics stepping: frame-rate-independent simulation (issue #80)
+
+Bug-20261027T151221Z-0txh: a spring (launchForce 0.08) + tennis ball scene **burst 3.5× its
+tuned launch at 30 fps** — variable-dt stepping feeds Matter.js Δv ∝ F/m·dt², so at the
+reporter's 33.33 ms rAF dt the launch integration wrapped to ≈77 px/tick (tuned ≈22 at
+60 fps), the ball slammed the ceiling and tunneled straight through the spring's 8 px
+platform on re-entry (no CCD), settling below the base. Live reproduction depended on the
+reporter's monitor; ADR 0006's variable-dt replay made bugs replayable but not
+frame-rate-independent.
+
+- **`js/engine/GameLoop.js`** — accumulator stepping: `FIXED_STEP_MS = 1000/60` (exported);
+  frames cap raw dt at the existing 50 ms `_maxDt`, then drain whole quanta — one
+  `Engine.update` + one `loop:frame{dt,elapsed}` per quantum, in the `step → elapsed → emit`
+  order the replay harness mirrors (ADR 0006 decision 2). Sub-quantum remainders carry
+  forward; the dt≤0 priming path after `play()` yields exactly one fixed step (the 16.67
+  magic number is gone); `play()`/`reset()` re-zero the accumulator; `cycleSpeed`/timeScale
+  wiring untouched (2× stays a 1000/60 tape with a speed row).
+- **`docs/adr/0008-fixed-timestep-stepping.md`** (new) — decision + consequences; ADR 0006
+  gains a Related note (recorder/replay untouched; recorded dt degenerates to a constant
+  tape, the mechanism stays as the legacy safety net).
+- **Tests (`tests/fixed-timestep.test.js`, new — 7 tests)** — per-frame split exactness
+  (33.33 ms → exactly 2 quanta, one emission each), zero-step sub-quantum carry, 200 ms
+  stall cap (at most ~3 catch-up quanta, never spirals), frame-rate independence (60 fps /
+  30 fps / jittered dt driven to the same step count → bit-identical `timing.timestamp`,
+  positions, and recorded dt stream), recorder + replayBitExact parity (uniform 1000/60
+  rows replay bit-exactly, mid-run 2× speed included), and the 0txh acceptance at the
+  honest in-repo contract: slow vs fast runs driven to the same 560 steps compare
+  `toEqual` bit-exact, both bodies asleep at end, and max |vy| per tick < 32 px (fixed
+  stepping worst ≈24 vs the pre-fix ≈77 tunneling run). Full suite: **50 files / 566
+  tests, all green**.
+
 ## 2026-10-25 — Fixed bucket walls play their declared 0.3 friction (issue #72)
 
 A bucket born **fixed** — level-JSON scenery, or a sandbox pin that round-tripped through a
