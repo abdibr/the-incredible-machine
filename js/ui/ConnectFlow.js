@@ -32,6 +32,7 @@
 
 import { eventBus } from '../EventBus.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
+import { isRopeFamily } from '../objects/Rope.js';
 
 /**
  * How close (px) a click must land to a square for the flow to consume it,
@@ -350,7 +351,10 @@ class ConnectFlow {
         const squares = [];
         const refusal = this.refusal; // the most recent refused tie, while it paints
         for (const rope of objects ?? []) {
-            if ((rope.type !== 'rope' && rope.type !== 'free-rope') || rope.isSevered) continue;
+            // Family membership is the rope module's fact (C1, issue #75);
+            // the free-bundle branch below stays keyed on `isFreeBundle` —
+            // that state is family-structural, not a type key.
+            if (!isRopeFamily(rope) || rope.isSevered) continue;
 
             // Bodyless free bundle (issue #55): both endpoints sit at the
             // coil — one square each, tied=false, so the seek/tie UX matches

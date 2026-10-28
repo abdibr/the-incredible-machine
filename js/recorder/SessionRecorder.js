@@ -487,7 +487,10 @@ export class SessionRecorder {
      * bug-file build rows (bug-20261024T134016Z-96df), while the other gate
      * copies had already learned the family. Narration stays by the same
      * rule for the whole family: knots for tied ropes, an empty list for
-     * knotless ropes and free bundles.
+     * knotless ropes and free bundles. (The membership fact itself lives
+     * on the rope module — Rope.ROPE_FAMILY_TYPES — for the sites that ask
+     * the roster; the knot-walking consumers narrate/render/annotate
+     * capability-first.)
      */
     _serializeWithAttachments(obj) {
         try {

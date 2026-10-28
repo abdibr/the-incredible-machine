@@ -59,7 +59,14 @@ export function serializePlacedBoard(board) {
     const ordinalByObject = new Map(board.map((obj, index) => [obj, index]));
     for (let index = 0; index < board.length; index++) {
         const obj = board[index];
-        if ((obj.type !== 'rope' && obj.type !== 'free-rope') || typeof obj.getAttachmentRefs !== 'function') continue;
+        // Capability-first knot walk (C1, issue #75): annotate whatever
+        // offers attachment refs — the same contract the SessionRecorder
+        // narrator and the Renderer knot overlay gate on. The old roster
+        // gate (`type !== 'rope' && type !== 'free-rope'`) was the
+        // redundant membership copy that could drift; the rope module owns
+        // the family fact (Rope.ROPE_FAMILY_TYPES) for the sites that ask
+        // the roster, while knot tokens stay the only decision here.
+        if (typeof obj.getAttachmentRefs !== 'function') continue;
         const tokens = [];
         for (const ref of obj.getAttachmentRefs()) {
             // Target no longer on the board → the knot dies with it

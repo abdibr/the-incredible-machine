@@ -31,6 +31,48 @@ const SEGMENT_RADIUS = 3;
  */
 export const MIN_ROPE_SPAN = SEGMENTS * (SEGMENT_RADIUS * 2 + 2);
 
+/**
+ * The rope family (C1, ADR 0007 decision 1, issue #75): the type keys the
+ * rope module treats as rope-family toolbox parts. This list is THE
+ * membership fact for the sites that ask family membership — the
+ * connect-flow tying squares, the drop-release untie, the snap-trigger
+ * exclusion, the cut rows of the interaction matrix, and the anchor
+ * refusal — so a new family member is one append here (plus its registry
+ * prose), never a hunt for hand-rolled string pairs.
+ *
+ * The knot-walking consumers (bug-file narrator, knot renderer,
+ * placed-board annotator) deliberately do NOT ask this list: they gate
+ * capability-first on "offers attachment refs", because knots are what
+ * they walk and narration/render/annotation must treat every family member
+ * by the same rule. Those gates cannot drift from a roster they never read.
+ *
+ * Predicates (string-keyed, no registry awareness):
+ * - `isRopeFamilyType(type)` — membership by type key;
+ * - `isRopeFamily(obj)` — membership by object (safe on shapeless rows).
+ *
+ * @type {string[]}
+ */
+export const ROPE_FAMILY_TYPES = Object.freeze(['rope', 'free-rope']);
+
+/**
+ * Whether `type` names a rope-family part (C1, issue #75).
+ * @param {string|null|undefined} type
+ * @returns {boolean}
+ */
+export function isRopeFamilyType(type) {
+    return ROPE_FAMILY_TYPES.includes(type);
+}
+
+/**
+ * Whether `obj` is a rope-family part (C1, issue #75). Safe on null and on
+ * shapeless board rows (boundary-wall plain bodies and other non-parts).
+ * @param {{type?: string}|null|undefined} obj
+ * @returns {boolean}
+ */
+export function isRopeFamily(obj) {
+    return !!obj && isRopeFamilyType(obj.type);
+}
+
 export default class Rope extends BaseObject {
     /**
      * @param {number} x - Start anchor x

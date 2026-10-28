@@ -28,64 +28,101 @@
  * are marked BUG-FIX and detailed in docs/adr/0001-interaction-matrix.md.
  */
 
+import { ROPE_FAMILY_TYPES } from '../objects/Rope.js';
+
 // Wildcard matcher: any object.
 const ANY = { match: 'any object' };
 
+/**
+ * Per-member narrative prose for the rope-family cut rows (C1, issue #75).
+ * The rope family (Rope.ROPE_FAMILY_TYPES) enumerates its cut rows below:
+ * the ids, summaries, tests and matcher phrases live here, keyed by
+ * family member, so a future member's rows are one visible append — the
+ * enumeration inherits both row shapes, and a member with no prose here
+ * fails the module load loudly instead of silently dropping its cut
+ * reactions. The prose values are byte-identical to the former literal
+ * rope/free-rope rows, so the generated interactions doc is unchanged.
+ */
+const ROPE_CUT_ROWS_BY_TYPE = Object.freeze({
+    'rope': {
+        // BUG-FIX: the old Rope.onCollision keyed on `other.type ===
+        // 'candle'` with no label gate, so resting on the solid wax
+        // severed the rope too. Only the flame sensor cuts now (scissors
+        // kept a label gate; candles didn't).
+        //
+        // Preserved from Rope.onCollision: the closed-scissors blade pair
+        // was the codebase's only label-gated pair; open blades let a rope
+        // rest untouched.
+        actorMatch: 'rope (any segment)',
+        candle: {
+            summary: 'A rope segment touching a candle flame burns through and severs.',
+            test: 'rope ✕ candle-flame severs; rope ✕ candle wax does not',
+        },
+        scissors: {
+            summary: 'A rope touching the blade bodies of snapped-shut scissors is cut.',
+            test: 'rope ✕ closed-scissors blade severs; open blades and handles never cut',
+        },
+    },
+    'free-rope': {
+        // Issue #55: the chain is born of the first tie; from spawn on it
+        // burns exactly like a laid rope, and the closed-scissors blade
+        // pair cuts it identically. The bodyless bundle can never reach a
+        // pair at all — it has no bodies, so it is naturally immune to
+        // flame and blade alike.
+        actorMatch: 'free-rope (any chain segment)',
+        candle: {
+            summary: 'A spawned free-rope chain touching a candle flame burns through and severs.',
+            test: 'free-rope ✕ candle-flame severs; free-rope ✕ candle wax does not',
+        },
+        scissors: {
+            summary: 'A spawned free-rope chain touching the blade bodies of snapped-shut scissors is cut.',
+            test: 'free-rope ✕ closed-scissors blade severs; open blades and handles never cut',
+        },
+    },
+});
+
+/** The family's cut rows, enumerated once per member (C1, issue #75). */
+const ropeCutRows = ROPE_FAMILY_TYPES.flatMap((type) => {
+    const prose = ROPE_CUT_ROWS_BY_TYPE[type];
+    if (!prose) {
+        throw new Error(
+            `[rules] Rope-family member "${type}" (Rope.ROPE_FAMILY_TYPES) has no cut-row prose — ` +
+            'add its entry to ROPE_CUT_ROWS_BY_TYPE so its cut reactions cannot be enumerated silently.'
+        );
+    }
+    return [
+        {
+            id: `${type}-candle-flame`,
+            summary: prose.candle.summary,
+            actor: { type, match: prose.actorMatch },
+            target: { type: 'candle', label: 'candle-flame', match: "candle flame (label 'candle-flame')" },
+            handler: (rope) => rope.sever(),
+            test: prose.candle.test,
+        },
+        {
+            id: `${type}-closed-scissors-blade`,
+            summary: prose.scissors.summary,
+            actor: { type, match: prose.actorMatch },
+            target: {
+                type: 'scissors',
+                label: 'scissors-blade',
+                predicate: (scissors) => scissors.isClosed,
+                match: "scissors, closed, via label 'scissors-blade'",
+            },
+            handler: (rope) => rope.sever(),
+            test: prose.scissors.test,
+        },
+    ];
+});
+
 export const DEFAULT_INTERACTION_ROWS = [
     // ── Rope reactions ─────────────────────────────────────────
-    {
-        id: 'rope-candle-flame',
-        summary: 'A rope segment touching a candle flame burns through and severs.',
-        actor: { type: 'rope', match: 'rope (any segment)' },
-        target: { type: 'candle', label: 'candle-flame', match: "candle flame (label 'candle-flame')" },
-        handler: (rope) => rope.sever(),
-        test: 'rope ✕ candle-flame severs; rope ✕ candle wax does not',
-        // BUG-FIX: the old Rope.onCollision keyed on `other.type === 'candle'`
-        // with no label gate, so resting on the solid wax severed the rope
-        // too. Only the flame sensor cuts now (scissors kept a label gate;
-        // candles didn't).
-    },
-    {
-        id: 'rope-closed-scissors-blade',
-        summary: 'A rope touching the blade bodies of snapped-shut scissors is cut.',
-        actor: { type: 'rope', match: 'rope (any segment)' },
-        target: {
-            type: 'scissors',
-            label: 'scissors-blade',
-            predicate: (scissors) => scissors.isClosed,
-            match: "scissors, closed, via label 'scissors-blade'",
-        },
-        handler: (rope) => rope.sever(),
-        test: 'rope ✕ closed-scissors blade severs; open blades and handles never cut',
-        // Preserved from Rope.onCollision: this was the codebase's only
-        // label-gated pair; open blades let a rope rest untouched.
-    },
-    {
-        id: 'free-rope-candle-flame',
-        summary: 'A spawned free-rope chain touching a candle flame burns through and severs.',
-        actor: { type: 'free-rope', match: 'free-rope (any chain segment)' },
-        target: { type: 'candle', label: 'candle-flame', match: "candle flame (label 'candle-flame')" },
-        handler: (rope) => rope.sever(),
-        test: 'free-rope ✕ candle-flame severs; free-rope ✕ candle wax does not',
-        // Issue #55: the chain is born of the first tie; from spawn on it
-        // burns exactly like a laid rope. The bodyless bundle can never
-        // reach a pair at all — it has no bodies.
-    },
-    {
-        id: 'free-rope-closed-scissors-blade',
-        summary: 'A spawned free-rope chain touching the blade bodies of snapped-shut scissors is cut.',
-        actor: { type: 'free-rope', match: 'free-rope (any chain segment)' },
-        target: {
-            type: 'scissors',
-            label: 'scissors-blade',
-            predicate: (scissors) => scissors.isClosed,
-            match: "scissors, closed, via label 'scissors-blade'",
-        },
-        handler: (rope) => rope.sever(),
-        test: 'free-rope ✕ closed-scissors blade severs; open blades and handles never cut',
-        // Issue #55: mirrors rope-closed-scissors-blade for the spawned
-        // chain; the bundle (no bodies) is naturally immune.
-    },
+    // The rope-family cut rows derive from Rope.ROPE_FAMILY_TYPES (C1,
+    // issue #75): a third member inherits both cut rows automatically —
+    // visible as new id lines in the generated interactions doc — and a
+    // member without prose in ROPE_CUT_ROWS_BY_TYPE refuses to reach the
+    // table at all (the module load throws).
+    ...ropeCutRows,
 
     // ── Balloon reactions ──────────────────────────────────────
     {

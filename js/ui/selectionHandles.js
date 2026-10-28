@@ -18,6 +18,8 @@
  *   handle — the unpin/unanchor escape hatches.
  */
 
+import { ROPE_FAMILY_TYPES } from '../objects/Rope.js';
+
 /**
  * The canonical selection handle slots, in the order the renderer draws
  * them: move above the bounds, rotate to its right, delete to its left,
@@ -36,11 +38,14 @@ const PINNED_OTHER_HANDLES = Object.freeze(['pin']);
 const ANCHORED_OTHER_HANDLES = Object.freeze(['anchor']);
 
 /**
- * Solid parts may anchor; the rope family is out of scope until its
- * connector redesign (issue #67) — ropes never offer the anchor handle and
- * the toggle refuses them.
+ * Solid parts may anchor; the rope family is refused (issue #67 scope,
+ * and ADR 0007 keeps it that way — ropes never offer the anchor handle
+ * and the toggle refuses them). The refusal set derives from the rope
+ * module's family fact (C1, issue #75): a new ROPE_FAMILY_TYPES member
+ * arrives already anchor-refused, instead of leaving a hand-rolled type
+ * pair to drift.
  */
-const NON_ANCHOR_TYPES = Object.freeze(new Set(['rope', 'free-rope']));
+const NON_ANCHOR_TYPES = Object.freeze(new Set(ROPE_FAMILY_TYPES));
 
 /**
  * Whether a part of `type` may be anchored at all (issue #67 scope).

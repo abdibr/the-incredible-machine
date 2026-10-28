@@ -23,6 +23,7 @@
 
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
+import { isRopeFamily } from './Rope.js';
 
 const { Bodies, Body } = Matter;
 
@@ -129,10 +130,10 @@ export default class Scissors extends BaseObject {
         if (this._closed) return false;
         if (!this._touchingHandle(pair)) return false;
         // Light, flimsy rope segments brushing the handles shouldn't snap
-        // them shut; statics can't "fall" onto a handle either. Both rope
-        // families are excluded: the laid rope and the issue-#55 spawned
-        // free-rope chain segments.
-        if (other.type === 'rope' || other.type === 'free-rope') return false;
+        // them shut; statics can't "fall" onto a handle either. The whole
+        // rope family is excluded (rope module fact, issue #75): the laid
+        // rope and the issue-#55 spawned free-rope chain segments.
+        if (isRopeFamily(other)) return false;
         const otherBody = pair.bodyA === this._handleUpper || pair.bodyA === this._handleLower
             ? pair.bodyB
             : pair.bodyA;

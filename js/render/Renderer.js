@@ -460,9 +460,9 @@ class Renderer {
     }
 
     /**
-     * Draw a small ring on every attachment point a rope is tied to
-     * (issue 04, edit modes only): knots show as machine structure while
-     * editing and are realized physically by the engine at play.
+     * Draw a small ring on every attachment point a knot-bearing part is
+     * tied to (issue 04, edit modes only): knots show as machine structure
+     * while editing and are realized physically by the engine at play.
      * @param {CanvasRenderingContext2D} ctx
      * @param {BaseObject[]} objs
      * @private
@@ -470,7 +470,14 @@ class Renderer {
     _drawRopeKnots(ctx, objs) {
         ctx.save();
         for (const obj of objs) {
-            if ((obj.type !== 'rope' && obj.type !== 'free-rope') || typeof obj.getAttachmentRefs !== 'function') continue;
+            // Capability-first knot walk (C1, issue #75): paint for whatever
+            // offers attachment refs — the same contract the SessionRecorder
+            // narrator and the levelReset annotator gate on. The old roster
+            // gate (`type !== 'rope' && type !== 'free-rope'`) was the
+            // redundant membership copy that could drift; the rope module
+            // owns the family fact (Rope.ROPE_FAMILY_TYPES) for the sites
+            // that ask the roster.
+            if (typeof obj.getAttachmentRefs !== 'function') continue;
             for (const ref of obj.getAttachmentRefs()) {
                 const world = ref.target.getAttachmentWorldPoint?.(ref.pointId);
                 if (!world) continue;
