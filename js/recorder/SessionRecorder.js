@@ -476,11 +476,23 @@ export class SessionRecorder {
         }
     }
 
-    /** serialize() + rope knot refs as narrative tokens. */
+    /**
+     * serialize() + knot refs as narrative tokens.
+     *
+     * Capability-first gate (C1, issue #75, ADR 0007 decision 4): every
+     * part that "offers attachment refs" (the getAttachmentRefs duck check)
+     * narrates its knots — tying behavior decides membership, not a roster.
+     * The old membership half (`obj.type === 'rope'`) was the drifted copy
+     * of the knot-walk type gate that kept the free rope's knots out of
+     * bug-file build rows (bug-20261024T134016Z-96df), while the other gate
+     * copies had already learned the family. Narration stays by the same
+     * rule for the whole family: knots for tied ropes, an empty list for
+     * knotless ropes and free bundles.
+     */
     _serializeWithAttachments(obj) {
         try {
             const data = obj.serialize();
-            if (obj.type === 'rope' && typeof obj.getAttachmentRefs === 'function') {
+            if (typeof obj.getAttachmentRefs === 'function') {
                 data.attachments = obj.getAttachmentRefs().map((t) => ({
                     endpoint: t.endpoint,
                     target: t.target ? narrativeRef(t.target.type, t.target.id) : null,
