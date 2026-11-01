@@ -162,6 +162,18 @@ export function registerAllObjects() {
                 isFixed: data.isFixed,
                 customId: data.id,
                 length: data.options?.length || 100,
+                // The laid chain count (issue #56): a restored free rope
+                // re-lays the chain its row saved (0 = still a coil).
+                segments: data.options?.segments,
+                // The coil-vs-chain answer travels with the row (issue #56):
+                // `Rope.serialize` ALWAYS writes `length`, so the number
+                // cannot say whether the span was authored — and a pre-#56
+                // row has no `segments` key to say "coil" either. `spawned`
+                // is FreeRope's own derived discriminator (issue #55) and
+                // the one fact a restore must not contradict: a bundle row
+                // must not lay a chain at `addObject` (issue #55's inert
+                // coil), so `spawned:false` vetoes its authored span.
+                authoredSpan: data.options?.spawned !== false,
                 endPoint: data.options?.endPoint,
                 severed: data.options?.severed ?? false,
                 attachments: data.attachments ?? [],

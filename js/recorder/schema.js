@@ -9,8 +9,12 @@
  * Decision log: docs/adr/0006-session-bug-file.md
  */
 
-/** Download schema version — bump on any breaking field change. */
-export const BUGFILE_SCHEMA_VERSION = 1;
+/**
+ * Download schema — v2 (issue #56): rope knot tokens became
+ * `{ segment, targetType, targetOrdinal, pointId }` (per-segment ties,
+ * −1 = the anchor seat; was legacy `endpoint` 0|1). Readers accept both.
+ */
+export const BUGFILE_SCHEMA_VERSION = 2;
 
 /** Sample poses every Nth tick (~10 Hz at 60 fps). */
 export const POSE_SAMPLE_INTERVAL = 6;

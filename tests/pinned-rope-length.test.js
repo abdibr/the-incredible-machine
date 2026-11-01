@@ -97,7 +97,7 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
         // start froze the rope mid-clamp): every demand rides the frozen
         // reach circle; the length itself never moves.
         const balloon = new Balloon(320, 74.4); // knot at (320, 100), 20px right of the anchor
-        rope.attachEndpoint(0, balloon, 'knot');
+        rope.attachEndpoint(-1, balloon, 'knot');
         expect(rope.lengthFrozen).toBe(true);
         rope.relayFreeEnd(300, 700);
         expect(rope._length).toBe(MIN_ROPE_SPAN); // frozen exactly where the tie left it
@@ -141,7 +141,7 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
 
         expect(consumed).toBe(true);
         expect(flow.seek).toBe(null);
-        expect(rope.getAttachmentRefs()).toContainEqual({ endpoint: 1, target: balloon, pointId: 'knot' });
+        expect(rope.getAttachmentRefs()).toContainEqual({ segment: 5, target: balloon, pointId: 'knot' });
         expect(rope.lengthFrozen).toBe(true); // the first tie froze the hand-set length
         expect(rope._length).toBeCloseTo(Math.hypot(20, 140) * 6 / 5.5, 3);
         rope.dispose();
@@ -151,7 +151,7 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
     it('the first tie keeps the laid length — a tied pinned rope is max length plus slack', () => {
         const rope = new Rope(400, 300);
         const balloon = new Balloon(400, 334.4); // knot at (400, 360): 60px down the chain
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint(5, balloon, 'knot');
 
         expect(rope._length).toBe(100); // a tie never shrinks the rope
         expect(rope.lengthFrozen).toBe(true);
@@ -166,7 +166,7 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
     it('a tie reaching past the laid capacity grows the fixed length to cover its knot', () => {
         const rope = new Rope(300, 100, { length: 40 });
         const balloon = new Balloon(330, 115); // knot at (330, 140.6): 50.48px out
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint(5, balloon, 'knot');
         const tied = Math.hypot(30, 40.6);
         expect(rope._length).toBeCloseTo(tied * 6 / 5.5, 3); // grown to cover the knot
         expect(rope._length).toBeGreaterThan(40);
@@ -194,7 +194,7 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
         const bucket = new Bucket(280, 132); // rim at (280, 112)
         const rim = bucket.getAttachmentWorldPoint('rim');
         expect(Math.hypot(rim.x - 300, rim.y - 100)).toBeCloseTo(23.32, 2);
-        rope.attachEndpoint(0, bucket, 'rim');
+        rope.attachEndpoint(-1, bucket, 'rim');
         expect(rope._length).toBe(100);
         expect(rope.lengthFrozen).toBe(true);
         rope.dispose();
@@ -204,7 +204,7 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
     it('rope length and frozen state round-trip the board snapshot', () => {
         const balloon = new Balloon(320, 74.4);  // knot at (320, 100), in reach
         const tied = new Rope(300, 100, { length: 40 });
-        tied.attachEndpoint(0, balloon, 'knot');
+        tied.attachEndpoint(-1, balloon, 'knot');
         const free = new Rope(500, 500);
         free.setEndpoints({ x: 500, y: 500 }, { x: 500, y: 570 }); // hand-laid 70px, never tied
         const board = [balloon, tied, free];
@@ -222,7 +222,7 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
         const restoredFree = board2.find((o) => o.type === 'rope' && o.x === 500);
         expect(restoredTied._length).toBe(40);
         expect(restoredTied.lengthFrozen).toBe(true); // the tie refroze it
-        expect(restoredTied.getAttachmentRefs()).toContainEqual({ endpoint: 0, target: balloon2, pointId: 'knot' });
+        expect(restoredTied.getAttachmentRefs()).toContainEqual({ segment: -1, target: balloon2, pointId: 'knot' });
         expect(restoredFree._length).toBe(70);
         expect(restoredFree.lengthFrozen).toBe(false);
         for (const obj of board) obj.dispose();
@@ -275,7 +275,7 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
         const before = rope.constraints;
         expect(before).toHaveLength(6);
 
-        rope.attachEndpoint(1, balloon, 'knot'); // ties past laid capacity, inside the aim tolerance
+        rope.attachEndpoint(5, balloon, 'knot'); // ties past laid capacity, inside the aim tolerance
 
         // The rebuilt (covering) chain entered the world as the laid (short)
         // one left it — no stale, over-tensioned members stepping into play.

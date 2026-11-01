@@ -378,13 +378,13 @@ describe('SessionRecorder rope-family knot narration (C1, issue #75)', () => {
     it('a tied free rope narrates its knot into the bug-file build rows', () => {
         const balloon = new Balloon(220, 140);
         const rope = objectRegistry.create('free-rope', 220, 200, { length: 60 });
-        rope.attachEndpoint(0, balloon, 'knot'); // first tie spawns the chain
+        rope.attachEndpoint(-1, balloon, 'knot'); // first tie spawns the chain
         const recorder = makeRecorder({ board: [balloon, rope] });
         recorder.startSession();
         eventBus.emit('object:placed', { type: 'free-rope', id: rope.id, object: rope });
         const row = recorder.toJSON().build.find((r) => r.topic === 'object:placed');
         expect(row.data.snapshot.attachments).toEqual([
-            { endpoint: 0, target: `balloon#${balloon.id}`, pointId: 'knot' },
+            { segment: -1, target: `balloon#${balloon.id}`, pointId: 'knot' },
         ]);
         recorder.dispose();
     });
@@ -402,7 +402,7 @@ describe('SessionRecorder rope-family knot narration (C1, issue #75)', () => {
     it('the laid rope narrates unchanged: tied knot in, knotless as an empty list', () => {
         const balloon = new Balloon(220, 140);
         const tied = objectRegistry.create('rope', 220, 200, { length: 60 });
-        tied.attachEndpoint(1, balloon, 'knot');
+        tied.attachEndpoint(5, balloon, 'knot');
         const knotless = objectRegistry.create('rope', 320, 200, { length: 60 });
         const recorder = makeRecorder({ board: [balloon, tied, knotless] });
         recorder.startSession();
@@ -411,7 +411,7 @@ describe('SessionRecorder rope-family knot narration (C1, issue #75)', () => {
         const placed = recorder.toJSON().build.filter((r) => r.topic === 'object:placed');
         expect(placed).toHaveLength(2);
         expect(placed[0].data.snapshot.attachments).toEqual([
-            { endpoint: 1, target: `balloon#${balloon.id}`, pointId: 'knot' },
+            { segment: 5, target: `balloon#${balloon.id}`, pointId: 'knot' },
         ]);
         expect(placed[1].data.snapshot.attachments).toEqual([]);
         recorder.dispose();
@@ -420,14 +420,14 @@ describe('SessionRecorder rope-family knot narration (C1, issue #75)', () => {
     it('the exported run annotates the tied free rope with full ordinal tokens', () => {
         const balloon = new Balloon(220, 140);
         const rope = objectRegistry.create('free-rope', 220, 200, { length: 60 });
-        rope.attachEndpoint(0, balloon, 'knot');
+        rope.attachEndpoint(-1, balloon, 'knot');
         const recorder = makeRecorder({ board: [balloon, rope] });
         recorder.startSession();
         eventBus.emit('loop:play', { elapsed: 0 });
         eventBus.emit('loop:frame', { dt: 16.667, elapsed: 16.667 });
         const ropeRow = recorder.openRun.boardSnapshot.find((r) => r.type === 'free-rope');
         expect(ropeRow.attachments).toEqual([
-            { endpoint: 0, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+            { segment: -1, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
         ]);
         recorder.dispose();
     });

@@ -81,6 +81,16 @@ export class PhysicsEngine {
     addObject(gameObject) {
         this._objects.add(gameObject);
 
+        // Authored-span birth (issue #56, ADR 0007 decision 3): a free rope
+        // created with an explicit length lays its chain here, before its
+        // bodies join, so the loops below put the newborn bodies AND its
+        // rebuild constraints into the world in this one pass (no event, no
+        // second add — `rope:chain-spawned` stays the tie-born path's seam).
+        // Capability-first, so every other part — and a length-less free
+        // rope, which keeps issue #55's inert coil until its first tie —
+        // answers false and nothing happens.
+        gameObject.birthAuthoredChain?.();
+
         // Add all bodies
         for (const body of gameObject.bodies) {
             Composite.add(this.world, body);
@@ -1182,16 +1192,40 @@ export class PhysicsEngine {
      * (previous is the replaced one) — this drops the stale members from
      * the world and adds the rebuilt chain (and wakes the rope so the new
      * chain integrates immediately).
-     * @param {{rope: import('../objects/Rope.js').default, previous?: Matter.Constraint[]}} packet
+     *
+     * The re-segmentation packet (issue #56, ADR 0007 decision 3): a
+     * span-derived count appends and drops tail segments, so `added` must
+     * join the world under the rope's object mapping (`_bodyToObject` —
+     * anchors, knot links and step resolution all resolve against it) and
+     * `dropped` must leave it with their runtime links co-terminated: a
+     * knot on a pruned seat loses its rope-side body when its member
+     * leaves, and its engine link and any moved payload link must not
+     * dangle (the same rule body removal applies on sever/unbundle/pop).
+     * @param {{rope: import('../objects/Rope.js').default,
+     *     previous?: Matter.Constraint[],
+     *     added?: Matter.Body[], dropped?: Matter.Body[]}} packet
      * @private
      */
     _restoreRopeConstraints(packet) {
-        const { rope, previous = [] } = packet ?? {};
+        const { rope, previous = [], added = [], dropped = [] } = packet ?? {};
         // Register guard: the bus is global, so a converge from a rope
         // living in ANOTHER engine must not leak its chain into this world.
         if (!rope?.bodies?.some((body) => body && this._bodyToObject.has(body.id))) return;
         for (const constraint of previous) {
             Composite.remove(this.world, constraint);
+        }
+        for (const body of dropped) {
+            if (!body) continue;
+            Composite.remove(this.world, body);
+            this._bodyToObject.delete(body.id);
+        }
+        if (dropped.length) {
+            this._detachConstraintsTouching(new Set(dropped.filter(Boolean).map((body) => body.id)));
+        }
+        for (const body of added) {
+            if (!body) continue;
+            Composite.add(this.world, body);
+            this._bodyToObject.set(body.id, rope);
         }
         for (const constraint of rope.constraints) {
             Composite.add(this.world, constraint);

@@ -61,7 +61,7 @@ describe('Rope as connector (issue 04)', () => {
         const data = {
             type: 'rope', x: 200, y: 100, angle: 0, isFixed: false,
             options: { length: 100, severed: true },
-            attachments: [{ endpoint: 1, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' }],
+            attachments: [{ segment: 5, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' }],
         };
         const rope = Rope.deserialize(data);
         const balloon = new Balloon(400, 300);
@@ -77,7 +77,7 @@ describe('Rope as connector (issue 04)', () => {
         const balloon = new Balloon(400, 220);
         physics.addObject(rope);
         physics.addObject(balloon);
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint(5, balloon, 'knot');
         for (let i = 0; i < 10; i++) physics.step(16.67); // realize the link, let it strain
         expect(physics.getAttachedConstraints()).toHaveLength(1);
 
@@ -99,8 +99,9 @@ describe('Rope as connector (issue 04)', () => {
     it('validates attachEndpoint calls', () => {
         const rope = new Rope(200, 100);
         const balloon = new Balloon(400, 300);
-        expect(() => rope.attachEndpoint(2, balloon, 'knot')).toThrow();
-        expect(() => rope.attachEndpoint(0, balloon, 'no-such-point')).toThrow();
+        expect(() => rope.attachEndpoint(6, balloon, 'knot')).toThrow();
+        expect(() => rope.attachEndpoint('x', balloon, 'knot')).toThrow();
+        expect(() => rope.attachEndpoint(-1, balloon, 'no-such-point')).toThrow();
         expect(rope.getAttachmentRefs()).toEqual([]);
     });
 
@@ -111,7 +112,7 @@ describe('Rope as connector (issue 04)', () => {
         physics.addObject(rope);
         physics.addObject(balloon);
 
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint(5, balloon, 'knot');
         physics.step(16.67);
 
         const link = physics.getAttachedConstraints()[0];
@@ -133,7 +134,7 @@ describe('Rope as connector (issue 04)', () => {
         const balloon = new Balloon(300, 300);
         physics.addObject(rope);
         physics.addObject(balloon);
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint(5, balloon, 'knot');
         for (let i = 0; i < 10; i++) physics.step(16.67);
         expect(physics.getAttachedConstraints()).toHaveLength(1);
         physics.dispose();
@@ -150,9 +151,9 @@ describe('Rope as connector (issue 04)', () => {
         physics.addObject(balloon);
         physics.addObject(fixedBucket);
 
-        rope.attachEndpoint(1, balloon, 'knot');
-        rope.attachEndpoint(1, fixedBucket, 'rim'); // two knots on one endpoint
-        rope2.attachEndpoint(1, fixedBucket, 'rim'); // same point, another rope
+        rope.attachEndpoint(5, balloon, 'knot');
+        rope.attachEndpoint(5, fixedBucket, 'rim'); // two knots on one segment
+        rope2.attachEndpoint(5, fixedBucket, 'rim'); // same point, another rope
         for (let i = 0; i < 10; i++) physics.step(16.67);
 
         // 3 links: rope-last↔balloon, rope-last↔bucket-floor, rope2-last↔bucket-floor
@@ -169,7 +170,7 @@ describe('Rope as connector (issue 04)', () => {
         const balloon = new Balloon(300, 300);
         physics.addObject(rope);
         physics.addObject(balloon);
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint(5, balloon, 'knot');
         physics.step(16.67);
         expect(physics.getAttachedConstraints()).toHaveLength(1);
 
@@ -187,7 +188,7 @@ describe('Rope as connector (issue 04)', () => {
         const balloon = new Balloon(300, 300);
         physics.addObject(rope);
         physics.addObject(balloon);
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint(5, balloon, 'knot');
         physics.step(16.67);
         expect(physics.getAttachedConstraints()).toHaveLength(1);
 
@@ -210,7 +211,7 @@ describe('Rope as connector (issue 04)', () => {
         const convergeSpy = vi.fn();
         eventBus.on('rope:chain-converge', convergeSpy);
 
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint(5, balloon, 'knot');
         physics.step(16.67); // realize + capture the link
         physics.takeSnapshot(); // intact rope, payload link attached
         rope.sever();

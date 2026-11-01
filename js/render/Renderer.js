@@ -499,7 +499,7 @@ class Renderer {
     }
 
     /**
-     * The click-to-connect squares (ADR 0007 decision 2): rope endpoint
+     * The click-to-connect squares (ADR 0007 decision 2): rope tie
      * handles, attachment-point target squares, and — while a seek is in
      * flight — the preview line to the cursor and the glow on in-reach
      * targets (glow = tieable, issue #54). A refused tie flashes its
@@ -507,7 +507,7 @@ class Renderer {
      * Edit modes only (EDITING/SANDBOX): gates itself so PLAY
      * boards draw nothing.
      *
-     * Geometry comes from the flow (getEndpointSquares/getTieSquares — one
+     * Geometry comes from the flow (getRopeSquares/getTieSquares — one
      * source for clicks and pixels); this method only paints it.
      * @param {CanvasRenderingContext2D} ctx
      * @param {BaseObject[]} objs
@@ -516,7 +516,7 @@ class Renderer {
     _drawConnectSquares(ctx, objs) {
         if (this._mode !== 'EDITING' && this._mode !== 'SANDBOX') return;
         if (!this._connectFlow) return;
-        const squares = this._connectFlow.getEndpointSquares(objs, this.hoverPoint);
+        const squares = this._connectFlow.getRopeSquares(objs, this.hoverPoint);
         const targets = this._connectFlow.getTieSquares(objs, this.hoverPoint);
 
         ctx.save();

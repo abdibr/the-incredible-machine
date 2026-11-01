@@ -18,8 +18,8 @@ function buildTiedBoard() {
     const fixedBucket = new Bucket(800, 300, { isFixed: true });
     const rope = new Rope(800, 260, { length: 80 });
     const balloon = new Balloon(300, 300);
-    rope.attachEndpoint(0, fixedBucket, 'rim');
-    rope.attachEndpoint(1, balloon, 'knot');
+    rope.attachEndpoint(-1, fixedBucket, 'rim');
+    rope.attachEndpoint(5, balloon, 'knot');
     return { board: [fixedBucket, rope, balloon], fixedBucket, rope, balloon };
 }
 
@@ -35,8 +35,8 @@ describe('connector snapshot seam — serializePlacedBoard (issue 04)', () => {
         expect(entries[0].attachments).toBeUndefined();
         expect(entries[2].attachments).toBeUndefined();
         expect(entries[1].attachments).toEqual([
-            { endpoint: 0, targetType: 'bucket', targetOrdinal: 0, pointId: 'rim' },
-            { endpoint: 1, targetType: 'balloon', targetOrdinal: 2, pointId: 'knot' },
+            { segment: -1, targetType: 'bucket', targetOrdinal: 0, pointId: 'rim' },
+            { segment: 5, targetType: 'balloon', targetOrdinal: 2, pointId: 'knot' },
         ]);
     });
 
@@ -52,7 +52,7 @@ describe('connector snapshot seam — serializePlacedBoard (issue 04)', () => {
     it('drops tokens for targets that are off the board', () => {
         const stray = new Balloon(900, 500);
         const rope = new Rope(200, 100);
-        rope.attachEndpoint(1, stray, 'knot');
+        rope.attachEndpoint(5, stray, 'knot');
         const entries = serializePlacedBoard([rope]); // stray balloon NOT on the board
         expect(entries[0].attachments).toBeUndefined();
     });
@@ -90,21 +90,21 @@ describe('connector snapshot seam — restorePlacedFromSnapshot (issue 04)', () 
 
         const refs = restoredRope.getAttachmentRefs();
         expect(refs).toEqual([
-            { endpoint: 0, target: freshBoard[0], pointId: 'rim' },
-            { endpoint: 1, target: restoredBalloon, pointId: 'knot' },
+            { segment: -1, target: freshBoard[0], pointId: 'rim' },
+            { segment: 5, target: restoredBalloon, pointId: 'knot' },
         ]);
     });
 
     it('binds tokens to fixed targets too (rope pinned to a fixed bucket)', () => {
         const fixedBucket = new Bucket(750, 300, { isFixed: true });
         const rope = new Rope(750, 260, { length: 80 });
-        rope.attachEndpoint(0, fixedBucket, 'rim');
+        rope.attachEndpoint(-1, fixedBucket, 'rim');
         const rows = serializePlacedBoard([fixedBucket, rope]);
 
         const freshBoard = [objectRegistry.deserialize(rows[0])];
         const restored = restorePlacedFromSnapshot(freshBoard, rows);
         expect(restored[0].getAttachmentRefs()).toEqual([
-            { endpoint: 0, target: freshBoard[0], pointId: 'rim' },
+            { segment: -1, target: freshBoard[0], pointId: 'rim' },
         ]);
     });
 
@@ -143,7 +143,7 @@ describe('connector snapshot seam — restorePlacedFromSnapshot (issue 04)', () 
         const restoredRope = restored.find((o) => o.type === 'rope');
         // endpoint 0's token (fixed bucket, ordinal 0) still binds…
         expect(restoredRope.getAttachmentRefs()).toEqual([
-            { endpoint: 0, target: freshBoard[0], pointId: 'rim' },
+            { segment: -1, target: freshBoard[0], pointId: 'rim' },
         ]);
         // …and the dangling endpoint-1 token was dropped with a warning
         expect(warnSpy).toHaveBeenCalled();
@@ -156,7 +156,7 @@ describe('connector snapshot seam — restorePlacedFromSnapshot (issue 04)', () 
         const balloon = new Balloon(400, 300);
         const rope = new Rope(750, 260, { length: 80, severed: true });
         // tokens written anyway (the annotator is dumb); a severed rope drops them
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint(5, balloon, 'knot');
         const rows = serializePlacedBoard([fixedBucket, rope, balloon]);
         expect(rows[1].attachments).toHaveLength(1);
 

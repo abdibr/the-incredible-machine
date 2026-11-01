@@ -43,6 +43,18 @@ Constraints inherited unchanged from the codebase: the engine link seam `attachC
 
 **Deferred:** routed ropes override piece severing with a **whole-rope sever** — that special case is decided in the future routing ADR, not here.
 
+## Amendment (2026-11-01) — span-derived counts, tie seats, and the pinned freeze (issue #56)
+
+Builds decisions 3 and 4 out without reopening them, but three points narrow what the decisions literally say. Recorded here because the code now depends on them.
+
+1. **The count rule is bounded and per-family at the tie (§ decision 3, "applies to both types").** `Rope.segmentsForSpan(span)` is the count rule — ~40 px per segment (`SEGMENT_DENSITY_PX`), floored at `SEGMENTS` (6, the classic fresh drop) and capped at `MAX_SEGMENTS` (16), invalid spans answering the floor — and it governs birth, every re-lay and the hand's re-span. What decision 3 leaves open is a **tie** that needs more reach on an already-authored chain: a pinned rope's tie-grow freezes the count and grows only the span (a tie may lengthen the rope, never reshape the level's chain, so the end seat stays the end seat), while a free rope's tie-grow re-derives it (its span *is* its chain). So the span-derived count applies to both types at birth, re-lay and hand; at the tie-grow seam the pinned family is the documented exception.
+2. **The last link's rest length is 1.5 pitches when the tail is appended (§ ADR 0005 decision 12).** ADR 0005 made every chain link's rest length equal its laid spacing, which holds for a centre-laid chain. An appended tail body lands *on* the end point (a re-lay that grew has to reach the point it was given), so its link is half a pitch longer than a centre-laid seat would be; keeping the spacing there would over-stretch the chain and snap the tail back inboard on the first step. The invariant therefore reads: rest lengths equal laid distances — centre-laid seats keep the spacing, an appended tail keeps its laid distance.
+3. **A free rope's seek stays armed after a tie (§ decision 2, "the tie ends the seek").** "Multiple sequential ties keep all earlier knots intact" (issue #56's acceptance criterion) requires it: a free rope's span is the aim's property, so every later target ties as far as anything on the board and the flow must not close after the first knot. A pinned rope keeps decision 2 exactly — its tie ends the seek at a settled state. The reach gate follows the same split: `isPointWithinReach` answers `true` unconditionally for the free family and holds the end seat's `(count − 0.5)/count` of the span for the pinned one.
+
+Vocabulary this amendment fixes, now in `GLOSSARY.md`: **seat**, **tie-grow**, **re-lay**, **span-derived count**, **authored span**, **persisted chain count (`options.segments`)**, **length freeze**.
+
+Test surface at amendment time: `tests/rope-span.test.js` (count rule, re-lay tail trades, the frozen re-lay, the persisted count vs a re-root) and `tests/rope-ties.test.js` (seat addresses, several knots per seat, per-target pruning) are the executable contract. Full suite: 53 files / 601 tests, all green.
+
 ## Out of scope
 
 - **EditorPanel save brokenness** — pre-existing; placed-rows persistence continues to ride the per-play placed snapshot annotation path.

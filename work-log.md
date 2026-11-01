@@ -1,5 +1,46 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-01 — Span-derived rope chains with stable tie seats (issue #56)
+
+A rope chain was a fixed 6-segment drop, and `attachEndpoint`'s tie-grow routed through
+`setEndpoints`, which re-derived the count from the span — so a tie that merely needed more
+*reach* silently re-segmented the chain (seat 5 on a 6-chain grew the span 80 → 549 px,
+count 6 → 14) and every knot, which stores a literal seat index, rode the wrong body or fell
+off. One conflation, sixteen symptoms.
+
+- **`js/objects/Rope.js`** — `segmentsForSpan` (span-derived count: ~40 px pitch, floored at
+  `SEGMENTS` 6, capped at `MAX_SEGMENTS` 16) is the count at birth, re-lay and under the hand;
+  `segmentsForSpan` and one `seatFraction(seat, count)` replace the three hand-spelled seat
+  forms. The keystone split lands as `setEndpoints(start, end, { resegment })`: a *re-lay*
+  re-derives the count (tail appended/dropped, earlier seats keep their bodies) while a
+  *tie-grow* on a pinned rope freezes it (a tie may lengthen the rope, never reshape the
+  level's chain) — a free rope's tie-grow re-derives, because its span *is* its chain. An
+  appended tail lands on `end` (last link 1.5 pitches) instead of half a pitch inboard. A free
+  rope records its **authored span** once in the ctor (`hasExplicitSpan`) and lays its chain at
+  `addObject` (`birthAuthoredChain`); its first anchor tie re-roots that chain at the clicked
+  knot (`_reRootChain`, a frozen re-lay). `serialize` now writes the laid **chain count**
+  (`options.segments`) beside `length`/`lengthFrozen`, so restore re-births the chain the rope
+  had and save → load → save is idempotent. The WIP "one middle tie per rope" gate is gone —
+  it contradicted its own spec suite; any laid seat accepts knots, several per seat.
+- **`js/ui/ConnectFlow.js`** — squares exist per chain body (segment = bodyIndex − 1), a free
+  rope's seek resolves its seat against the live chain and stays armed after a tie (its span
+  is the aim's property, so every later target ties); `isPointWithinReach` answers `true` for
+  the free family and holds the end seat's fraction for the pinned one, so what glows is
+  exactly what ties.
+- **`js/engine/PhysicsEngine.js`, `js/recorder/schema.js`, `js/render/Renderer.js`,
+  `js/reset/levelReset.js`, `js/objects/registerAllObjects.js`** — the converge consumer swaps
+  added/dropped tail bodies with the constraints; knot tokens narrate/annotate per segment;
+  `free-rope` rows carry the coil-vs-chain discriminator through `options.authoredSpan`.
+- **`docs/`** — `GLOSSARY.md` gains seat / tie-grow / re-lay / span-derived count / authored
+  span / persisted chain count / length freeze; ADR 0007 gains an amendment (the bounded count
+  rule, the pinned freeze, the 1.5-pitch tail link, the free seek staying armed);
+  `docs/plans/issue-56-resume-plan.md` records the diagnosis and outcome.
+- **Tests** — new `tests/rope-span.test.js` (count rule, re-lay tail trades, frozen re-lay,
+  the persisted count vs a re-root) and `tests/rope-ties.test.js` (seat addressing, several
+  knots per seat, per-target pruning), plus the authored-birth/coil suites in
+  `tests/free-rope.test.js` and the free-rope seek gates in `tests/connect-flow.test.js`.
+  Full suite: **53 files / 601 tests, all green**; `npm run build` clean (49 modules).
+
 ## 2026-10-27 — Fixed-timestep physics stepping: frame-rate-independent simulation (issue #80)
 
 Bug-20261027T151221Z-0txh: a spring (launchForce 0.08) + tennis ball scene **burst 3.5× its

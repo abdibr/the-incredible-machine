@@ -46,7 +46,8 @@ export function resetReturnPosture(runOriginPosture, levelData) {
  * Each row is the object's own serialize() — ropes intentionally emit no
  * attachment data of their own — and the annotator then writes live knot
  * refs onto each rope's row as ordinal tokens:
- * `{ endpoint, targetType, targetOrdinal, pointId }`. The ordinal indexes
+ * `{ segment, targetType, targetOrdinal, pointId }` (issue #56: −1 = the
+ * rope's anchor seat, 0…N-1 = that chain segment). The ordinal indexes
  * THIS array; board order is stable across play/reset cycles (fixed
  * objects rebuilt from level JSON first, placed parts restored in snapshot
  * order), which is what makes an ordinal restorable.
@@ -73,7 +74,7 @@ export function serializePlacedBoard(board) {
             const ordinal = ordinalByObject.get(ref.target);
             if (ordinal === undefined) continue;
             tokens.push({
-                endpoint: ref.endpoint,
+                segment: ref.segment,
                 targetType: ref.target.type,
                 targetOrdinal: ordinal,
                 pointId: ref.pointId,

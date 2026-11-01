@@ -497,7 +497,7 @@ export class SessionRecorder {
             const data = obj.serialize();
             if (typeof obj.getAttachmentRefs === 'function') {
                 data.attachments = obj.getAttachmentRefs().map((t) => ({
-                    endpoint: t.endpoint,
+                    segment: t.segment,
                     target: t.target ? narrativeRef(t.target.type, t.target.id) : null,
                     pointId: t.pointId,
                 }));
