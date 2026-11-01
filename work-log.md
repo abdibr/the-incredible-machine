@@ -1,5 +1,40 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-01 — A moved part could not be put down (rope-family import, issue #75 follow-up)
+
+Clicking to place a part you had just moved did nothing: the part stayed glued to the cursor, and
+only right-click delete got rid of it. The release handler asked the rope module's family fact —
+`isRopeFamily(...)`, the gate c066611 (C1, issue #75) centralised there — but never imported it, so
+*every* move-drag release threw `ReferenceError: isRopeFamily is not defined` before it could clear
+the drag state. `_dragging` stayed `true` with `_dragType === 'move'`, so each later `mouseup` hit the
+same dead branch: a drag with no drop left in it. Toolbox drags never reached that branch, which is
+why dropping *new* parts kept working — the bug only ever bit parts already on the board. No test
+drove the release path at all, and at runtime the throw surfaced only as a console error.
+
+- **`js/ui/DragDropManager.js`** — imports `isRopeFamily` from `../objects/Rope.js` (the missing line).
+  The global `mouseup` body becomes a testable `_endDrag(pageX, pageY)` seam the listener delegates
+  to, and the four-field reset moves into a `finally`: the reset *is* the contract of a release, so a
+  throw on the way can no longer strand a drag. Both clear sites now call one `_clearDragState()`
+  (drag in flight = one thing) — the `mode:changed` handler used to clear only `_dragging`, leaving
+  `_dragType`/`_dragObjType`/`_dragObject` stale for the next press to inherit. The JSDoc names the
+  failure mode outright, so the next reader knows why the `finally` is load-bearing.
+- **`tests/drag-release.test.js`** (new, 6) — the drop half of every drag the manager starts: move
+  (pose announced, state clears), rope-family move (no throw, knots untied — this is the case that
+  regressed), rotate (final angle announced, ADR 0006 decision 6 shape `{ id, angle }`), toolbox
+  placement (part at the release point, ghost cleared), a release with nothing in flight (no-op), and
+  a release whose body throws (the failure still surfaces, the drag still lets go). Mutation proof:
+  with the import commented out the rope case fails with the original `ReferenceError`.
+  `expectDragCleared()` asserts the whole contract in one place rather than four fields per test.
+- Full suite: **54 files / 607 tests, all green** (`.scratch/drag-release-full.txt`, run with
+  `--testTimeout=20000`); `npm run build` clean (49 modules). The default 5 s per-test budget is
+  fragile on a loaded box — two runs starved the editor/loop suites into 5004 ms timeouts that pass
+  in isolation, so re-run a file before believing a timeout here.
+- End-to-end in the browser (Vite, Sandbox stage): two consecutive move drags both land, the part
+  stops following the cursor, no console errors.
+- **Harness note** — the `editor-overlay` panel is `position: fixed` and 600 px wide at page x ≥ 422,
+  so it swallows canvas clicks: end-to-end drag checks have to use the left strip (page x < 422) or
+  they misread a swallowed click as a stuck drag.
+
 ## 2026-11-01 — Span-derived rope chains with stable tie seats (issue #56)
 
 A rope chain was a fixed 6-segment drop, and `attachEndpoint`'s tie-grow routed through
