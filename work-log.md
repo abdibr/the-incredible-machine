@@ -1,5 +1,48 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-13 — The count is the span's rule at every seam: chain-count bookkeeping retired (issue #89)
+
+Through #87/#88 the knots themselves were count-independent (named seats re-seat through any
+re-count; tokens bind at role), but the machinery that kept **seat indices** stable still stood:
+the persisted chain count on a rope's row (`options.segments`), the `_birthCount` restore hint
+that consumed it once, and `setEndpoints`'s `{ resegment }` flag — the pinned rope's tie-grow
+froze the count (a tie may lengthen the rope, never reshape the level's chain) while a free
+rope's re-derived it, and the saved count replayed the frozen chain on load. One covering rule
+replaces all of it: `segmentsForSpan(span)` is the count at birth, re-lay, tie-grow and restore
+alike, so save → load → save is idempotent by arithmetic — a restored chain re-derives from the
+span, the knots land on their seats, and the covering gate re-derives the same fraction it had,
+so it cannot fire again per cycle. Visible consequence, accepted deliberately: a pinned rope's
+tie-grown chain is re-derived from its span on load rather than replayed frozen. The
+pinned/free split narrows to where it still earns itself — the length freeze and the reach
+refusal.
+
+- **`js/objects/Rope.js`** — the row carries no chain count: `serialize` writes `length`,
+  `lengthFrozen`, `endPoint`, `severed`; neither deserializer passes a `segments` override;
+  `_birthSegments`/`_birthCount` are deleted (the ctor and `_layChainFrom` birth
+  `segmentsForSpan(span)`; `birthAuthoredChain`'s `segments === 0` spend-gone, a bundle is
+  spawned:false). The tie-grow's covering call goes through the plain re-lay, and
+  `setEndpoints` has ONE mode: the count always re-derives from the span, `_keepSeats` always
+  runs (a same-count re-lay re-seats nobody), the dead `targetCount === 0` guard is gone. The
+  re-root re-lays plainly too — its frozen re-lay's only reason was protecting the retired
+  restore contract, and its packet reports any band-edge dust trade honestly.
+- **`js/objects/registerAllObjects.js`** — `FreeRope.deserialize` drops the count override; the
+  `spawned` discriminator alone still vetoes an authored span on a bundle row.
+- **Tests** — `tests/rope-span.test.js` updated to the single rule rather than deleted (the
+  frozen re-lay test becomes the one-mode re-lay; the pinned/free split test becomes one
+  covering rule; the persisted-count block becomes the restore-re-derives block: the row
+  without a count, the ignored stale count, the re-root); `tests/pinned-rope-length.test.js`
+  gains "the freeze holds the span, not the count". The seat-keeps/seat-tokens/ties/
+  connector-reset/rope-connector round-trips updated to the re-derived counts (end knots ride
+  tie-grow re-counts: 5 → 6, 5 → 9 → 15, token end → 13 of 14). The "re-lay that trades in both
+  directions" test now aims its short re-lay inside the 240px band edge — it sat exactly on
+  the edge, where the balloons' bob noise flipped the float-dust count nondeterministically.
+- **Docs** — `GLOSSARY.md`: tie-grow and re-lay rewritten to the one rule, the persisted chain
+  count entry tombstoned; `docs/adr/0007-rope-connection-redesign.md`: amendment 4 records the
+  retirement (one covering rule, no chain count on the row, the split narrowed to freeze +
+  refusal) and retires amendment 1's point 1 rider.
+- Full suite: **58 files / 645 tests, all green** (`npx vitest run`, run twice to shake out the
+  band-edge flake).
+
 ## 2026-11-01 — A moved part could not be put down (rope-family import, issue #75 follow-up)
 
 Clicking to place a part you had just moved did nothing: the part stayed glued to the cursor, and

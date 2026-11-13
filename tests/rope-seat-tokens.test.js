@@ -148,19 +148,21 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
         expect(rows[1].attachments.map((t) => t.seat)).toEqual(['anchor', 'mid', 'end']);
 
         // The restored chain's count differs (a hand-edit or a corruption —
-        // the seam is the row's persisted count).
-        rows[1].options.segments = 12;
+        // the seam is the row's span, which a hand can stretch: the count
+        // re-derives from it, issue #89 — there is no persisted count to
+        // hand-edit any more).
+        rows[1].options.length = 280;
 
         const fresh = [objectRegistry.deserialize(rows[0])];
         const restored = restorePlacedFromSnapshot(fresh, rows);
         const rope2 = restored.find((o) => o.type === 'rope');
-        expect(rope2.bodies.length - 1).toBe(12);
-        expect(rope2.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 5, 11]);
+        expect(rope2.bodies.length - 1).toBe(7); // segmentsForSpan(280)
+        expect(rope2.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 3, 6]);
         // The mid knot's body IS the restored chain's middle body.
         const [, mid] = rope2.getTieSeats();
-        expect(mid.segment).toBe(5);
-        expect(mid.body).toBe(rope2.bodies[6]);
-        expect(rope2._length).toBeCloseTo(100, 3); // the binds grew nothing
+        expect(mid.segment).toBe(3);
+        expect(mid.body).toBe(rope2.bodies[4]);
+        expect(rope2._length).toBeCloseTo(280, 3); // the binds grew nothing
 
         rope2.dispose();
         for (const obj of [...fresh, ...restored]) obj.dispose();
@@ -168,9 +170,9 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
 
     it('a spawned free rope restores its three seat tokens through the birth-at-bind', () => {
         // A free rope restored as a coil has no chain until a tie births
-        // one: the anchor token binds first (spawning the chain from the
-        // row's persisted count), and the mid/end tokens then resolve
-        // against the birthed chain.
+        // one: the anchor token binds first (spawning the chain at the
+        // span's rule, issue #89 — the row carries no chain count), and the
+        // mid/end tokens then resolve against the birthed chain.
         const anchorB = balloonWithKnotAt(300, 125.6);
         const midB = balloonWithKnotAt(300, 160);  // 34.4 from the knot ≤ 41.7
         const endB = balloonWithKnotAt(300, 210);  // 84.4 from the knot ≤ 91.7
@@ -312,7 +314,7 @@ describe('Seat-role tokens — a rope that restored without a chain (issue #88)'
                 { seat: 'end', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
             ],
         };
-        expect(ropeRow.options.segments).toBe(0); // precondition: the coil restored
+        expect(ropeRow.options.spawned).toBe(false); // precondition: the coil restored
 
         const rows = [balloon.serialize(), ropeRow];
         const board2 = [];

@@ -37,12 +37,16 @@
  * earlier knots keep riding their bodies, and the re-segmentation trades
  * only in-world through rope:chain-converge (added/dropped in the packet).
  *
- * Tie-grow is not a re-lay (issue #56): a tie that needs more reach grows
- * the span, and whether the count follows depends on the family — a PINNED
- * rope's chain is authored by the level, so its tie-grow freezes the count
- * (same bodies, same seat indices, rest lengths stretched across the new
- * span: a tie may lengthen the rope, never reshape its chain), while a FREE
- * rope's span IS its chain, so its tie-grow re-counts like any re-lay.
+ * Tie-grow (issue #56, one covering rule since #89): a tie that needs more
+ * reach grows the span to cover its knot, re-lays the chain along the tie
+ * direction, and the count re-derives from the grown span — the same
+ * segmentsForSpan rule as birth and every re-lay, for BOTH families. The
+ * pinned/free distinction narrows to where it still earns itself: the
+ * length freeze (relayFreeEnd's frozen circle) and the reach refusal
+ * (isPointWithinReach). The pinned family's old frozen-count tie-grow and
+ * the persisted row count that replayed it on load are retired: a restore
+ * re-derives the chain from its span, and the seats keep every knot on its
+ * role (issue #87).
  *
  * Free-rope span (issue #56, ADR 0007 decision 4): a free rope has no
  * length property of its own — it ties as far as anything is laid, the
@@ -294,22 +298,17 @@ export default class Rope extends BaseObject {
      * @param {boolean} [options.authoredSpan] - Restore override for the
      *   above (a row's answer travels separately from `length`, which
      *   serialize always writes)
-     * @param {number} [options.segments] - Restore override for the laid
-     *   segment count (issue #56): serialize writes the chain it actually
-     *   has, so a rope born with a count the span alone no longer derives
-     *   (a pinned rope's frozen-count tie-grow) restores the same chain
-     *   instead of re-deriving a longer one. Absent on old saves → the
-     *   span derives the count, exactly as before.
      * @param {{x:number, y:number}} [options.endPoint] - End anchor point (default: straight down)
      */
     constructor(x, y, options = {}) {
         // Attachment tokens (issue 04) are consumed here and never land in
         // _options: they are relational restore data (target ordinals into
         // the board snapshot) injected by the annotator — serialize never
-        // emits them. Same for the two restore hints (issue #56): the row's
-        // span/authored answer travels separately from the live state, so a
-        // re-serialize reports the chain the rope actually has.
-        const { attachments, authoredSpan, segments, ...behaviorOptions } = options;
+        // emits them. Same for the restore hint (issue #56): the row's
+        // authored answer travels separately from `length`, which serialize
+        // always writes. (The chain count that once rode beside it is
+        // retired, issue #89 — the count is the span's rule.)
+        const { attachments, authoredSpan, ...behaviorOptions } = options;
         super(x, y, behaviorOptions);
         this._length = options.length || 100;
         // Authored span (issue #56, ADR 0007 decision 3): whether the
@@ -322,15 +321,6 @@ export default class Rope extends BaseObject {
         // issue #55's inert coil until its first tie. A restored row passes
         // `authoredSpan` because Rope.serialize always writes `length`.
         this._authoredSpan = options.authoredSpan ?? (options.length !== undefined);
-        // Restored laid count (issue #56): the row's chain size, so a restore
-        // re-births the chain the rope actually had. A restore HINT, not a
-        // second source of truth — the first lay consumes it (_birthCount),
-        // and `segments: 0` is a legitimate answer (a bodyless free-rope
-        // bundle), so an old save without the key derives the count from the
-        // span exactly as it always did.
-        this._birthSegments = Number.isInteger(options.segments) && options.segments >= 0
-            ? Math.min(options.segments, MAX_SEGMENTS)
-            : null;
         this._endPoint = options.endPoint || { x, y: y + this._length };
         this._severed = options.severed ?? false;
 
@@ -362,12 +352,12 @@ export default class Rope extends BaseObject {
             // segment, floored at SEGMENTS — the fresh-drop chain every
             // short span keeps — capped at MAX_SEGMENTS), the same rule a
             // setEndpoints re-lay derives; the constructor rope is just the
-            // drop path with the rope's own span. A restore births the
-            // count it was saved with instead (issue #56) — a pinned rope's
-            // tie-grow freezes the count while the span grows, so the span
-            // alone would re-derive a longer chain on every save/load cycle
-            // and the rope would creep longer each time.
-            const count = this._birthCount(this._length);
+            // drop path with the rope's own span. A restore re-derives the
+            // count from the saved span the same way (issue #89): the count
+            // is a pure function of the span, so save → load → save keeps
+            // the chain, the seats and the covering gate exactly as they
+            // were — no hint, no creep.
+            const count = Rope.segmentsForSpan(this._length);
             const dx = (this._endPoint.x - x) / count;
             const dy = (this._endPoint.y - y) / count;
 
@@ -444,26 +434,6 @@ export default class Rope extends BaseObject {
     }
 
     /**
-     * The count a chain lay should birth (issue #56): the restored laid
-     * count when the row carried one, else the span-derived rule
-     * (`segmentsForSpan`). Consumed on read — the hint exists only to make a
-     * restore birth the chain it was SAVED with (a pinned rope's tie-grow
-     * freezes the count while its span grows, so re-deriving from the span
-     * would lengthen the rope on every save/load cycle); from the first lay
-     * on, the live chain is the truth and `serialize` writes it back. A
-     * restored `0` is a bodyless bundle, never a chain, so it can only
-     * reach here defensively — the span rule answers for it.
-     * @param {number} span - end-to-end span the chain spans
-     * @returns {number} the laid segment count
-     * @private
-     */
-    _birthCount(span) {
-        const restored = this._birthSegments;
-        this._birthSegments = null;
-        return restored > 0 ? restored : Rope.segmentsForSpan(span);
-    }
-
-    /**
      * Build the chain constraints along the current layout (anchor→first
      * segment, then consecutive segments). Each link's rest length equals
      * that pair's laid distance — anchor→seg-0 half of segLength, seg↔seg
@@ -505,11 +475,9 @@ export default class Rope extends BaseObject {
      * at MAX_SEGMENTS (longer spans stretch rest lengths instead of
      * multiplying segments, keeping simulation cost and tie-token ranges
      * bounded). The one rule every chain birth and every re-lay goes
-     * through — the constructor, _spawnChain and setEndpoints (both rope
-     * types, so a laid rope and a spawned free chain follow the same
-     * density). The single exception is a pinned rope's tie-grow, which
-     * only stretches the chain the level authored (attachEndpoint); a free
-     * rope's tie-grow re-counts like any other re-lay.
+     * through — the constructor, _spawnChain, setEndpoints and both
+     * families' tie-grows (issue #89 retired the frozen-count exception,
+     * whose persisted row count replayed it).
      * @param {number} span - end-to-end span in px
      * @returns {number} a count in SEGMENTS…MAX_SEGMENTS
      */
@@ -708,26 +676,26 @@ export default class Rope extends BaseObject {
         // hauling the tied target inboard / stretching the chain taut — the
         // "silently snapping or stretching" ADR 0007 decision 4 refuses.
         // So the grow re-lays the chain along the tie direction through
-        // setEndpoints (bodies re-line, identical constraints rebuild, and
-        // rope:chain-converge lets an in-world rope swap its chain — the
-        // registration guard keeps the event a no-op out of world), then
-        // seals _length exact against setEndpoints' float-dust
-        // re-derivation, the same seal relayFreeEnd uses. Grown capacity =
-        // tied span / seat inboard-ness: the chain rests exactly taut at
-        // the knot, zero residual.
-        // The grow's count follows the family (issue #56 — the keystone).
-        // A knot keeps its seat across a re-count (issue #87 — setEndpoints
-        // re-seats the mid/end knots off the new count), so the split now
-        // stands only on the authored-chain argument:
-        // - a PINNED rope's chain is authored by the level, so its tie-grow
-        //   FREEZES the count (`resegment: false`) — the tie may lengthen
-        //   the rope, never reshape its chain; seat 5 stays the tail and
-        //   the seats hold trivially;
-        // - a FREE rope owns no authored chain at all (decision 4, issue
-        //   #56): its span IS the chain, so the grow re-counts like any
-        //   other re-lay, every knot rides its seat through setEndpoints,
-        //   and it stays unlimited after the first tie — every later tie
-        //   re-lays the chain to cover itself again.
+        // setEndpoints (bodies re-line, the chain rebuilds for the grown
+        // span, and rope:chain-converge lets an in-world rope swap its
+        // chain — the registration guard keeps the event a no-op out of
+        // world), then seals _length exact against setEndpoints'
+        // float-dust re-derivation, the same seal relayFreeEnd uses. Grown
+        // capacity = tied span / seat inboard-ness.
+        // The grow's count re-derives from the grown span (issue #89 — ONE
+        // covering rule for both families): the tie that needs more reach
+        // re-lays the chain, and setEndpoints re-counts it exactly the way
+        // birth and every other re-lay do. The families' pinned/free split
+        // narrows to where it still earns itself — the length freeze (a
+        // pinned rope's relayFreeEnd holds the span) and the reach refusal
+        // (isPointWithinReach) — never the counting; the frozen-count
+        // exception and the persisted row count that replayed it on load
+        // are retired. NAMED seats ride the re-count onto equal-or-greater
+        // fractions (issue #87 — the mid knot onto the new middle, the end
+        // knot the new tail), so a flow-tied knot's cover holds through it;
+        // a tie on a seat the rope does not name keeps its literal index,
+        // whose fraction a re-count may thin — the bind's nearest-role
+        // migration (issue #88) re-seats such a knot on the next load.
         // Severed ropes keep accounting-only growth (nothing lays or
         // reconciles for them); a spawned bundle never reaches here past
         // capacity (its first tie sits at the anchor, tied = 0).
@@ -751,7 +719,6 @@ export default class Rope extends BaseObject {
                         this.setEndpoints(
                             { x: anchor.x, y: anchor.y },
                             { x: anchor.x + ux * grown, y: anchor.y + uy * grown },
-                            { resegment: this._isFree }
                         );
                         this._length = grown; // exact seal (setEndpoints re-derived with float dust)
                         // No ride needed here (issue #87): setEndpoints already
@@ -1101,11 +1068,11 @@ export default class Rope extends BaseObject {
         // Count-honest birth (issue #56, ADR 0007 decision 3): the chain
         // births what its length demands (segmentsForSpan), the same density
         // rule a setEndpoints re-lay derives — the fresh-drop floor keeps
-        // short spans at the six-segment chain a drop lays. A restored chain
-        // births the count its row saved instead (a spawned chain's frozen
-        // count is not always the span's), so a save/load cycle is
-        // idempotent.
-        const count = this._birthCount(span);
+        // short spans at the six-segment chain a drop lays. There is no
+        // saved-count hint to honor (issue #89): the count is the span's
+        // rule, so a restored row re-births the chain its span derives and
+        // a save/load cycle is idempotent by arithmetic.
+        const count = Rope.segmentsForSpan(span);
         const pitch = span / count;
         this._endPoint = { x: anchorX + ux * span, y: anchorY + uy * span };
 
@@ -1158,14 +1125,6 @@ export default class Rope extends BaseObject {
     birthAuthoredChain() {
         if (!this._isFree || this._severed) return false;
         if (this._segments.length > 0) return false; // already laid or spawned
-        // A row that saved a count of 0 was a bundle, not an authored span
-        // (issue #56): it restores as the coil it was, and its first tie
-        // births the chain the normal way (the hint is spent here so the
-        // later lay falls back to the span rule).
-        if (this._birthSegments === 0) {
-            this._birthSegments = null;
-            return false;
-        }
         if (!this._authoredSpan) return false; // issue #55's coil
         const { x: ux, y: uy } = this._spanDirection();
         this._layChainFrom(this._x, this._y, ux, uy);
@@ -1177,13 +1136,15 @@ export default class Rope extends BaseObject {
      * born on the rope's own drop, so the first anchor tie (−1) moves the
      * dynamic anchor knot onto the clicked attachment point and re-lays the
      * chain from there over the SAME span — same bodies, same seats, same
-     * count (a re-root is not a re-count: no knot can hang on the newborn
-     * chain's seats yet, so the identity is free to keep, and a restored
-     * row's `options.segments` count is a contract this must not re-derive).
-     * Hence the frozen re-lay below. setEndpoints re-lines the segments and
-     * rebuilds the identical chain, and its `rope:chain-converge` consumer
-     * swaps the rebuilt constraints into a world that already holds the old
-     * ones.
+     * count: a re-root is not a re-count, and no knot can hang on the
+     * newborn chain's seats yet. The re-lay re-derives the count the
+     * unchanged span answers — the same number the chain birthed (issue
+     * #89: the count is the span's rule at every seam, so there is no
+     * saved-chain contract to protect and no frozen re-lay needed; band
+     * -edge float dust aside, the packet would report any trade honestly).
+     * setEndpoints re-lines the segments and rebuilds the chain, and its
+     * `rope:chain-converge` consumer swaps the rebuilt constraints into a
+     * world that already holds the old ones.
      *
      * This is the free family's reach promise made physical: a tie hangs
      * from exactly the knot that was clicked, wherever the coil happened to
@@ -1195,19 +1156,16 @@ export default class Rope extends BaseObject {
     _reRootChain(x, y) {
         const span = this._length;
         const { x: ux, y: uy } = this._spanDirection(); // before the re-lay rewrites it
-        // `resegment: false` is that doc's "a re-root is not a re-count" made
-        // true (issue #56). The default re-derive is harmless only while the
-        // live count equals segmentsForSpan(length) — which it always is on a
-        // free rope born in this session, but NOT on a restored one: a row's
-        // `options.segments` is a restore contract (and a pinned rope's
-        // frozen-count tie-grow writes a count its span no longer derives).
-        // Re-deriving here would silently grow/shrink the restored chain on a
-        // re-root that changed no span — and float dust on either side of a
-        // segmentsForSpan boundary would do it to a live chain too.
+        // A re-root is not a re-count: the tie changes no span, so the
+        // re-lay re-derives the count the unchanged span already answers —
+        // the same number the chain birthed (issue #89: the count is the
+        // span's rule at every seam, there is no saved-chain contract to
+        // protect). Float dust on either side of a segmentsForSpan band
+        // edge could still trade a body; the converge packet reports it
+        // like any re-lay.
         this.setEndpoints(
             { x, y },
             { x: x + ux * span, y: y + uy * span },
-            { resegment: false },
         );
         this._length = span; // exact seal (setEndpoints re-derived with float dust)
     }
@@ -1258,10 +1216,6 @@ export default class Rope extends BaseObject {
         this._segments = [];
         this._constraints = [];
         this._endPoint = null;
-        // The next birth is a fresh one off the current span: a restore hint
-        // from a saved row is spent (issue #56) — the collapsed rope owns no
-        // chain to reproduce.
-        this._birthSegments = null;
         eventBus.emit('rope:unbundled', {
             rope: this, previous: dyingConstraints, bodies: dyingBodies,
         });
@@ -1389,69 +1343,48 @@ export default class Rope extends BaseObject {
      * `start`, the segments re-line up along the straight line to `end`,
      * and the chain is rebuilt for the new span.
      *
-     * Two modes (issue #56 — the tie-grow/re-lay split):
-     * - `resegment: true` (default, every genuine re-lay): the chain's
-     *   segment count re-derives from the span (ADR 0007 decision 3), so a
-     *   longer re-lay grows the tail and a shorter one prunes it; knots that
-     *   hold named seats re-seat onto the new count's own end/middle
-     *   (issue #87 — see _keepSeats), and a knot on a seat the rope never
-     *   named keeps its index while the count still lays it. Appended/dropped
-     *   tail bodies ride in the converge packet so the world swaps them too.
-     * - `resegment: false` (a pinned rope's tie-grow): the chain keeps
-     *   exactly the bodies it has — same length, same seat indices, no
-     *   body minted or dropped — and only re-lines them along start→end
-     *   with the rest lengths rebuilt for the new span. A tied rope's knots
-     *   store literal seat indices, so this is what keeps a knot on its own
-     *   body when a tie merely needs more reach; nothing is added or
-     *   dropped, so the packet's tail lists are empty.
+     * One mode (issue #89 — the counting strategy no longer splits by
+     * family or by caller): the chain's segment count re-derives from the
+     * span (ADR 0007 decision 3), so a longer re-lay grows the tail and a
+     * shorter one prunes it; knots that hold named seats re-seat onto the
+     * new count's own end/middle (issue #87 — see _keepSeats), and a knot
+     * on a seat the rope never named keeps its index while the count still
+     * lays it. Appended/dropped tail bodies ride in the converge packet so
+     * the world swaps them too; a same-count re-lay trades nothing and
+     * merely re-lines the bodies it has.
      *
      * Call while the rope is OUT of the physics world (before/at
      * placement) — the recreated constraint objects must not be stale
      * members of any world.
      * @param {{x: number, y: number}} start
      * @param {{x: number, y: number}} end
-     * @param {object} [opts={}]
-     * @param {boolean} [opts.resegment=true] - re-derive the count from the
-     *   new span (a re-lay) or freeze it (a tie-grow)
      */
-    setEndpoints(start, end, { resegment = true } = {}) {
+    setEndpoints(start, end) {
         this._x = start.x;
         this._y = start.y;
         this._endPoint = { x: end.x, y: end.y };
         this._length = Math.hypot(end.x - start.x, end.y - start.y);
         Body.setPosition(this._anchor, { x: start.x, y: start.y });
         if (!this._severed) {
-            // Span-derived count (issue #56, ADR 0007 decision 3): a re-lay
-            // re-derives the chain size. Earlier segments keep their
-            // indices; appended/dropped tail segments ride in the packet so
-            // the world swaps bodies too. A frozen (no-re-count) re-lay
-            // keeps the authored chain whole.
+            // Span-derived count (issue #56; one counting strategy since
+            // #89 — there is no frozen variant left): a re-lay re-derives
+            // the chain size, the tie-grow's covering re-lay included.
+            // Earlier segments keep their indices; appended/dropped tail
+            // segments ride in the packet so the world swaps bodies too.
             const oldCount = this._segments.length;
-            const targetCount = resegment
-                ? Rope.segmentsForSpan(this._length)
-                : this._segments.length;
-            // A re-count re-derives the chain from the span, so a restore hint
-            // that no birth has spent yet is obsolete (issue #56) — the live
-            // chain, not the saved row, is the truth from here on.
-            if (resegment) this._birthSegments = null;
-            // A bodyless bundle owns no chain to re-line (issue #55) — the
-            // freeze mode never has one, and the re-count mode always lays
-            // the SEGMENTS floor above.
-            if (targetCount === 0) return;
-            const { added, dropped } = resegment
-                ? this._resizeChain(targetCount)
-                : { added: [], dropped: [] };
+            const targetCount = Rope.segmentsForSpan(this._length);
+            const { added, dropped } = this._resizeChain(targetCount);
             // Knots keep their seats (issue #87): a re-count trades the
             // tail, so let every knot that holds a named seat ride the new
             // count's own end/middle — the anchor is the anchor in every
             // count, and a same-count re-lay re-seats nobody.
-            if (resegment) this._keepSeats(oldCount, targetCount);
+            this._keepSeats(oldCount, targetCount);
             // The appended tail lands ON the end point (issue #56, handoff
             // fix 4): a re-lay that GREW the chain puts its new last body
             // exactly where the endpoints say, instead of half a pitch
-            // inboard like a centre-laid seat. Every other re-lay — a frozen
-            // tie-grow, a same-count re-lay, a prune — keeps the centre lay,
-            // so every seat that already had a body keeps today's geometry.
+            // inboard like a centre-laid seat. Every other re-lay — a
+            // same-count re-lay, a prune — keeps the centre lay, so every
+            // seat that already had a body keeps today's geometry.
             const laid = added.length > 0;
             const pitch = this._length / targetCount;
             const dx = (end.x - start.x) / targetCount;
@@ -1483,8 +1416,8 @@ export default class Rope extends BaseObject {
             // in the world). added/dropped carry the re-segmentation
             // (issue #56) — the consumer puts the tail bodies in / takes
             // them out of the world alongside the constraint swap; both are
-            // empty for a frozen re-lay, which re-lines the bodies it has.
-            // A severed rope rebuilt no chain — see above.
+            // empty for a same-count re-lay, which re-lines the bodies it
+            // has. A severed rope rebuilt no chain — see above.
             eventBus.emit('rope:chain-converge', { rope: this, previous, added, dropped });
         }
     }
@@ -1678,14 +1611,10 @@ export default class Rope extends BaseObject {
                 ...this._options,
                 length: this._length,
                 lengthFrozen: this.lengthFrozen,
-                // The laid chain count (issue #56): a restore births exactly
-                // this chain instead of re-deriving one from the span, so
-                // save → load → save is idempotent (a pinned rope's
-                // tie-grow freezes the count while the span grows, so the
-                // span alone answers with a longer chain and the covering
-                // gate would fire again on every cycle). `0` is a real
-                // answer — a bodyless free-rope bundle stays a coil.
-                segments: this._segments.length,
+                // No chain count rides the row (issue #89): the count is
+                // the span's rule at every seam, so a restore re-derives
+                // the chain from `length` — save → load → save is
+                // idempotent by arithmetic, no hint to replay.
                 endPoint: this._endPoint,
                 severed: this._severed,
             },
@@ -1698,7 +1627,6 @@ export default class Rope extends BaseObject {
             isFixed: data.isFixed,
             customId: data.id,
             length: data.options?.length || 100,
-            segments: data.options?.segments,
             endPoint: data.options?.endPoint,
             severed: data.options?.severed ?? false,
             attachments: data.attachments ?? [],

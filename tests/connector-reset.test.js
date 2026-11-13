@@ -89,9 +89,13 @@ describe('connector snapshot seam — restorePlacedFromSnapshot (issue 04)', () 
         expect(restoredBalloon).toBeDefined();
 
         const refs = restoredRope.getAttachmentRefs();
+        // The rope restored with the chain its span derives (issue #89): the
+        // end-seat tie grew the span at tie time (≈504px, re-counted 6 → 14)
+        // and the knot rode onto the new tail, so the row's 'end' token
+        // re-binds at the re-derived chain's end (13 of 14).
         expect(refs).toEqual([
             { segment: -1, target: freshBoard[0], pointId: 'rim' },
-            { segment: 5, target: restoredBalloon, pointId: 'knot' },
+            { segment: 13, target: restoredBalloon, pointId: 'knot' },
         ]);
     });
 

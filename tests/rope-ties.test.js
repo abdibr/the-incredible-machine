@@ -77,11 +77,15 @@ describe('Rope segment ties (issue #56) — the seat gate', () => {
         physics.step(DT);
 
         const link = physics.getAttachedConstraints()[0];
-        expect(link.bodyA).toBe(rope.bodies[3]); // _segments[2] — bodies[anchor,0,1,2]
+        // The mid-seat tie sits beyond its covering circle (246.8px vs 25),
+        // so the covering grow re-counted 6 → 15 and the knot rode to the
+        // new middle (seat 7) — its link realizes from whatever body the
+        // seat then names (mid of 15 = bodies[8]), not the anchor.
+        expect(link.bodyA).toBe(rope.bodies[8]); // the re-counted chain's middle body
         expect(link.bodyB).toBe(balloon.bodies[0]);
         expect(rope.lengthFrozen).toBe(true); // any tie freezes the pinned length
 
-        rope.detachEndpoint(2, balloon, 'knot');
+        rope.detachEndpoint(7, balloon, 'knot');
         physics.step(DT);
         expect(physics.getAttachedConstraints()).toHaveLength(0); // stale link dropped
     });
@@ -137,7 +141,11 @@ describe('Rope segment ties (issue #56) — legacy endpoint tokens migrate', () 
             rope.bindAttachment([balloon]);
             console.warn = origWarn;
             expect(warns).toHaveBeenCalledTimes(2); // one migrated-token warn per token
-            expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 5]);
+            // The end token binds at the restored chain's end (5 of 6) and
+            // covers its own knot: the balloon sits ~221px out, past the
+            // 91.7px cover, so the covering grow re-counts 6 → 7 (240.9px)
+            // and the knot rides onto the NEW tail (seat 6, issue #87).
+            expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 6]);
             const physics = new PhysicsEngine();
             physics.addObject(rope);
             physics.addObject(balloon);
@@ -167,10 +175,13 @@ describe('Rope segment ties (issue #56) — legacy endpoint tokens migrate', () 
             console.warn = origWarn;
             // Issue #88: any schema seat that is not the restored chain's
             // end collapses to the nearest of the three named seats — seat
-            // 6 (in-schema, past the laid 0…5) collapses onto the end.
+            // 6 (in-schema, past the laid 0…5) collapses onto the end. The
+            // end tie then covers its own knot: the balloon sits ~221px
+            // out, past the 91.7px cover, so the grow re-counts 6 → 7 and
+            // the knot rides onto the NEW tail (seat 6).
             expect(warns).toHaveBeenCalledTimes(1); // the migration warn
             expect(rope.getAttachmentRefs()).toEqual([
-                { segment: 5, target: balloon, pointId: 'knot' },
+                { segment: 6, target: balloon, pointId: 'knot' },
             ]);
             rope.dispose();
             balloon.dispose();
@@ -208,10 +219,15 @@ describe('Rope segment ties (issue #56) — refs order', () => {
         const rope = new Rope(200, 100, { length: 60 });
         const balloon = new Balloon(300, 300);
         const bucket = new Bucket(500, 300);
-        rope.attachEndpoint(5, bucket, 'rim'); // chain end, tied first
-        rope.attachEndpoint(2, balloon, 'knot'); // mid-chain
-        rope.attachEndpoint(-1, bucket, 'rim'); // the anchor
-        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 2, 5]);
+        // Both chain ties sit past their seats' covering circles, so each
+        // grow re-counts the chain (one covering rule, issue #89) and the
+        // end knot rides both re-counts (5 → 9 → 15): the first grow to
+        // 381.7px lays 10, the second to 987.1px hits the 16 cap.
+        rope.attachEndpoint(5, bucket, 'rim'); // the 6-chain's end, tied first
+        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([9]);
+        rope.attachEndpoint(2, balloon, 'knot'); // mid-chain seat on the 10-chain
+        rope.attachEndpoint(-1, bucket, 'rim'); // the anchor (no chain consumed)
+        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 2, 15]);
         rope.dispose();
         balloon.dispose();
         bucket.dispose();
@@ -322,7 +338,8 @@ describe('Rope segment ties (issue #56) — mid-chain knots across counts', () =
         const rows = serializePlacedBoard([balloon, bucket, pinned, free]);
         // Tokens name the seats by role (issue #88); the non-named seats
         // (4 of 11 — the mid is 5; 3 of 6 — the mid is 2) keep the legacy
-        // numeric token and migrate at bind.
+        // numeric token and migrate at bind (at the bind-time chain's own
+        // seats — issue #89's re-derived count included).
         expect(rows[2].attachments).toContainEqual({
             seat: 'anchor', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot',
         });
@@ -342,24 +359,30 @@ describe('Rope segment ties (issue #56) — mid-chain knots across counts', () =
         const bucket2 = board2.find((o) => o.type === 'bucket');
         const pinned2 = board2.find((o) => o.type === 'rope');
         const free2 = board2.find((o) => o.type === 'free-rope');
-        // The pinned rope: both tokens bind through the two-phase ordinals,
-        // and the seat-4 token collapses onto the mid seat (5 of 11, issue
-        // #88's nearest-role migration) with a warning.
+        // The pinned rope: both tokens bind through the two-phase ordinals;
+        // the restore re-derives the chain from the saved span (issue #89 —
+        // the tie-grow's re-count capped the count at 16) and the seat-4
+        // token migrates onto the re-derived chain's mid seat (7 of 16,
+        // issue #88's nearest-role migration) with a warning.
         expect(pinned2.getAttachmentRefs()).toContainEqual({ segment: -1, target: balloon2, pointId: 'knot' });
-        expect(pinned2.getAttachmentRefs()).toContainEqual({ segment: 5, target: bucket2, pointId: 'rim' });
+        expect(pinned2.getAttachmentRefs()).toContainEqual({ segment: 7, target: bucket2, pointId: 'rim' });
         expect(pinned2._length).toBeCloseTo(Math.hypot(600, 100) * 11 / 4.5, 3); // the saved span — the seat-4 grow fired at tie time, the restored bind grows nothing
         expect(pinned2.lengthFrozen).toBe(true); // the bind re-derives the freeze
-        expect(pinned2._segments.length).toBe(11); // the restore births the persisted count, not a re-derived one
-        // A SECOND save → restore cycle changes nothing (issue #56): the row
-        // carries the laid count, so the restore births the same chain and the
-        // covering gate stays shut — the rope never creeps longer per cycle.
+        expect(pinned2._segments.length).toBe(16); // the restore re-derives: segmentsForSpan(1486.9) is past the 600px/15 count cap
+        // A SECOND save → restore cycle changes nothing (issue #89): the
+        // count is the span's rule, so the restore re-derives the same
+        // chain, the covering gate stays shut and the SPAN is the fixed
+        // point — the rope never creeps longer per cycle, and no chain
+        // count rides the row.
         const rows2 = serializePlacedBoard(board2);
-        expect(rows2[2].options.segments).toBe(11);
+        expect(rows2[2].options.length).toBeCloseTo(rows[2].options.length, 6);
+        expect(rows2[2].options.segments).toBeUndefined();
         const board3 = [];
         restorePlacedFromSnapshot(board3, rows2);
         const pinned3 = board3.find((o) => o.type === 'rope');
         expect(pinned3._length).toBeCloseTo(pinned2._length, 3);
         expect(pinned3._segments.length).toBe(pinned2._segments.length);
+        expect(pinned3.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 7]);
 
         // …and the free rope re-spawns at bind with its mid-chain knot back,
         // migrated onto the spawned chain's mid seat (2 of 6).

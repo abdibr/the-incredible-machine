@@ -301,6 +301,33 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
         other.dispose();
     });
 
+    it('the freeze holds the span, not the count: the frozen chain follows the span rule (issue #89)', () => {
+        const physics = new PhysicsEngine(800, 600);
+        const rope = new Rope(300, 100, { length: 40 });
+        const balloon = new Balloon(330, 115); // knot at (330, 140.6): 50.48px out
+        physics.addObject(rope);
+        physics.addObject(balloon);
+        physics.step(16.67);
+
+        rope.attachEndpoint(5, balloon, 'knot'); // covers: grown ≈ 55.07, re-count holds 6
+        const grown = rope._length;
+        expect(rope.lengthFrozen).toBe(true);
+        expect(rope._segments).toHaveLength(Rope.segmentsForSpan(grown));
+
+        // A frozen re-orientation re-lays at the frozen span; the count
+        // re-derives from that span — the same rule again. The freeze froze
+        // the length accounting, never a chain size: no persisted count, no
+        // frozen variant to honor (issue #89).
+        const before = rope.constraints;
+        rope.relayFreeEnd(270, 130);
+        expect(rope._length).toBeCloseTo(grown, 5); // the span held
+        expect(rope.constraints).not.toBe(before);
+        expect(rope._segments).toHaveLength(Rope.segmentsForSpan(grown)); // 6
+        physics.dispose();
+        rope.dispose();
+        balloon.dispose();
+    });
+
     it('a covering grow on an in-world rope swaps its chain and hauls nothing', () => {
         const physics = new PhysicsEngine(800, 600);
         const rope = new Rope(300, 100, { length: 40 });

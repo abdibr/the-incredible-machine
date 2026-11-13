@@ -16,8 +16,8 @@
  * - Middle-of-chain resolution on a fresh six-segment drop and on a
  *   longer span-derived chain.
  * - Resolution inertia: the mid seat follows a re-lay (setEndpoints) and
- *   a tie-grow of either family behavior — a free rope's recount, a
- *   pinned rope's frozen count — with no seat write at tie time.
+ *   a tie-grow of either family — the one covering rule re-counts both
+ *   (issue #89) — with no seat write at tie time.
  * - Presence: a laid rope answers three; a bodyless free bundle answers
  *   only its coil anchor seat; a disposed rope answers nothing.
  *
@@ -137,11 +137,12 @@ describe('Rope named tie seats (issue #84) — the three-seat answer', () => {
         balloon.dispose();
     });
 
-    it('the mid seat holds through a PINNED tie-grow: the frozen count keeps it the middle', () => {
-        // A pinned rope's chain is authored: its tie-grow freezes the count
-        // (issue #56) — the span stretches (~100 → ~327) over the SAME six
-        // bodies, so the mid seat is still seat 2's body and the end seat
-        // still the tail. Nothing about seats was written at tie time.
+    it('the mid seat follows a PINNED tie-grow too: one covering rule, same re-count (issue #89)', () => {
+        // The pinned/free counting split is retired (issue #89): a pinned
+        // rope's end-seat tie beyond reach grows the span (~100 → ~328)
+        // and re-counts the chain exactly like the free family's own
+        // tie-grow (issue #56) → 9 segments. The mid seat is never written
+        // at tie time — it re-derives as the new chain's middle.
         const rope = new Rope(200, 100, { length: 100 });
         const balloon = new Balloon(500, 100); // knot ≈ (500, 125.6): tied ≈ 301px
         const bornMidBody = rope.getTieSeats()[1].body;
@@ -149,13 +150,14 @@ describe('Rope named tie seats (issue #84) — the three-seat answer', () => {
         expect(rope.lengthFrozen).toBe(false); // untied: reach is the hand's
         rope.attachEndpoint(5, balloon, 'knot'); // end-seat tie beyond reach
         expect(rope.lengthFrozen).toBe(true);
-        expect(rope.bodies.length - 1).toBe(6); // the count froze
+        expect(rope.bodies.length - 1).toBe(9); // the grow re-counted 6→9, same rule as free
 
         const [anchor, mid, end] = rope.getTieSeats();
         expect(anchor.body).toBe(rope.bodies[0]);
-        expect(mid.segment).toBe(2); // still the middle of the SAME chain
-        expect(mid.body).toBe(bornMidBody); // literally the same body
-        expect(end.segment).toBe(5); // no chain-end ride: the tail never moved
+        expect(mid.segment).toBe(4); // the re-counted chain's middle
+        expect(mid.body).toBe(rope.bodies[5]);
+        expect(mid.body).not.toBe(bornMidBody); // the old middle's body is mid no more
+        expect(end.segment).toBe(8); // the re-count re-seated the knot (issue #87)
         rope.dispose();
         balloon.dispose();
     });
@@ -226,7 +228,7 @@ describe('Rope named tie seats (issue #84) — the three-seat answer', () => {
             // would have grown it to only 100 × 6/5.5 ≈ 109 — the grow
             // listened to the MID seat's fraction, the seat answer's number.)
             expect(rope._length).toBeCloseTo(100 * 6 / 2.5, 5);
-            expect(rope.getTieSeats()[1].reach).toBe(5 / 12); // count froze: 6
+            expect(rope.getTieSeats()[1].reach).toBe(5 / 12); // the re-count holds 6 (240/40)
             rope.dispose();
             balloon.dispose();
         });

@@ -199,11 +199,14 @@ describe('Knots keep their seats — the hand\'s re-lay (issue #87)', () => {
         expect(knotLinks(engine, endB)[0].bodyA).toBe(roper.bodies[15]); // the new tail
         expect(roper.getAttachmentRefs()).toHaveLength(3); // nobody pruned
 
-        // SHORT: span 240 → count 6; the roles collapse back inboard. The
-        // anchor is a moving knot (decision 5): the step above hauled it, so
-        // re-aim from where it lies NOW — the demand measures from there.
+        // SHORT: span ~236 → count 6; the roles collapse back inboard. The
+        // aim sits a few px inside the 240px band edge so float dust cannot
+        // flip the re-derived count (the dust here rides the balloons' bob
+        // noise through the hauled anchor). The anchor is a moving knot
+        // (decision 5): the step above hauled it, so re-aim from where it
+        // lies NOW — the demand measures from there.
         const root2 = roper.bodies[0].position;
-        const demand2 = 240 * (14.5 / 15); // the end square at the 15-chain's fraction
+        const demand2 = 236 * (14.5 / 15); // the end square at the 15-chain's fraction, span ~236
         roper.relayFreeEnd(root2.x + 0.6 * demand2, root2.y + 0.8 * demand2);
         expect(roper.bodies.length - 1).toBe(6);
         expect(roper.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 2, 5]); // mid 7→2, end 14→5
@@ -246,7 +249,7 @@ describe('Knots keep their seats — save → load → save (issue #87)', () => 
         const board2 = [];
         restorePlacedFromSnapshot(board2, rows);
         const roper2 = board2.find((o) => o.type === 'free-rope');
-        expect(roper2.bodies.length - 1).toBe(12); // the row's count restored
+        expect(roper2.bodies.length - 1).toBe(12); // the span re-derives 12 (456/40)
         expect(roper2._length).toBeCloseTo(456, 3); // no grow fired on the bind
         expect(roper2.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 5]);
         // The mid knot landed on the restored chain's middle body.
@@ -267,17 +270,19 @@ describe('Knots keep their seats — save → load → save (issue #87)', () => 
         for (const obj of board3) obj.dispose();
     });
 
-    it('a tie-grown pinned rope round-trips idempotently; its seats hold (frozen count)', () => {
-        // The pinned family's tie-grow freezes the count (issue #56): the
-        // mid tie (seat 2 of 6) grows the span to 240 with the SAME six
-        // bodies, the mid seat still the middle. Save → load → save: the
-        // persisted count re-births the stretched chain, the token lands
-        // back on the middle body, and the covering gate stays shut.
+    it('a tie-grown pinned rope round-trips idempotently; its seats hold (one covering rule)', () => {
+        // The tie-grow's covering rule is ONE rule (issue #89): the mid tie
+        // (seat 2 of 6) grows the span to 240 — whose own segmentsForSpan
+        // answer is still six — so the chain rides the grow with its count,
+        // the mid seat still the middle. Save → load → save: the restore
+        // re-derives the same 6 from the saved span, the token lands back
+        // on the middle body, and the covering gate stays shut (240 ×
+        // 2.5/6 = the tied 100, no fire — no creep per cycle).
         const target = new Balloon(300, 74.4); // knot (300, 100): 100px out
         const roper = new Rope(300, 200, { length: 100 });
         expect(roper.bodies.length - 1).toBe(6);
         roper.attachEndpoint(2, target, 'knot');
-        expect(roper.bodies.length - 1).toBe(6); // the count froze
+        expect(roper.bodies.length - 1).toBe(6); // the re-count holds 6 (240/40)
         expect(roper._length).toBeCloseTo(240, 5); // 100px covered at 2.5/6
         expect(roper.getAttachmentRefs().map((r) => r.segment)).toEqual([2]);
 
@@ -285,7 +290,7 @@ describe('Knots keep their seats — save → load → save (issue #87)', () => 
         const board2 = [];
         restorePlacedFromSnapshot(board2, rows);
         const roper2 = board2.find((o) => o.type === 'rope');
-        expect(roper2.bodies.length - 1).toBe(6); // the persisted count
+        expect(roper2.bodies.length - 1).toBe(6); // the span re-derives the same 6 (240/40)
         expect(roper2._length).toBeCloseTo(240, 3);
         expect(roper2.getAttachmentRefs().map((r) => r.segment)).toEqual([2]);
         expect(roper2.getTieSeats()[1].segment).toBe(2); // still the middle of 6

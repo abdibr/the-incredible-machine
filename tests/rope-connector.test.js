@@ -151,8 +151,12 @@ describe('Rope as connector (issue 04)', () => {
         physics.addObject(balloon);
         physics.addObject(fixedBucket);
 
+        // The end-seat tie sits past its cover (246.8px vs 91.7): the
+        // covering grow re-counts 6 → 7 and the knot rides onto the new
+        // tail (seat 6, issue #87 — one covering rule, issue #89).
         rope.attachEndpoint(5, balloon, 'knot');
-        expect(() => rope.attachEndpoint(5, fixedBucket, 'rim')).toThrow(); // one knot per seat (issue #85)
+        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([6]);
+        expect(() => rope.attachEndpoint(6, fixedBucket, 'rim')).toThrow(); // one knot per seat (issue #85)
         rope2.attachEndpoint(5, fixedBucket, 'rim'); // same point, another rope
         for (let i = 0; i < 10; i++) physics.step(16.67);
 
