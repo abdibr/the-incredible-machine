@@ -82,7 +82,7 @@ describe('Free Rope (issue #55) — the bodyless bundle', () => {
         expect(rope.bodies).toEqual([]);
 
         const spawned = trackEvent('rope:chain-spawned');
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
 
         expect(spawned.length, 'exactly one spawn per first tie').toBe(1);
         expect(spawned[0].rope).toBe(rope);
@@ -109,13 +109,13 @@ describe('Free Rope (issue #55) — the bodyless bundle', () => {
         const rope = objectRegistry.create('free-rope', 220, 200, { length: 60 });
         engine.addObject(balloon);
         engine.addObject(rope);
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         const bodyCount = rope.bodies.length;
         const constraintCount = rope.constraints.length;
         expect(bodyCount).toBeGreaterThan(0);
 
         const unbundled = trackEvent('rope:unbundled');
-        expect(rope.detachEndpoint(-1, balloon, 'knot')).toBe(true);
+        expect(rope.detachEndpoint('anchor', balloon, 'knot')).toBe(true);
 
         expect(unbundled.length, 'the engine consumer un-bundles the world').toBe(1);
         expect(unbundled[0].rope).toBe(rope);
@@ -132,7 +132,7 @@ describe('Free Rope (issue #55) — the bodyless bundle', () => {
         const rope = objectRegistry.create('free-rope', 220, 200, { length: 60 });
         engine.addObject(balloon);
         engine.addObject(rope);
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         expect(rope.bodies.length).toBeGreaterThan(0);
 
         const unbundled = trackEvent('rope:unbundled');
@@ -159,7 +159,7 @@ describe('Free Rope (issue #55) — serialize round-trip', () => {
     it('a spawned chain serializes spawned:true; deserialize always rebuilds the bundle', () => {
         const balloon = new Balloon(260, 240);
         const rope = objectRegistry.create('free-rope', 260, 300, { length: 60 });
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         const data = rope.serialize();
         expect(data.options.spawned, 'spawned is derived from live segments').toBe(true);
 
@@ -188,7 +188,7 @@ describe('Free Rope (issue #55) — snapshot rewinds', () => {
         engine.addObject(rope);
         engine.takeSnapshot(); // board at play start: the rope is a bundle
 
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         expect(rope.bodies.length).toBeGreaterThan(0);
         for (let i = 0; i < 60; i += 1) engine.step(DT); // the chain lives in the world
         expect(rope.bodies.length).toBeGreaterThan(0);
@@ -213,7 +213,7 @@ describe('Free Rope (issue #55) — snapshot rewinds', () => {
         const rope = objectRegistry.create('free-rope', 300, 200, { length: 80 });
         engine.addObject(balloon);
         engine.addObject(rope);
-        rope.attachEndpoint(-1, balloon, 'knot'); // a spawn-era chain…
+        rope.attachEndpoint('anchor', balloon, 'knot'); // a spawn-era chain…
         for (let i = 0; i < 10; i += 1) engine.step(DT);
         engine.takeSnapshot(); // …caught alive by the snapshot…
         rope.clearAttachments(); // …has already collapsed (its world is gone)
@@ -231,7 +231,7 @@ describe('Free Rope (issue #55/#56) — board-load chain', () => {
     it('deserialize → addObject lays the authored chain; the bind pass re-roots it at the knot', () => {
         const balloon = new Balloon(260, 240);
         const rope = objectRegistry.create('free-rope', 260, 300, { length: 80 });
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         // Board order is what the ordinals index: balloon first, rope second.
         const rows = serializePlacedBoard([balloon, rope]);
         expect(rows[1].type).toBe('free-rope');
@@ -296,7 +296,7 @@ describe('Free Rope (issue #55/#56) — board-load chain', () => {
         const rope = objectRegistry.create('free-rope', 220, 200, { length: 60 });
         engine.addObject(balloon);
         engine.addObject(rope);
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
 
         const anchor = rope.bodies.find((b) => b.label === 'rope-anchor');
         expect(anchor.isStatic, "the free rope's anchor is a dynamic knot").toBe(false);
@@ -334,7 +334,7 @@ describe('Free Rope (issue #55) — sandbox reset', () => {
     it('reset resurrects a tied free rope from the placed snapshot', () => {
         const balloon = new Balloon(260, 240);
         const rope = objectRegistry.create('free-rope', 260, 300, { length: 60 });
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         const rows = serializePlacedBoard([balloon, rope]);
 
         const engine = makeEngine();
@@ -382,7 +382,7 @@ describe('Free Rope (issue #56) — unlimited span', () => {
         // distance — issue #56 takes the reach-freeze/refusal bookkeeping
         // off free ropes entirely (only pinned ropes refuse beyond reach).
         expect(rope.isPointWithinReach(600, 200, 14), 'no reach circle exists to refuse').toBe(true);
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
 
         expect(ropeSegs(rope), 'the spawn always births the fresh-drop count').toHaveLength(6);
         expect(ropeSegs(rope)).toHaveLength(Rope.segmentsForSpan(60)); // count-honest spawn
@@ -402,35 +402,36 @@ describe('Free Rope (issue #56) — unlimited span', () => {
         engine.addObject(bucket);
         engine.addObject(rope);
 
-        rope.attachEndpoint(-1, balloon, 'knot'); // spawns 6 segments
+        rope.attachEndpoint('anchor', balloon, 'knot'); // spawns 6 segments
         const rim = bucket.getAttachmentWorldPoint('rim');
         const knot = balloon.getAttachmentWorldPoint('knot');
-        // ~165px tie at mid-chain seat 2: in-schema (count-capped range),
-        // past the bundle, and the reach predicate answers yes — the tie's
-        // covering grow re-lays the chain so its rest lengths span the
-        // demanded distance (the free rope's unlimited span, decision 4).
+        // ~165px tie at the MID seat: past the bundle's own covering, and
+        // the reach predicate answers yes — the tie's covering grow re-lays
+        // the chain so its rest lengths span the demanded distance (the free
+        // rope's unlimited span, decision 4).
         expect(rope.isPointWithinReach(rim.x, rim.y, 14), 'a spawn stays unlimited after the first tie').toBe(true);
-        rope.attachEndpoint(2, bucket, 'rim');
+        rope.attachEndpoint('mid', bucket, 'rim');
 
         const tied = Math.hypot(rim.x - knot.x, rim.y - knot.y);
-        // Seat 2 sits (2+0.5)/6 of the span from the anchor, so the span
-        // grows to demanded / (2.5/6) and the count re-derives from it.
+        // The mid seat sits (2+0.5)/6 of the span from the anchor, so the
+        // span grows to demanded / (2.5/6) and the count re-derives from it.
         expect(rope._length).toBeCloseTo(tied * 6 / 2.5, 5);
         const count = ropeSegs(rope).length;
         expect(count).toBe(Rope.segmentsForSpan(rope._length));
         expect(count).toBeGreaterThan(6);
-        // The tie was the MID seat: the knot keeps its seat, so the
-        // re-count re-seats it onto the re-counted chain's own middle
-        // (issue #87 — the literal seat-2 body survives but is mid no more).
+        // The tie was the MID seat (issue #90: the knot's address IS the
+        // role), so the re-count's new middle body is its body — the birth
+        // chain's seg-2 body survives but is mid no more (issue #87 kept by
+        // the roles themselves).
         engine.step(DT);
         const link = engine.getAttachedConstraints().find(
             (c) => c.bodyB === bucket.bodies[2]
         );
         expect(link, 'the mid-seat knot survives the re-segmentation').toBeTruthy();
         const [, midSeat] = rope.getTieSeats(); // the re-counted chain's middle
-        expect(midSeat.segment).toBeGreaterThan(2); // the middle drew outboard of seat 2
-        expect(link.bodyA).toBe(rope.bodies[midSeat.segment + 1]);
+        expect(midSeat.body).not.toBe(rope.bodies[3]); // the middle drew outboard of the birth chain's
         expect(link.bodyA).toBe(midSeat.body); // the knot is ON the mid square
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid']);
     });
 
     it('the hand re-lays a tied spawned rope to any span — no length freeze after the first tie', () => {
@@ -439,7 +440,7 @@ describe('Free Rope (issue #56) — unlimited span', () => {
         const rope = objectRegistry.create('free-rope', 260, 300, { length: 60 });
         engine.addObject(balloon);
         engine.addObject(rope);
-        rope.attachEndpoint(-1, balloon, 'knot'); // first tie (a pinned rope: this freezes)
+        rope.attachEndpoint('anchor', balloon, 'knot'); // first tie (a pinned rope: this freezes)
 
         // A pinned rope re-lays tied along its frozen reach circle; a free
         // rope takes the demanded span straight away (relayFreeEnd's
@@ -524,7 +525,7 @@ describe('Free Rope (issue #56) — the authored span lays at addObject', () => 
         // …and its first tie still births the chain the normal way.
         const balloon = new Balloon(240, 260);
         engine.addObject(balloon);
-        legacyCoil.attachEndpoint(-1, balloon, 'knot');
+        legacyCoil.attachEndpoint('anchor', balloon, 'knot');
         expect(ropeSegs(legacyCoil).length).toBeGreaterThan(0);
 
         // The other half of the contract: a row that WAS a chain lays one
@@ -550,7 +551,7 @@ describe('Free Rope (issue #56) — the authored span lays at addObject', () => 
 
         const converge = trackEvent('rope:chain-converge');
         const spawned = trackEvent('rope:chain-spawned');
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
 
         // A re-root, not a second birth: no spawn event, one converge packet
         // (the engine swaps the rebuilt chain in), no tail trade.

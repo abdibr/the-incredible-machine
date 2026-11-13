@@ -1,5 +1,54 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-13 — Segment indices are no longer seats: the role is the only address (issue #90)
+
+The last of the old seat surface is deleted. Through #84–#89 the rope gained three named tie
+seats (anchor, mid, end), one knot per seat, per-seat reach, span-derived counts and role-named
+tokens — but a knot could still be ADDRESSED by a segment index: the API took `−1…MAX_SEGMENTS−1`,
+the token schema's legacy numeric forms loaded through a nearest-seat migration, and the seats'
+keep-rule (`_keepSeats`) existed to keep those literal indices riding their roles across
+re-counts. One idea replaces all of it: the knot's address IS the role. `attachEndpoint`/
+`detachEndpoint`/`isPointWithinReach` take `'anchor' | 'mid' | 'end'` and nothing else (an
+unknown name refuses with a clear error); live refs carry their seat; tokens name it; the
+flow's squares and seek speak roles; no public rope API accepts or returns a segment index,
+and two knots cannot share a seat through the API or through a restore.
+
+With roles as addresses, issue #87's keeping happens by resolution: 'end' IS the tail's knot and
+'mid' the middle's whatever the live count is, so `_keepSeats` (and the whole notion of a knot
+re-seat) is deleted — a re-lay writes nothing at all.
+
+- **`js/objects/Rope.js`** — the role API (`SEAT_ROLES = ['anchor','mid','end']`): `attachEndpoint`
+  gates the name, the per-seat occupation, and the body resolution; the tie-grow's covering rule
+  reads the seat's fraction by role; `getTieSeats` answers role/body/worldPoint/reach (no index);
+  `getAttachmentRefs` returns role refs in seat order; `_tieBody` resolves a role to a body.
+  Deleted: `Rope.validSegment`, `nearestNamedSeat` (the legacy migration's nearest-seat arithmetic,
+  #88), `_keepSeats` (#87's re-seat pass), `_seatToken`. The seat arithmetic `seatFraction` is
+  role-keyed. Token restore (`_migrateTieToken`) accepts only role names: anything else — a
+  non-role name, a pre-#90 numeric `segment`/`endpoint` token — drops with one clear warning
+  apiece, nothing throws, the rest of the board restores.
+- **`js/ui/ConnectFlow.js`** — the seek is `{ rope, role }`: squares carry roles (no `segment`
+  field), the occupied check, reach gate, anchor pull, end-reel gate and untie all speak roles;
+  the tie-exit re-resolution (`_seekRoleOf` + post-tie re-seat) is gone — the role cannot stale.
+- **`js/reset/levelReset.js`** — the annotator writes the token straight from the ref (the ref
+  already carries the role); the `getTieSeats` lookup for numerics is gone.
+- **`js/recorder/SessionRecorder.js` + `schema.js`** — bug-file v3: narrative tokens carry
+  `seat`; pre-#90 bugfiles' rope knots drop with a warning at replay (documented in the schema).
+- **Tests** — the five seat suites rewritten to roles: `rope-seats` (the answer), `rope-ties`
+  (the role gate — unknown names refuse on attach/detach/reach; the bundle refuses its chain
+  seats; one knot per seat; the two-seat long-rope realization; mixed round-trips), `rope-seats`
+  keeps/`rope-seat-tokens`/`rope-seat-keeps` (role tokens; legacy numeric + garbage tokens refuse
+  with one warning each; count-independent restore; roles keep themselves across re-counts), and
+  the schema followers (`connect-flow`, `rope-span`, `pinned-rope-length`, `free-rope`,
+  `rope-connector`, `connector-reset`, `recorder`, plus the one-line `-1`/`5`/`2` ties in
+  `interactions`/`pair-conformance`/`drag-release`/`rope-knots`). The "unnamed seat unties off
+  the scan" behavior is unobservable under roles (a role always resolves a live body) — its test
+  is rewritten to roles keep both knots; legacy-migration tests are deleted, their refusal
+  replacements added.
+- **Docs** — the rope module header describes the three-seat model; `GLOSSARY.md` (Segment tie
+  point tombstoned; Seat/Named seats/Seat token rewritten role-first); `docs/adr/0007` amendment:
+  segment indices are no longer seats (supersedes decision 6's addressing; schema v3 note).
+- Full suite: **58 files / 644 tests, all green** (`npx vitest run`).
+
 ## 2026-11-13 — The count is the span's rule at every seam: chain-count bookkeeping retired (issue #89)
 
 Through #87/#88 the knots themselves were count-independent (named seats re-seat through any

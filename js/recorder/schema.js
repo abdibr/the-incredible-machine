@@ -10,11 +10,14 @@
  */
 
 /**
- * Download schema — v2 (issue #56): rope knot tokens became
- * `{ segment, targetType, targetOrdinal, pointId }` (per-segment ties,
- * −1 = the anchor seat; was legacy `endpoint` 0|1). Readers accept both.
+ * Download schema — v3 (issue #90): rope knot tokens name their seat by
+ * role — `{ seat: 'anchor'|'mid'|'end', targetType, targetOrdinal,
+ * pointId }` — and nothing else; the segment-index forms (v2's `segment`,
+ * issue #56, −1 = the anchor seat; v1's `endpoint` 0|1) are retired and no
+ * longer bind, so pre-#90 bugfiles' rope knots drop with a warning at
+ * replay instead of migrating.
  */
-export const BUGFILE_SCHEMA_VERSION = 2;
+export const BUGFILE_SCHEMA_VERSION = 3;
 
 /** Sample poses every Nth tick (~10 Hz at 60 fps). */
 export const POSE_SAMPLE_INTERVAL = 6;

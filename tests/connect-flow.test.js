@@ -69,7 +69,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const consumed = flow.handlePointerDown(end.x + 2, end.y + 2, [rope]);
 
         expect(consumed).toBe(true);
-        expect(flow.seek).toEqual({ rope, segment: 5 });
+        expect(flow.seek).toEqual({ rope, role: 'end' });
         expect(flow.preview).toEqual({ x: end.x + 2, y: end.y + 2 });
         rope.dispose();
     });
@@ -79,7 +79,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const anchor = rope.bodies[0].position;
 
         expect(flow.handlePointerDown(anchor.x, anchor.y, [rope])).toBe(true);
-        expect(flow.seek).toEqual({ rope, segment: -1 });
+        expect(flow.seek).toEqual({ rope, role: 'anchor' });
         rope.dispose();
     });
 
@@ -116,14 +116,13 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
 
         expect(consumed).toBe(true);
         expect(flow.seek).toBe(null);
-        // The seat is the chain END'S ROLE, not the literal index 5 (issue
-        // #56). The reel above re-derived the chain from the span it laid
-        // (setPreview → relayFreeEnd → setEndpoints → segmentsForSpan): the
-        // 6-chain became count = ceil(328.9 / 40) = 9, so the end seat the
-        // hand was holding is now 8 and setPreview re-resolved the seek onto
-        // it. The tie then lands there — no grow, because seat 8's capacity
-        // (328.9 · 8.5/9 = 310.6px) already covers the 300.6px knot.
-        expect(rope.getAttachmentRefs()).toContainEqual({ segment: 8, target: balloon, pointId: 'knot' });
+        // The seat is the chain end END'S ROLE, not an index (issue #90):
+        // the reel above re-derived the chain from the span it laid
+        // (setPreview → relayFreeEnd → setEndpoints → segmentsForSpan) and
+        // the tie landed on whatever body the end seat names now — the tie
+        // never re-grew, because the tail square's capacity already covered
+        // the knot.
+        expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'end', target: balloon, pointId: 'knot' });
         rope.dispose();
         balloon.dispose();
     });
@@ -140,7 +139,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const knot = balloon.getAttachmentWorldPoint('knot');
         flow.handlePointerDown(knot.x, knot.y, [rope, balloon]); // tie the knot to it
 
-        expect(rope.getAttachmentRefs()).toContainEqual({ segment: -1, target: balloon, pointId: 'knot' });
+        expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'anchor', target: balloon, pointId: 'knot' });
 
         // The pull: the knot realizes at the anchor itself (zero gap) — the
         // first play step does not slam the tied balloon across a residual.
@@ -162,7 +161,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const knot = balloon.getAttachmentWorldPoint('knot');
         flow.handlePointerDown(knot.x, knot.y, [rope, balloon]);
 
-        expect(rope.getAttachmentRefs()).toContainEqual({ segment: -1, target: balloon, pointId: 'knot' });
+        expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'anchor', target: balloon, pointId: 'knot' });
         // Pulled toward the wall, but clamped: the balloon's painted bounds
         // (the envelope ± the knot's sway) stay inside the playfield it was
         // given, and the pull moved the target toward the anchor.
@@ -186,7 +185,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         // click that is neither a tie nor a cancel does nothing but belongs
         // to the seek — it must not fall through to selection/move.
         expect(flow.handlePointerDown(500, 300, [rope])).toBe(true);
-        expect(flow.seek).toEqual({ rope, segment: 5 });
+        expect(flow.seek).toEqual({ rope, role: 'end' });
         expect(flow.preview).toEqual({ x: 500, y: 300 });
         expect(rope.getAttachmentRefs()).toEqual([]);
         rope.dispose();
@@ -224,7 +223,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const end = rope.bodies[rope.bodies.length - 1].position;
 
         expect(flow.handlePointerDown(end.x, end.y, [rope])).toBe(true);
-        expect(flow.seek).toEqual({ rope, segment: 5 });
+        expect(flow.seek).toEqual({ rope, role: 'end' });
         rope.dispose();
     });
 
@@ -244,7 +243,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const end = rope.bodies[rope.bodies.length - 1].position;
         flow.init();
         flow.handlePointerDown(end.x, end.y, [rope]);
-        expect(flow.seek).toEqual({ rope, segment: 5 });
+        expect(flow.seek).toEqual({ rope, role: 'end' });
 
         eventBus.emit('mode:changed', { oldMode: 'EDITING', newMode: 'PLAYING' });
 
@@ -262,15 +261,15 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const endBalloon = new Balloon(300, 154.4); // knot (300, 180): inside the end square
         const anchor = rope.bodies[0].position;
         const end = rope.bodies[rope.bodies.length - 1].position;
-        rope.attachEndpoint(-1, anchorBalloon, 'knot');
-        rope.attachEndpoint(5, endBalloon, 'knot');
+        rope.attachEndpoint('anchor', anchorBalloon, 'knot');
+        rope.attachEndpoint('end', endBalloon, 'knot');
 
         // The first click unties the knot the clicked seat holds (issue #85:
         // one knot per seat — the per-knot untie of ADR 0007 decision 8,
         // one seat at a time).
         expect(flow.handlePointerDown(end.x, end.y, [rope, anchorBalloon, endBalloon])).toBe(true);
         expect(flow.seek).toBe(null); // untie is not a seek
-        expect(rope.getAttachmentRefs()).toEqual([{ segment: -1, target: anchorBalloon, pointId: 'knot' }]);
+        expect(rope.getAttachmentRefs()).toEqual([{ seat: 'anchor', target: anchorBalloon, pointId: 'knot' }]);
 
         // The second click frees the remaining knot.
         expect(flow.handlePointerDown(anchor.x, anchor.y, [rope, anchorBalloon])).toBe(true);
@@ -320,15 +319,15 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
     it('hover reveals a free square; tied and seeking squares stay visible unhovered', () => {
         const rope = new Rope(300, 100, { length: 40 });
         const balloon = new Balloon(700, 300);
-        rope.attachEndpoint(-1, balloon, 'knot'); // the anchor square is born tied
+        rope.attachEndpoint('anchor', balloon, 'knot'); // the anchor square is born tied
         const end = rope.bodies[rope.bodies.length - 1].position;
 
         let squares = flow.getRopeSquares([rope], null);
         expect(squares).toHaveLength(3); // exactly the tie seats (issue #85): anchor, mid, end
         expect(squares[0].tied).toBe(true);
         expect(squares[0].visible).toBe(true); // tieable structure stays visible
-        expect(squares[1].segment).toBe(2);
-        expect(squares[2].segment).toBe(5); // the free end squares as the chain's last segment
+        expect(squares[1].role).toBe('mid');
+        expect(squares[2].role).toBe('end'); // the free end squares as the chain's tail
         for (let i = 1; i < squares.length; i++) {
             expect(squares[i].tied).toBe(false);
             expect(squares[i].visible).toBe(false); // free squares are hover-revealed
@@ -387,7 +386,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         flow.handlePointerDown(300, 100, [rope]); // anchor-square seek
         flow.setPreview(640, 360);
 
-        expect(flow.seek).toEqual({ rope, segment: -1 });
+        expect(flow.seek).toEqual({ rope, role: 'anchor' });
         expect(flow.preview).toEqual({ x: 640, y: 360 });
         expect(rope._length).toBe(40); // untouched: the pin is not re-laid
         const end = rope.bodies[rope.bodies.length - 1].position;
@@ -427,9 +426,9 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         flow.handlePointerDown(end.x, end.y, [rope, balloon]); // seek
         expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
 
-        // A refused click re-lays nothing, so the chain is still the six
-        // segments the seek captured and seat 5 is still its end.
-        expect(flow.seek).toEqual({ rope, segment: 5 }); // the seek survives the refusal
+        // A refused click re-lays nothing, so the seek is still at the end
+        // seat of the six segments the seek captured.
+        expect(flow.seek).toEqual({ rope, role: 'end' }); // the seek survives the refusal
         expect(rope.getAttachmentRefs()).toEqual([]); // no knot was created
         expect(rope.lengthFrozen).toBe(false);
         expect(flow.refusal).toMatchObject({ x: knot.x, y: knot.y });
@@ -439,13 +438,12 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         // The hand reels the rope out to the target: the SAME click now ties.
         flow.setPreview(knot.x, knot.y);
         expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
-        // Seat 12 = the 13-chain's end (issue #56: the seat is the end's
-        // role, not the index 5 it had on the 6-chain). The reel laid span
-        // = hypot(400, 225.6) · 6/5.5 = 500.98px, so the chain re-counted to
-        // ceil(500.98 / 40) = 13; setPreview re-resolved the seek onto seat
-        // 12, whose capacity (500.98 · 12.5/13 = 481.7px) covers the 459.06px
-        // knot — hence the untouched `_length` pinned two lines below.
-        expect(rope.getAttachmentRefs()).toContainEqual({ segment: 12, target: balloon, pointId: 'knot' });
+        // The tie lands on the END seat (issue #90: the seek is a role) —
+        // the reel laid span = hypot(400, 225.6) · 6/5.5 = 500.98px, so the
+        // chain re-counted to ceil(500.98 / 40) = 13, and the end seat's
+        // capacity (500.98 · 12.5/13 = 481.7px) covers the 459.06px knot —
+        // hence the untouched `_length` pinned two lines below.
+        expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'end', target: balloon, pointId: 'knot' });
         expect(flow.seek).toBe(null);
         expect(flow.refusal).toBe(null); // a settled tie sweeps the flash
         expect(rope._length).toBeCloseTo(Math.hypot(400, 225.6) * 6 / 5.5, 3);
@@ -490,10 +488,9 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
             expect(70).toBeGreaterThan(MID_CIRCLE + 14);
             expect(70).toBeLessThan(END_CIRCLE + 14);
             const mid = rope.getTieSeats()[1];
-            expect(mid.segment).toBe(2);
 
             flow.handlePointerDown(mid.worldPoint.x, mid.worldPoint.y, [rope]);
-            expect(flow.seek).toEqual({ rope, segment: 2 });
+            expect(flow.seek).toEqual({ rope, role: 'mid' });
 
             // Glow follows the seat: the far target stays faint under a
             // mid seek (it would glow under an end seek).
@@ -503,7 +500,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
 
             const knot = balloon.getAttachmentWorldPoint('knot');
             expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true); // consumed
-            expect(flow.seek).toEqual({ rope, segment: 2 }); // the seek survives
+            expect(flow.seek).toEqual({ rope, role: 'mid' }); // the seek survives
             expect(rope.getAttachmentRefs()).toEqual([]); // no knot was created
             expect(rope._length).toBe(100); // a refused tie re-lays and grows nothing
             expect(rope.lengthFrozen).toBe(false);
@@ -529,10 +526,10 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
             const knot = balloon.getAttachmentWorldPoint('knot');
             expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
             expect(flow.seek).toBe(null); // a pinned tie ends the seek settled
-            expect(rope.getAttachmentRefs()).toEqual([{ segment: 2, target: balloon, pointId: 'knot' }]);
+            expect(rope.getAttachmentRefs()).toEqual([{ seat: 'mid', target: balloon, pointId: 'knot' }]);
             expect(rope.lengthFrozen).toBe(true);
             // The covering grow answers the MID seat's own fraction: the
-            // chain re-lays so seat 2's body rests exactly at the knot —
+            // chain re-lays so the mid seat's body rests exactly at the knot —
             // just enough (tied · 6/2.5), never hauling the target inboard.
             expect(rope._length).toBeCloseTo(46 * 6 / 2.5, 5);
             const midBody = rope.bodies[3]; // bodies[0] = anchor, i+1 per seat
@@ -557,7 +554,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
             expect(70).toBeLessThan(END_CIRCLE);
             flow.handlePointerDown(end.x, end.y, [rope, balloon]);
             expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
-            expect(rope.getAttachmentRefs()).toEqual([{ segment: 5, target: balloon, pointId: 'knot' }]);
+            expect(rope.getAttachmentRefs()).toEqual([{ seat: 'end', target: balloon, pointId: 'knot' }]);
             expect(rope._length).toBe(100); // in-capacity tie: no grow (today's behaviour)
             expect(flow.seek).toBe(null);
 
@@ -567,7 +564,7 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
             const mid = rope.getTieSeats()[1].worldPoint;
             flow.handlePointerDown(mid.x, mid.y, [rope, balloon]);
             expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
-            expect(flow.seek).toEqual({ rope, segment: 2 });
+            expect(flow.seek).toEqual({ rope, role: 'mid' });
             expect(rope.getAttachmentRefs()).toHaveLength(1); // no second knot
             expect(flow.refusal).toMatchObject({ x: knot.x, y: knot.y });
             rope.dispose();
@@ -578,26 +575,26 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
             if (!objectRegistry.has('free-rope')) registerAllObjects();
             const rope = objectRegistry.create('free-rope', 260, 300, { length: 60 });
             const balloon = new Balloon(300, 100); // the anchor tie spawns the chain
-            rope.attachEndpoint(-1, balloon, 'knot');
+            rope.attachEndpoint('anchor', balloon, 'knot');
             expect(rope.bodies.length).toBe(7); // 1 anchor + the fresh-drop six
-            const mid = rope.getTieSeats()[1]; // seat 2 of the spawned chain
+            const mid = rope.getTieSeats()[1]; // the middle of the spawned chain
             const bucket = new Bucket(700, 120); // the rim, ~400px out from the mid square
             const rim = bucket.getAttachmentWorldPoint('rim');
 
             flow.handlePointerDown(mid.worldPoint.x, mid.worldPoint.y, [rope, bucket, balloon]);
-            expect(flow.seek).toEqual({ rope, segment: 2 });
+            expect(flow.seek).toEqual({ rope, role: 'mid' });
             expect(flow.handlePointerDown(rim.x, rim.y, [rope, balloon, bucket])).toBe(true);
 
             expect(flow.refusal).toBe(null); // no reach refusal for the free family
             // The tie covered its knot 400+px out, re-layed the chain and
             // re-counted it (the free family's unlimited span): the knot
-            // keeps its SEAT, so it rides to the re-counted chain's middle
-            // (issue #87), and the armed seek followed the same seat.
-            const reSeated = rope.getTieSeats()[1];
-            expect(rope.getAttachmentRefs()).toContainEqual({ segment: reSeated.segment, target: bucket, pointId: 'rim' });
+            // IS the mid seat's (issue #90), so it rides to the re-counted
+            // chain's middle (issue #87 by the roles themselves), and the
+            // armed seek's role stayed the same.
+            expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'mid', target: bucket, pointId: 'rim' });
             // The free family's seek stays armed after a tie (ADR 0007
             // amendment 3): the same seat aims for the next knot.
-            expect(flow.seek).toEqual({ rope, segment: reSeated.segment });
+            expect(flow.seek).toEqual({ rope, role: 'mid' });
             rope.dispose();
             balloon.dispose();
             bucket.dispose();
@@ -634,8 +631,8 @@ describe('Click-flow ties survive the snapshot round-trip (AC)', () => {
         // The first tie froze the length: it and the flag ride the row.
         expect(snapshot[2].options.length).toBe(40);
         expect(snapshot[2].options.lengthFrozen).toBe(true);
-        // Tokens name the seats by role (issue #88): seat 5 of the 6-chain
-        // is the chain's end; the anchor knot's seat is the anchor.
+        // Tokens name the seats by role (issue #88): the end tie is the
+        // chain's end; the anchor knot's seat is the anchor.
         expect(snapshot[2].attachments).toContainEqual({
             seat: 'end', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot',
         });
@@ -648,8 +645,8 @@ describe('Click-flow ties survive the snapshot round-trip (AC)', () => {
         const balloon2 = board2.find((o) => o.type === 'balloon');
         const bucket2 = board2.find((o) => o.type === 'bucket');
         const rope2 = board2.find((o) => o.type === 'rope');
-        expect(rope2.getAttachmentRefs()).toContainEqual({ segment: 5, target: balloon2, pointId: 'knot' });
-        expect(rope2.getAttachmentRefs()).toContainEqual({ segment: -1, target: bucket2, pointId: 'rim' });
+        expect(rope2.getAttachmentRefs()).toContainEqual({ seat: 'end', target: balloon2, pointId: 'knot' });
+        expect(rope2.getAttachmentRefs()).toContainEqual({ seat: 'anchor', target: bucket2, pointId: 'rim' });
         expect(rope2._length).toBe(40);
         expect(rope2.lengthFrozen).toBe(true); // the bind refroze it
 
@@ -675,7 +672,7 @@ describe('DragDropManager delegates pointer handling to the connect flow', () =>
 
         ddm._onCanvasPointerDown(end.x, end.y);
 
-        expect(ddm._connectFlow.seek).toEqual({ rope, segment: 5 });
+        expect(ddm._connectFlow.seek).toEqual({ rope, role: 'end' });
         expect(ddm._selectedObject).toBe(null); // the seek ate the click
         rope.dispose();
         balloon.dispose();
@@ -703,7 +700,7 @@ describe('DragDropManager delegates pointer handling to the connect flow', () =>
         const end = rope.bodies[rope.bodies.length - 1].position;
 
         ddm._onCanvasPointerDown(end.x, end.y);
-        expect(ddm._connectFlow.seek).toEqual({ rope, segment: 5 });
+        expect(ddm._connectFlow.seek).toEqual({ rope, role: 'end' });
 
         ddm._onKeyDown({ code: 'Escape', target: { tagName: 'DIV' }, preventDefault() {} });
 
@@ -723,7 +720,7 @@ describe('DragDropManager delegates pointer handling to the connect flow', () =>
         ddm._onCanvasPointerDown(end.x, end.y);
         ddm._onCanvasPointerDown(knot.x, knot.y); // beyond reach → refused
 
-        expect(ddm._connectFlow.seek).toEqual({ rope, segment: 5 }); // seek intact
+        expect(ddm._connectFlow.seek).toEqual({ rope, role: 'end' }); // seek intact
         expect(ddm._selectedObject).toBe(null);
         rope.dispose();
         balloon.dispose();
@@ -741,7 +738,7 @@ describe('Renderer draws the connect-flow squares (edit modes only)', () => {
     it('hover reveals a free square; tied squares persist without hover; squares sit on the tie points', () => {
         const rope = new Rope(300, 100, { length: 40 });
         const balloon = new Balloon(700, 300); // no hover there, no seek → its knot square hides
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         const end = rope.bodies[rope.bodies.length - 1].position;
         const r = new Renderer();
         r._mode = 'EDITING';
@@ -897,17 +894,17 @@ describe('ConnectFlow — free-rope reach gates stay open across the board (issu
         const rope = objectRegistry.create('free-rope', 220, 200, { length: 60 });
         const bucket = new Bucket(700, 120);
         const [coil] = flow.getRopeSquares([rope], null);
-        expect(coil.segment).toBe(-1);
+        expect(coil.role).toBe('anchor');
         flow.handlePointerDown(coil.x, coil.y, [rope, bucket]); // seek the bundle
         const rim = bucket.getAttachmentWorldPoint('rim'); // ~430px away
-        expect(flow.seek.segment).toBe(-1);
+        expect(flow.seek.role).toBe('anchor');
 
         // The free rope takes ANY first tie: the reach gate answers the
         // free family for anything on the board and the chain spawns
         // straight from the contact point (a pinned rope refuses this
         // same click — see the flow gate refusal above).
         flow.handlePointerDown(rim.x, rim.y, [rope, bucket]);
-        expect(rope.getAttachmentRefs()).toEqual([{ segment: -1, target: bucket, pointId: 'rim' }]);
+        expect(rope.getAttachmentRefs()).toEqual([{ seat: 'anchor', target: bucket, pointId: 'rim' }]);
         expect(rope.bodies.length).toBeGreaterThan(0);
         const head = rope.bodies[0].position;
         expect(Math.hypot(head.x - rim.x, head.y - rim.y)).toBeLessThan(2); // straight to the click
@@ -920,12 +917,12 @@ describe('ConnectFlow — free-rope reach gates stay open across the board (issu
         const rope = objectRegistry.create('free-rope', 260, 300, { length: 60 });
         const balloon = new Balloon(300, 100);
         const bucket = new Bucket(700, 120);
-        rope.attachEndpoint(-1, balloon, 'knot'); // direct spawn at the knot
+        rope.attachEndpoint('anchor', balloon, 'knot'); // direct spawn at the knot
 
         // Seek from the tail square…
         const end = rope.bodies[rope.bodies.length - 1].position;
         flow.handlePointerDown(end.x, end.y, [rope, balloon, bucket]);
-        expect(flow.seek.segment).toBe(5);
+        expect(flow.seek.role).toBe('end');
 
         // …and the ~440px rim ties: no reach refusal for the free rope.
         const rim = bucket.getAttachmentWorldPoint('rim');
@@ -959,53 +956,54 @@ describe('ConnectFlow — the tie seat is a role, not a raw index (issue #56)', 
 
     it('a mid-seat knot rides a re-count onto the new middle; the flow seat follows (issue #87)', () => {
         // A free rope is the family that re-counts (its span IS its chain,
-        // ADR 0007 decision 4), so it is the one that can float a seat: the
-        // first anchor tie spawns the six-segment chain hanging from the knot.
+        // ADR 0007 decision 4), so it is the one that can move a seat body:
+        // the first anchor tie spawns the six-segment chain hanging from the
+        // knot.
         const physics = new PhysicsEngine(800, 600);
         const rope = objectRegistry.create('free-rope', 260, 300);
         const balloon = new Balloon(300, 100);
         physics.addObject(balloon);
         physics.addObject(rope);
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         expect(rope._segments).toHaveLength(6);
-        const midBody = rope._segments[2]; // seat 2 — the spawned chain's middle
+        const midBody = rope._segments[2]; // the spawned chain's middle
 
-        // Seek the mid seat. Only the chain END reels (the hand's span is the
-        // end seat's role), so a mid seek aims without re-laying: the seat
-        // the flow captured is index 2 here.
+        // Seek the mid seat. Only the chain END reels (the hand's span is
+        // the end seat's own), so a mid seek aims without re-laying: the
+        // seek's seat is the ROLE 'mid' (issue #90).
         const mid = midBody.position;
         expect(flow.handlePointerDown(mid.x, mid.y, [rope, balloon])).toBe(true);
-        expect(flow.seek).toEqual({ rope, segment: 2 });
+        expect(flow.seek).toEqual({ rope, role: 'mid' });
 
         // A far aim cannot reel a mid seat: no re-lay, no re-count.
         const far = new Balloon(700, 300);
         physics.addObject(far);
         const knot = far.getAttachmentWorldPoint('knot');
         flow.setPreview(knot.x, knot.y);
-        expect(flow.seek).toEqual({ rope, segment: 2 });
+        expect(flow.seek).toEqual({ rope, role: 'mid' });
         expect(rope._segments).toHaveLength(6); // mid seats aim, they don't drag the span
 
         // The tie covers its own knot — and covering a mid-seat knot ~447.7px
         // out re-lays the chain far past six segments. That re-count is the
-        // seat surface: the knot KEEPS ITS SEAT, so it rides from literal
-        // seat 2 onto the re-counted chain's own middle (issue #87 — issue
-        // #56 kept mid indices and rode only the end; the seats, not the
-        // tie, now do the keeping).
+        // seat surface: the knot IS the mid seat's (issue #90), so it rides
+        // onto the re-counted chain's own middle (issue #87 kept by the
+        // roles themselves — nothing written at re-count time).
         expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon, far])).toBe(true);
         expect(rope._segments.length).toBeGreaterThan(6); // the free chain re-counted
         expect(rope._segments).toHaveLength(Rope.segmentsForSpan(rope._length)); // …count-honest
-        const reSeated = rope.getTieSeats()[1]; // the NEW middle seat
-        expect(reSeated.segment).toBeGreaterThan(2); // the re-count drew the middle outboard
-        expect(rope.getAttachmentRefs()).toContainEqual({ segment: reSeated.segment, target: far, pointId: 'knot' });
-        // …and the armed seek followed the same seat it started on.
-        expect(flow.seek).toEqual({ rope, segment: reSeated.segment });
+        const newMid = rope.getTieSeats()[1]; // the NEW middle seat
+        expect(newMid.body).not.toBe(midBody); // the re-count drew the middle outboard
+        expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'mid', target: far, pointId: 'knot' });
+        // …and the armed seek stayed on the role it started on — the same
+        // seat, wherever the live count puts it now.
+        expect(flow.seek).toEqual({ rope, role: 'mid' });
 
-        // …and it realizes from the NEW middle's body — not the old seat-2
-        // body (which survives the count but is mid-chain no more).
+        // …and it realizes from the NEW middle's body — not the old mid-body
+        // (which survives the count but is mid-chain no more).
         physics.step(16.67);
         const link = physics.getAttachedConstraints().find((c) => c.bodyB === far.bodies[0]);
         expect(link).toBeTruthy();
-        expect(link.bodyA).toBe(rope._segments[reSeated.segment]);
+        expect(link.bodyA).toBe(newMid.body);
         expect(link.bodyA).not.toBe(midBody);
 
         physics.dispose();

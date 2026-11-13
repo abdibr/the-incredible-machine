@@ -17,24 +17,24 @@
  * inside the slack band still grows the span just enough for the chain to
  * rest under its knot.
  *
- * Tie seats (issue #56, one knot per seat since #85): a knot may sit on
- * the anchor body (tie token `segment: -1`) or on any chain segment the
- * rope has actually laid (0…count−1). A seat accepts its first knot and
- * refuses a second (one knot per seat, three per rope through the flow's
- * three named seats). The seat-role token schema (issue #88): saved tokens
- * name their seat by role ('anchor' | 'mid' | 'end') and bind at whatever
- * seat of the restored chain that role holds — the legacy `segment`
- * (issue #56) and `endpoint` (issue 04) forms still load, migrated at bind
- * (anchor stays, chain end stays, any other seat collapses to the nearest
- * named seat, each with a warning); live refs, the flow's squares and the
- * segment-index API carry `segment` throughout.
+ * Tie seats (issue #90, on #84/#85): a knot is addressed by its seat ROLE
+ * and nothing else — attachEndpoint/detachEndpoint take 'anchor' | 'mid'
+ * | 'end', live refs carry their seat, saved tokens name it, and no
+ * public rope API accepts or returns a segment index as a seat (the old
+ * −1…MAX_SEGMENTS−1 schema range, the seat→fraction index arithmetic and
+ * the legacy numeric tokens are all gone). A seat accepts its first knot
+ * and refuses a second (one knot per seat, three per rope through the
+ * flow's three squares); an unknown seat name is refused with a clear
+ * error.
  *
  * Span-derived chain counts (ADR 0007 decision 3, issue #56): a rope lays
  * its chain at ~40px per segment — `ceil(span / SEGMENT_DENSITY_PX)`,
  * floored at SEGMENTS (the fresh-drop count every short span keeps) and
  * capped at MAX_SEGMENTS — instead of always six. The count re-derives on
- * every re-lay (setEndpoints), tail segments are appended/dropped so
- * earlier knots keep riding their bodies, and the re-segmentation trades
+ * every re-lay (setEndpoints), tail segments are appended/dropped while
+ * the knots keep riding their seat roles (the anchor never moves, the mid
+ * knot the new middle, the end knot the new tail — issue #87 through #90's
+ * roles), and the re-segmentation trades
  * only in-world through rope:chain-converge (added/dropped in the packet).
  *
  * Tie-grow (issue #56, one covering rule since #89): a tie that needs more
@@ -54,27 +54,20 @@
  * re-laying to the demanded span. The pinned rope's frozen circle and
  * refusal are untouched.
  *
- * Named tie seats (issue #84): beside the segment-index surface the rope
+ * Named tie seats (issue #84; the only surface since #90): the rope
  * ANSWERS its three tie seats — anchor, mid, end — through getTieSeats():
- * each seat's role, seat index (the same number attachEndpoint ties
- * through), tie body, world point at ask time, and reach as a fraction of
- * the span. The mid seat is a role resolved per ask against the live chain
- * (the chain's middle body), never a stored index, so a re-lay or a tie-grow
- * keeps it the middle with nothing written at tie time. Seats answer
- * indices; they do not replace them — attach/detach, tokens and squares
- * are untouched.
+ * each seat's role, tie body, world point at ask time, and reach as a
+ * fraction of the span. No seat answers an index — a knot is addressed by
+ * its role and nothing else (issue #90).
  *
- * Seats across growth and re-lay (issue #87): when the chain's count
- * changes — a free rope's tie-grow re-count, the hand re-laying a rope
- * whose knots already live on it, a pinned tie-grow stretching the span
- * — every knot keeps its seat: setEndpoints re-seats the knot on the
- * old END seat onto the new tail, the knot on the old MID seat onto the
- * new middle (the anchor is the anchor in every count), and the
- * reconcile realizes each knot's link from whatever body its seat names
- * after the change. The keep-rule is the seats' own, run wherever a
- * re-count trades the tail — it replaced issue #56's chain-end ride, so
- * a knot stays attached because the seats re-derive, not because a tie
- * writes them.
+ * Seats across growth and re-lay (issue #87, automatic since #90): when
+ * the chain's count changes — a tie-grow re-count, the hand re-laying a
+ * rope whose knots already live on it — every knot keeps its seat with
+ * nothing written at re-count time: a knot's address IS the role (issue
+ * #90), the 'end' seat is whatever the tail now is, the 'mid' seat the
+ * live middle, the anchor the anchor in every count, and the reconcile
+ * realizes each knot's link from whatever body its seat names after the
+ * change.
  *
  * Free-rope birth (issue #55 + issue #56): the free family splits on the
  * LENGTH option. A length-less free rope is issue #55's inert coil — no
@@ -107,6 +100,14 @@ const SEGMENTS = 6;
 const SEGMENT_RADIUS = 3;
 
 /**
+ * The seats a rope names (issue #84; THE seat address since #90): knots,
+ * tokens, gates and squares address a tie seat by ROLE and nothing else —
+ * no public rope API accepts or returns a segment index as a seat.
+ * @type {string[]}
+ */
+const SEAT_ROLES = Object.freeze(['anchor', 'mid', 'end']);
+
+/**
  * Shortest span a rope chain re-lays to (issue #54, ADR 0007 decision 4):
  * six segments of radius 3 need ≥ 8 px pitch each to stay a chain instead
  * of collapsing to a point — a hand re-lay demanding less clamps here
@@ -129,7 +130,7 @@ const SEGMENT_DENSITY_PX = 40;
  * Largest chain segment count (ADR 0007 decision 3, issue #56): the
  * "sensibly capped" half of the density rule — beyond the cap a longer
  * span stretches rest lengths instead of multiplying segments, keeping
- * simulation cost and the tie-token schema (−1…MAX_SEGMENTS-1) bounded.
+ * the simulation cost bounded.
  * @type {number}
  */
 const MAX_SEGMENTS = 16;
@@ -178,27 +179,33 @@ export function isRopeFamily(obj) {
 
 /**
  * Where a tie seat sits as a fraction of the rope's span (issue #56, the
- * one spelling of the seat arithmetic): seat `s` of a `count`-chain is the
- * centre of body `s`, so it covers (s + 0.5)/count of the span. The chain
- * end (seat count−1) therefore covers (count − 0.5)/count — the same
- * fraction that is the pinned reach limit, the tie-grow's covering rule,
- * and the hand's inverse. Kept in one place so the gate that refuses and
- * the grow that covers can never drift apart.
- * @param {number} seat - −1 = the anchor (0 of the span), 0…count−1 = a body
+ * one spelling of the seat arithmetic; role-keyed since #90 — no seat
+ * answers an index): the chain END seat covers (count − 0.5)/count — the
+ * same fraction that is the pinned reach limit, the tie-grow's covering
+ * rule and the hand's inverse; the MID seat covers
+ * (midSeatSegment(count) + 0.5)/count — strictly inboard of the end for
+ * every count ≥ 2; the ANCHOR seat's answer is 0 (its tie consumes no
+ * chain — the glossary's own "0 of the span"; its AIM still gates on the
+ * whole-rope capacity, see isPointWithinReach). Kept in one place so the
+ * gate that refuses and the grow that covers can never drift apart.
+ * @param {'anchor'|'mid'|'end'} seat - the seat's ROLE
  * @param {number} count - the chain's segment count
  * @returns {number} the seat's span fraction
  */
 function seatFraction(seat, count) {
-    return (seat + 0.5) / count;
+    if (seat === 'anchor') return 0;
+    if (seat === 'mid') return (midSeatSegment(count) + 0.5) / count;
+    return (count - 0.5) / count; // the end seat — the chain capacity
 }
 
 /**
  * The chain's middle seat (issue #84): of a `count`-body chain the one body
  * whose seat centre sits nearest the span midpoint — exact for odd counts,
  * tied anchor-ward (the lower index) on even counts, which keeps the mid
- * seat strictly inboard of the end seat for every count ≥ the SEGMENTS
- * floor. Module-private arithmetic beside seatFraction: it is asked through
- * getTieSeats and never stored, so a re-lay or tie-grow moves it by itself.
+ * seat strictly inboard of the end seat for every count ≥ 2 (the SEGMENTS
+ * floor keeps every laid count there). Module-private arithmetic behind
+ * the seat fractions: it is asked through seatFraction/getTieSeats and
+ * never stored, so a re-lay or tie-grow moves it by itself.
  * @param {number} count - the chain's segment count
  * @returns {number} the mid seat's chain index
  */
@@ -207,58 +214,28 @@ function midSeatSegment(count) {
 }
 
 /**
- * The nearest named seat to a legacy token's chain seat (issue #88): of the
- * three seats the rope answers by name — the anchor (the span's 0), the mid
- * (midSeatSegment) and the end (count−1) — the one whose span position is
- * nearest the token's own (seatFraction for chain seats, 0 for the anchor).
- * Distances run in seat units doubled so every comparison is an exact
- * integer one (the anchor's half-integer centre can never tie), and ties
- * resolve anchor-ward — the same rule the mid seat itself ties by on even
- * counts (midSeatSegment). Module-private beside seatFraction: only the
- * bind-time legacy-token migration asks it; a modern token never collapses.
- * @param {number} segment - the legacy token's chain seat (0…MAX_SEGMENTS-1)
- * @param {number} count - the chain's segment count (the seat arithmetic's denominator)
- * @returns {{role: 'anchor'|'mid'|'end', segment: number}} the seat's role and its index
- */
-function nearestNamedSeat(segment, count) {
-    const mid = midSeatSegment(count);
-    const candidates = [
-        { role: 'anchor', segment: -1, dist: segment * 2 + 1 },
-        { role: 'mid', segment: mid, dist: Math.abs(segment - mid) * 2 },
-        { role: 'end', segment: count - 1, dist: Math.abs(segment - (count - 1)) * 2 },
-    ];
-    let nearest = candidates[0];
-    for (const candidate of candidates) {
-        if (candidate.dist < nearest.dist) nearest = candidate; // strict < keeps ties anchor-ward
-    }
-    return nearest;
-}
-
-/**
  * One named-seat answer (issue #84): the shape every body-bearing seat
- * answers — role, seat index, tie body, world point at ask time (a fresh
- * snapshot: Matter mutates `position` in place), and the seat's reach as a
- * fraction of the span. One factory, so the three seats answer identical
- * shapes by construction rather than by copies, the way makeSegmentBody
- * mints bodies and _buildChainConstraints builds chains. The reach is THE
- * seat arithmetic's one spelling: the anchor seat 0 (its tie consumes no
- * chain — the glossary's own "0 of the span"), every chain seat
- * seatFraction(segment, count) — the end seat's covering limit.
+ * answers — role, tie body, world point at ask time (a fresh snapshot:
+ * Matter mutates `position` in place), and the seat's reach as a fraction
+ * of the span. One factory, so the three seats answer identical shapes by
+ * construction rather than by copies, the way makeSegmentBody mints bodies
+ * and _buildChainConstraints builds chains. The reach is THE seat
+ * arithmetic's one spelling (seatFraction): the anchor seat 0 (its tie
+ * consumes no chain), every chain seat its own fraction — the end seat's
+ * covering limit.
  * @param {'anchor'|'mid'|'end'} role
- * @param {number} segment - the seat index the segment-index API ties through
  * @param {Matter.Body} body - the seat's tie body (non-null here; the
  *   bodyless bundle's coil seat builds its own literal in getTieSeats)
  * @param {number} count - the chain's segment count (the reach's denominator)
- * @returns {{role: string, segment: number, body: Matter.Body,
+ * @returns {{role: string, body: Matter.Body,
  *   worldPoint: {x: number, y: number}, reach: number}}
  */
-function makeSeatAnswer(role, segment, body, count) {
+function makeSeatAnswer(role, body, count) {
     return {
         role,
-        segment,
         body,
         worldPoint: { x: body.position.x, y: body.position.y },
-        reach: segment === -1 ? 0 : seatFraction(segment, count),
+        reach: seatFraction(role, count),
     };
 }
 
@@ -271,15 +248,15 @@ function makeSeatAnswer(role, segment, body, count) {
  * what lets a rope's own segments pass through each other.
  * @param {number} x
  * @param {number} y
- * @param {number} seat - chain seat index (0…MAX_SEGMENTS-1), for the label
+ * @param {number} i - chain index (0…MAX_SEGMENTS-1), for the label
  * @returns {Matter.Body}
  */
-function makeSegmentBody(x, y, seat) {
+function makeSegmentBody(x, y, i) {
     return Bodies.circle(x, y, SEGMENT_RADIUS, {
         density: 0.001,
         friction: 0.8,
         frictionAir: 0.02,
-        label: `rope-seg-${seat}`,
+        label: `rope-seg-${i}`,
         collisionFilter: {
             group: -1, // rope segments don't collide with each other
         },
@@ -339,10 +316,9 @@ export default class Rope extends BaseObject {
         this._constraints = [];
 
         // Live knots (issue 04), one flat tie list — one knot per seat
-        // since #85 (a knot sits on the anchor body with segment -1, or on
-        // chain segment 0…MAX_SEGMENTS-1 — the schema range; the live chain
-        // lays only its span's worth, issue #56). Tokens live in serialized
-        // data only and bind through bindAttachment().
+        // since #85, and since #90 each knot addresses its seat by ROLE
+        // ('anchor' | 'mid' | 'end'): no segment index, no schema range.
+        // Tokens live in serialized data only and bind through bindAttachment().
         this._attachments = [];
         this._pendingAttachments = [];
 
@@ -487,37 +463,23 @@ export default class Rope extends BaseObject {
     }
 
     /**
-     * Whether `segment` names a tieable rope body schema-wide (issue #56):
-     * -1 = the anchor (the static nail for a pinned rope; the dynamic knot
-     * a free rope spawns with, issue #55), 0…MAX_SEGMENTS-1 = that chain
-     * segment — the tie-token schema's full range, capped with the
-     * segment-count cap so serialized data can never index outside it. A
-     * live chain lays only its span's worth of those seats, so the
-     * per-rope gate lives in the instance methods (attachEndpoint /
-     * detachEndpoint / _tieBody), which resolve the body against the chain
-     * actually laid.
-     * @param {number} segment
-     * @returns {boolean}
-     */
-    static validSegment(segment) {
-        return segment === -1
-            || (Number.isInteger(segment) && segment >= 0 && segment < MAX_SEGMENTS);
-    }
-
-    /**
-     * The body a knot tied at `segment` hangs its engine link from (issue
-     * 04, generalized to per-segment ties in issue #56): -1 = the anchor,
-     * else that segment's chain body. Out-of-range segments resolve null —
-     * the shape reconcile's staleness scan relies on to drop such knots.
-     * @param {number} segment
+     * The body a knot tied at seat `seat` hangs its engine link from (issue
+     * 04, generalized to named seats in issue #84; role-keyed since #90):
+     * the ANCHOR seat's anchor body, the MID seat the live chain's middle,
+     * the END seat the live tail. An unknown seat name — or a rope without
+     * the body (a chain-less rope's mid/end, a disposed anchor) — resolves
+     * null, the shape reconcile's staleness scan's prune signal.
+     * @param {'anchor'|'mid'|'end'} seat
      * @returns {Matter.Body|null}
      * @private
      */
-    _tieBody(segment) {
-        if (!Rope.validSegment(segment)) return null;
-        return segment === -1
-            ? (this._anchor ?? null)
-            : (this._segments[segment] ?? null);
+    _tieBody(seat) {
+        if (seat === 'anchor') return this._anchor ?? null;
+        const count = this._segments.length;
+        if (count === 0) return null;
+        if (seat === 'mid') return this._segments[midSeatSegment(count)];
+        if (seat === 'end') return this._segments[count - 1];
+        return null;
     }
 
     // ── Named tie seats (issue #84: anchor, mid, end) ────────
@@ -525,11 +487,9 @@ export default class Rope extends BaseObject {
     /**
      * The rope's three named tie seats — anchor, mid, end (issue #84), in
      * that order. Each seat answers:
-     * - `role` — 'anchor' | 'mid' | 'end';
-     * - `segment` — the seat index the SEGMENT-INDEX API ties through
-     *   (−1 = the anchor; the same number attachEndpoint/detachEndpoint,
-     *   the tie tokens and the squares already speak — this seam replaces
-     *   nothing, it names the seats);
+     * - `role` — 'anchor' | 'mid' | 'end' (issue #90: the seat's own
+     *   address — the way attachEndpoint/detachEndpoint, live refs, tokens
+     *   and the squares all speak; no seat answers an index);
      * - `body` — the seat's tie body (a live Matter body, or null where
      *   no body exists — a bodyless free bundle's coil seat);
      * - `worldPoint` — where the seat ties at ask time (the rope body's
@@ -543,9 +503,9 @@ export default class Rope extends BaseObject {
      *
      * The mid seat is a ROLE, never stored (issue #84): it resolves on
      * every ask against the live chain — the chain's middle body (ties
-     * anchor-ward on an even count, midSeatSegment) — so after any re-lay
-     * or tie-grow, of either family, it is still the middle, and no tie
-     * write can ever move it.
+     * anchor-ward on an even count) — so after any re-lay or tie-grow, of
+     * either family, it is still the middle, and no tie write can ever
+     * move it.
      *
      * Seat presence follows the live structure: a laid rope answers three;
      * a bodyless free bundle answers only its anchor seat (no chain yet —
@@ -553,7 +513,7 @@ export default class Rope extends BaseObject {
      * already draws there); a disposed rope answers nothing (parity with
      * `bodies`, which reads empty). A severed rope keeps its chain, so its
      * seats still answer — ConnectFlow is what withholds squares.
-     * @returns {Array<{role: 'anchor'|'mid'|'end', segment: number,
+     * @returns {Array<{role: 'anchor'|'mid'|'end',
      *   body: Matter.Body|null, worldPoint: {x: number, y: number}|null,
      *   reach: number}>}
      */
@@ -565,24 +525,20 @@ export default class Rope extends BaseObject {
         // the coil square's seat with no body and the coil centre for a
         // point (the same answer ConnectFlow's bundle branch draws).
         if (this._anchor) {
-            seats.push(makeSeatAnswer('anchor', -1, this._anchor, count));
+            seats.push(makeSeatAnswer('anchor', this._anchor, count));
         } else if (this.isFreeBundle) {
             seats.push({
                 role: 'anchor',
-                segment: -1,
                 body: null,
                 worldPoint: { x: this._x, y: this._y },
                 reach: 0,
             });
         }
         // The chain seats: mid resolves against the LIVE count (never
-        // stored, issue #84), end is whatever the tail currently is —
-        // both the same seat indices the segment-index API ties through.
+        // stored, issue #84), end is whatever the tail currently is.
         if (count > 0) {
-            const mid = midSeatSegment(count);
-            seats.push(makeSeatAnswer('mid', mid, this._segments[mid], count));
-            const end = count - 1;
-            seats.push(makeSeatAnswer('end', end, this._segments[end], count));
+            seats.push(makeSeatAnswer('mid', this._segments[midSeatSegment(count)], count));
+            seats.push(makeSeatAnswer('end', this._segments[count - 1], count));
         }
         return seats;
     }
@@ -590,26 +546,26 @@ export default class Rope extends BaseObject {
     // ── Attachments (issue 04: rope as a connector) ────────
 
     /**
-     * Tie knot `segment` (−1 = the anchored start, 0…MAX_SEGMENTS-1 =
-     * that chain segment's body — the schema range; the chain lays only
-     * its span's worth of seats and a seat beyond it refuses, issue #56)
-     * to a named attachment point on a live target. Any laid seat accepts
-     * its first knot, and a seat that already holds one refuses a second
-     * tie — one knot per seat, three per rope through the flow's three
-     * squares (issue #85; the seat gate throws before anything re-lays or
-     * grows). The rope stores only live refs — the physical engine link
-     * is realized on the next step (see onBeforeUpdate). A bodyless free
-     * bundle accepts only the anchor tie (−1): its first tie is the birth
-     * of the chain (issue #55). An authored free rope already has its
-     * chain, so that same first anchor tie re-roots it at the clicked knot
-     * (issue #56) before the coverage rules below run.
-     * @param {number} segment
+     * Tie the seat named `seat` to a named attachment point on a live
+     * target (issue #90: the seat is a ROLE — 'anchor' | 'mid' | 'end' —
+     * and nothing else; an unknown name is refused with a clear error).
+     * A rope answers three seats (getTieSeats), each accepting its first
+     * knot and refusing a second — one knot per seat, three per rope
+     * through the flow's three squares (issue #85; the seat gate throws
+     * before anything re-lays or grows). The rope stores only live refs —
+     * the physical engine link is realized on the next step (see
+     * onBeforeUpdate). A bodyless free bundle answers only its anchor
+     * seat: its first tie is the birth of the chain (issue #55). An
+     * authored free rope already has its chain, so that same first anchor
+     * tie re-roots it at the clicked knot (issue #56) before the coverage
+     * rules below run.
+     * @param {'anchor'|'mid'|'end'} seat
      * @param {import('./BaseObject.js').default} target
      * @param {string} pointId
      */
-    attachEndpoint(segment, target, pointId) {
-        if (!Rope.validSegment(segment)) {
-            throw new Error(`[Rope] attachEndpoint: segment must be -1 (anchor) or 0…${MAX_SEGMENTS - 1} (chain end), got ${segment}`);
+    attachEndpoint(seat, target, pointId) {
+        if (!SEAT_ROLES.includes(seat)) {
+            throw new Error(`[Rope] attachEndpoint: seat must be 'anchor', 'mid' or 'end', got ${String(seat)}`);
         }
         const known = target?.attachmentPoints?.some((p) => p.id === pointId);
         if (!known) {
@@ -621,16 +577,15 @@ export default class Rope extends BaseObject {
         // and can only start a seek from a free one, so a click-tied rope
         // holds at most three knots; this gate is the rope-side guard for
         // every path (the armed free-rope seek's second tie click included,
-        // refusals of old multi-knot seats at restore bind included), and
-        // untie stays per-knot: a tied square's click unties exactly the
-        // seat's own knot. The segment-index API still binds any first
-        // knot on any laid seat — seats answer indices, they do not
-        // replace them (issue #84).
-        if (this._attachments.some((ref) => ref.segment === segment)) {
-            throw new Error(`[Rope] attachEndpoint: seat ${segment} already holds a knot — one knot per seat`);
+        // a restore's double-seat token included), and untie stays
+        // per-knot: a tied square's click unties exactly the seat's own
+        // knot. Every knot the API ties sits on a named role (issue #90) —
+        // there is no other address left to arrive through.
+        if (this._attachments.some((ref) => ref.seat === seat)) {
+            throw new Error(`[Rope] attachEndpoint: the ${seat} seat already holds a knot — one knot per seat`);
         }
-        if (this.isFreeBundle && segment !== -1) {
-            throw new Error(`[Rope] attachEndpoint: a bodyless bundle has no chain segment to tie (${segment})`);
+        if (this.isFreeBundle && seat !== 'anchor') {
+            throw new Error(`[Rope] attachEndpoint: a bodyless bundle has no ${seat} seat to tie`);
         }
         // First tie on a free bundle (issue #55) is the birth of the chain:
         // spawn it hanging straight down from the tie point at the rope's
@@ -641,7 +596,7 @@ export default class Rope extends BaseObject {
         // newborn chain into the world.
         if (this.isFreeBundle) {
             this._spawnChain(target, pointId);
-        } else if (this._isFree && segment === -1) {
+        } else if (this._isFree && seat === 'anchor') {
             // An authored free rope laid its chain as it entered the world
             // (issue #56, birthAuthoredChain), so its FIRST anchor tie
             // re-roots that chain at the clicked knot instead of birthing a
@@ -653,23 +608,25 @@ export default class Rope extends BaseObject {
             const world = target.getAttachmentWorldPoint?.(pointId) ?? null;
             if (world) this._reRootChain(world.x, world.y);
         }
-        // Seat gate vs the chain actually laid (issue #56): the schema caps
-        // at MAX_SEGMENTS, but a rope's chain derives from its span — a
-        // seat the chain doesn't have has no body to tie. The fresh spawn
-        // always births SEGMENTS, so a first anchor tie never refuses here.
-        if (segment >= 0 && !this._segments[segment]) {
-            throw new Error(`[Rope] attachEndpoint: this chain lays ${this._segments.length} segments — no seat ${segment} to tie`);
+        // Seat gate vs the chain actually laid: a rope answers a chain seat
+        // only with the chain to hold it — a chain-less rope (a coil that
+        // restored, say) refuses its mid/end names here. A fresh spawn
+        // always births SEGMENTS, so a first anchor tie never refuses
+        // anywhere.
+        if (seat !== 'anchor' && this._segments.length === 0) {
+            throw new Error(`[Rope] attachEndpoint: this rope has laid no chain — no ${seat} seat to tie`);
         }
-        this._attachments.push({ segment, target, pointId });
+        this._attachments.push({ seat, target, pointId });
         // Fixed length covers its own knots (ADR 0007 decision 4, issues
         // #54/#56): a tie that reaches past the chain's laid capacity grows
         // the length so the chain's rest lengths span the tied distance —
         // the chain is never over-tensioned by its own knot, and no tie
-        // ever shrinks the rope. The tie body of seat k sits (k+0.5)/count
-        // of the span inboard of the layout end, so the tied distance's
-        // capacity limit is tied <= _length · (k+0.5)/count and the
-        // covering span grows to tied·count/(k+0.5) — the same last-seat
-        // rule the old fixed-count chain grew by, now per seat (issue #56).
+        // ever shrinks the rope. The tied seat's tie body sits
+        // seatFraction(seat, count) of the span inboard of the layout end,
+        // so the tied distance's capacity limit is tied <= _length ×
+        // seatFraction(seat, count) and the covering span grows to tied /
+        // seatFraction(seat, count) — the same one spelling the seat's
+        // reach answers (issue #90's role arithmetic).
         // The coverage is the LIVE chain's, not just the accounting: a
         // bump-only grow left the laid (shorter) constraints stepping into
         // play, and the length-0 knot link then resolved the deficit by
@@ -690,18 +647,16 @@ export default class Rope extends BaseObject {
         // pinned rope's relayFreeEnd holds the span) and the reach refusal
         // (isPointWithinReach) — never the counting; the frozen-count
         // exception and the persisted row count that replayed it on load
-        // are retired. NAMED seats ride the re-count onto equal-or-greater
-        // fractions (issue #87 — the mid knot onto the new middle, the end
-        // knot the new tail), so a flow-tied knot's cover holds through it;
-        // a tie on a seat the rope does not name keeps its literal index,
-        // whose fraction a re-count may thin — the bind's nearest-role
-        // migration (issue #88) re-seats such a knot on the next load.
+        // are retired. Every seat the API ties is one of the three named
+        // roles (issue #90), so every knot rides the re-count onto its
+        // role's own seat — the equal-or-greater fraction of issue #87 —
+        // and a flow-tied knot's cover holds through it.
         // Severed ropes keep accounting-only growth (nothing lays or
         // reconciles for them); a spawned bundle never reaches here past
         // capacity (its first tie sits at the anchor, tied = 0).
-        // Measured from the anchor; the anchor knot (segment −1) realizes
-        // at the anchor itself and consumes no chain.
-        if (segment !== -1 && this._anchor) {
+        // Measured from the anchor; the anchor knot realizes at the anchor
+        // itself and consumes no chain.
+        if (seat !== 'anchor' && this._anchor) {
             const world = target.getAttachmentWorldPoint?.(pointId) ?? null;
             if (world) {
                 const tied = Math.hypot(
@@ -709,9 +664,9 @@ export default class Rope extends BaseObject {
                     world.y - this._anchor.position.y
                 );
                 const oldCount = this._segments.length;
-                const seat = seatFraction(segment, oldCount);
-                if (tied > this._length * seat) {
-                    const grown = tied / seat;
+                const frac = seatFraction(seat, oldCount);
+                if (tied > this._length * frac) {
+                    const grown = tied / frac;
                     if (!this._severed && oldCount) {
                         const anchor = this._anchor.position;
                         const ux = (world.x - anchor.x) / tied;
@@ -736,17 +691,17 @@ export default class Rope extends BaseObject {
      * by its live ref — the rope side frees, the target keeps its attachment
      * point. The physical link drops on the next reconcile step (an emptied
      * tie's body releases its former links, see _reconcileAttachments).
-     * @param {number} segment
+     * @param {'anchor'|'mid'|'end'} seat
      * @param {import('./BaseObject.js').default} target
      * @param {string} pointId
      * @returns {boolean} true when a matching knot was removed
      */
-    detachEndpoint(segment, target, pointId) {
-        if (!Rope.validSegment(segment)) {
-            throw new Error(`[Rope] detachEndpoint: segment must be -1 (anchor) or 0…${MAX_SEGMENTS - 1} (chain end), got ${segment}`);
+    detachEndpoint(seat, target, pointId) {
+        if (!SEAT_ROLES.includes(seat)) {
+            throw new Error(`[Rope] detachEndpoint: seat must be 'anchor', 'mid' or 'end', got ${String(seat)}`);
         }
         const idx = this._attachments.findIndex(
-            (knot) => knot.segment === segment && knot.target === target && knot.pointId === pointId
+            (knot) => knot.seat === seat && knot.target === target && knot.pointId === pointId
         );
         if (idx === -1) return false;
         this._attachments.splice(idx, 1);
@@ -761,15 +716,17 @@ export default class Rope extends BaseObject {
      * Live knots in ref form for serialization (issue 04): the board
      * annotator (levelReset.serializePlacedBoard) maps each target to its
      * board ordinal and writes `attachments` onto the rope's serialized
-     * entry — token seats NAME their role on the rope's named seats (issue
-     * #88), other seats ride the legacy numeric token; rope.serialize()
-     * itself intentionally emits no tokens.
-     * @returns {Array<{segment: number, target: import('./BaseObject.js').default, pointId: string}>}
+     * entry — every ref carries its seat ROLE (issue #90: the only seat
+     * address, so the token simply re-uses it); rope.serialize() itself
+     * intentionally emits no tokens. Order: anchor, mid, end (the seats'
+     * own order).
+     * @returns {Array<{seat: 'anchor'|'mid'|'end', target: import('./BaseObject.js').default, pointId: string}>}
      */
     getAttachmentRefs() {
+        const order = (seat) => SEAT_ROLES.indexOf(seat);
         return [...this._attachments]
-            .sort((a, b) => a.segment - b.segment) // anchor (−1) first, then chain order
-            .map(({ segment, target, pointId }) => ({ segment, target, pointId }));
+            .sort((a, b) => order(a.seat) - order(b.seat))
+            .map(({ seat, target, pointId }) => ({ seat, target, pointId }));
     }
 
     /**
@@ -788,13 +745,13 @@ export default class Rope extends BaseObject {
     /**
      * Resolve pending attachment tokens (from deserialize) against a board
      * array — the full beginPlay snapshot whose order the tokens'
-     * `targetOrdinal`s index into. Token seats resolve BEFORE the bind:
-     * a seat-role token binds at the seat the chain this rope holds at
-     * bind names (issue #88 — the anchor tie of a restored free bundle
-     * births the chain, so the later mid/end names resolve against the
-     * birthed count; rows save anchor-first). Unresolvable tokens are
-     * dropped with a warning; the pending list always ends empty. A
-     * severed rope binds nothing.
+     * `targetOrdinal`s index into. Tokens name their seat by role (issue
+     * #88's schema; the only form since #90) and bind through
+     * attachEndpoint: the anchor tie of a restored free bundle births the
+     * chain, so the later mid/end names resolve against the birthed count
+     * (rows save anchor-first). Unresolvable tokens are dropped with a
+     * warning; the pending list always ends empty. A severed rope binds
+     * nothing.
      * @param {import('./BaseObject.js').default[]|null} board
      */
     bindAttachment(board) {
@@ -810,7 +767,7 @@ export default class Rope extends BaseObject {
                 continue;
             }
             try {
-                this.attachEndpoint(token.segment, target, token.pointId);
+                this.attachEndpoint(token.seat, target, token.pointId);
             } catch (e) {
                 console.warn(`[Rope] Dropping attachment token: ${e.message}`);
             }
@@ -818,98 +775,49 @@ export default class Rope extends BaseObject {
     }
 
     /**
-     * Tie-token restore shapes (issue #88): the current token names its
-     * seat by role — `{ seat: 'anchor'|'mid'|'end', targetType,
-     * targetOrdinal, pointId }` — and binds at whatever seat of the chain
-     * this rope holds AT BIND that role then holds (the anchor seat −1 in
-     * every count, the mid `midSeatSegment(count)`, the end `count−1`), so
-     * restoring re-binds the knot to the same seat whatever the chain's
-     * count. A 'mid'/'end' name on a rope that restored without a chain has
-     * no seat to hold — dropped with a warning (issue #88). Legacy forms
-     * carry a numeric seat and migrate in with a warning apiece:
-     * - `segment` (issue #56, −1 = the anchor, 0…MAX_SEGMENTS-1 = that
-     *   chain segment): the anchor stays the anchor, the restored chain's
-     *   end stays the end, and any other seat collapses to the nearest
-     *   named seat (nearestNamedSeat) — save → load → save re-saves the
-     *   named form and stays a fixed point from then on;
-     * - `endpoint` (issue 04): 0 = the anchor, 1 = the chain end.
-     * Anything else binds as nothing (the caller warn-drops it) — null,
-     * garbage keys, seats outside the schema range. Nothing throws.
+     * Tie-token restore shapes (issue #88; the only form since #90): the
+     * token names its seat by role — `{ seat: 'anchor'|'mid'|'end',
+     * targetType, targetOrdinal, pointId }` — and binds at whatever seat
+     * of the chain this rope holds AT BIND that role holds (the anchor
+     * seat in every count, the mid the live middle, the end the live
+     * tail), so restoring re-binds the knot to the same seat whatever the
+     * chain's count. A 'mid'/'end' name on a rope that restored without a
+     * chain has no seat to hold — dropped with a warning. Anything else —
+     * null, garbage values, a non-role seat name, and the legacy numeric
+     * keys (issue #56's `segment`, issue 04's `endpoint`) — is refused
+     * with a clear warning apiece: nothing addresses a seat by index any
+     * more (issue #90), so a pre-#90 knot drops instead of migrating.
+     * Nothing throws.
      * @param {object} raw
-     * @returns {{segment: number, targetType: string, targetOrdinal: number, pointId: string}|null}
+     * @returns {{seat: 'anchor'|'mid'|'end', targetType: string, targetOrdinal: number, pointId: string}|null}
      * @private
      */
     _migrateTieToken(raw) {
         if (!raw || typeof raw !== 'object') return null;
-        // Named-seat form (issue #88): resolve the role against the chain
-        // this rope holds at bind and bind at the resolved seat. The anchor
-        // is the anchor in every count — including a bodyless bundle's, whose
-        // anchor-seat tie is the first tie that births the chain (issue #55)
-        // — while a chain role on a bundle has no body to hold and drops.
-        if (raw.seat !== undefined) {
-            const count = this._segments.length;
-            if (raw.seat === 'anchor') return this._seatToken(raw, -1);
-            if (raw.seat === 'mid' || raw.seat === 'end') {
-                if (count > 0) {
-                    return this._seatToken(raw, raw.seat === 'mid' ? midSeatSegment(count) : count - 1);
-                }
+        // Named-seat form (issue #88): bind by ROLE — the anchor is the
+        // anchor in every count, including a bodyless bundle's, whose
+        // anchor-seat tie is the first tie that births the chain (issue
+        // #55); a chain role on a bundle-bound rope without a chain has no
+        // body to hold and drops.
+        if (SEAT_ROLES.includes(raw.seat)) {
+            if (raw.seat !== 'anchor' && this._segments.length === 0) {
                 console.warn(`[Rope] Dropping seat token (${raw.seat}) — this rope restored without a chain, no seat to hold`);
                 return null;
             }
-            console.warn(`[Rope] Dropping seat token (${raw.seat}) — not a seat role (anchor, mid, end)`);
-            return null;
+            return {
+                seat: raw.seat,
+                targetType: raw.targetType,
+                targetOrdinal: raw.targetOrdinal,
+                pointId: raw.pointId,
+            };
         }
-        if (raw.segment !== undefined) {
-            if (!Number.isInteger(raw.segment)) return null;
-            const count = this._segments.length;
-            if (raw.segment === -1) {
-                console.warn('[Rope] Legacy tie token (segment -1) re-saved as the anchor seat — re-save the board.');
-                return this._seatToken(raw, -1);
-            }
-            if (count > 0 && raw.segment === count - 1) {
-                console.warn(`[Rope] Legacy tie token (segment ${raw.segment}) re-saved as the end seat — re-save the board.`);
-                return this._seatToken(raw, count - 1);
-            }
-            if (count > 0 && Rope.validSegment(raw.segment)) {
-                const seat = nearestNamedSeat(raw.segment, count);
-                console.warn(`[Rope] Legacy tie token (segment ${raw.segment}) migrated to the ${seat.role} seat (segment ${seat.segment}) — re-save the board.`);
-                return this._seatToken(raw, seat.segment);
-            }
-            // Out of the schema range, or any seat on a rope that restored
-            // without a chain (the attach call refuses both, with a
-            // warning, exactly as before issue #88).
-            return raw;
-        }
-        if (raw.endpoint === 0 || raw.endpoint === 1) {
-            // Legacy endpoint 1 meant "the chain's last segment" — issue #56
-            // re-segmented chains around span-derived counts, so resolve it
-            // against the chain this rope actually laid, not the old fixed
-            // 5. A bodyless bundle maps to seat 0, which the attach call
-            // then refuse-drops (a bundle has no chain segment to tie).
-            const segment = raw.endpoint === 0 ? -1 : Math.max(0, this._segments.length - 1);
-            console.warn(`[Rope] Legacy tie token (endpoint ${raw.endpoint}) migrated to segment ${segment} — re-save the board.`);
-            return this._seatToken(raw, segment);
-        }
+        // Anything else is refused with a clear warning: a non-role seat
+        // name, or the legacy numeric forms (issue #56's `segment` key,
+        // issue 04's `endpoint`) — segment indices are no longer seats
+        // (issue #90), so such a knot drops instead of migrating.
+        const seatName = raw.seat === undefined ? 'no seat name' : `seat ${JSON.stringify(raw.seat)}`;
+        console.warn(`[Rope] Dropping attachment token — ${seatName} is not a seat role ('anchor'|'mid'|'end'): segment-index tokens are retired (issue #90); re-tie the knot and re-save the board`);
         return null;
-    }
-
-    /**
-     * The resolved bind token: a migrated row's seat, stripped to the
-     * four fields the two-phase bind reads (issue #88 — legacy `endpoint`/
-     * `segment` keys and the resolved role name do not survive migration;
-     * live refs stay segment-indexed).
-     * @param {object} raw - the deserialized token
-     * @param {number} segment - the seat index the role resolves to at bind
-     * @returns {{segment: number, targetType: string, targetOrdinal: number, pointId: string}}
-     * @private
-     */
-    _seatToken(raw, segment) {
-        return {
-            segment,
-            targetType: raw.targetType,
-            targetOrdinal: raw.targetOrdinal,
-            pointId: raw.pointId,
-        };
     }
 
     /**
@@ -941,18 +849,17 @@ export default class Rope extends BaseObject {
         // must still release its former links on the next step).
         const linkBodies = this.bodies;
         // Keep only knots whose target is still a live, registered object —
-        // and whose tie segment resolves to a rope body (issue #56).
+        // and whose tie seat resolves to a rope body (issue #90: the seat
+        // is the role; an unknown role or a bodyless seat prunes).
         this._attachments = this._attachments.filter((knot) =>
-            knot.segment !== undefined
-            && Rope.validSegment(knot.segment)
-            && this._tieBody(knot.segment) !== null
+            this._tieBody(knot.seat) !== null
             && knot.target
             && engine.getObjects().has(knot.target)
             && knot.target.bodies.some(Boolean)
             && knot.target.attachmentPoints.some((p) => p.id === knot.pointId)
         );
         for (const knot of this._attachments) {
-            const linkBody = this._tieBody(knot.segment);
+            const linkBody = this._tieBody(knot.seat);
             const ap = knot.target.attachmentPoints.find((p) => p.id === knot.pointId);
             const targetBody = ap?.body ?? null;
             if (!targetBody) continue; // the point's body is currently unavailable
@@ -1256,42 +1163,47 @@ export default class Rope extends BaseObject {
     /**
      * Whether a world point lies within this rope's reach from its anchor
      * for the seat asking (issue #86, ADR 0007 decision 4; issue #54
-     * founded the gate, #56 re-ringed it): a tied chain seat measures its
-     * OWN covering circle — seatFraction(seat, count) of the fixed length,
-     * the same number getTieSeats answers for that seat — because a knot
-     * past it would sit beyond where the seat's tie body rests and the
-     * slack band (the click's aim tolerance) is all that may still tie and
-     * grow. The end seat's circle is the chain capacity, so its tie gates
-     * exactly as it always did. The anchor seat (−1) and callers asking
-     * with no seat keep the whole-rope capacity circle: the anchor knot
-     * realizes AT the anchor itself and consumes no chain, so its aim is
-     * gated by the rope's full reach, the pre-seat measure unchanged. A
-     * seat past the laid chain answers the same capacity circle (defensive
-     * only — getTieSeats answers exclusively laid seats, so the flow can
-     * never seek one). A free rope (issue #56, ADR 0007 decision 4) has no
-     * length property of its own: it answers true unconditionally — first
-     * tie, spawned re-tie, any distance — and the tie re-lays the chain to
-     * span the demand instead of refusing. The connect flow gates both its
-     * tie clicks and its glow with this one predicate, passing the seeking
-     * seat, so what glows is exactly what ties.
+     * founded the gate, #56 re-ringed it; role-keyed since #90): a tie
+     * aimed at a chain seat measures that seat's OWN covering circle —
+     * seatFraction(seat, count) of the fixed length, the same number
+     * getTieSeats answers for that seat — because a knot past it would sit
+     * beyond where the seat's tie body rests and the slack band (the
+     * click's aim tolerance) is all that may still tie and grow. The end
+     * seat's circle is the chain capacity, so its tie gates exactly as it
+     * always did. The anchor seat and callers asking with no seat keep the
+     * whole-rope capacity circle: the anchor knot realizes AT the anchor
+     * itself and consumes no chain, so its aim is gated by the rope's full
+     * reach, the pre-seat measure unchanged. A free rope (issue #56, ADR
+     * 0007 decision 4) has no length property of its own: it answers true
+     * unconditionally — first tie, spawned re-tie, any distance — and the
+     * tie re-lays the chain to span the demand instead of refusing. The
+     * connect flow gates both its tie clicks and its glow with this one
+     * predicate, passing the seeking seat's role, so what glows is exactly
+     * what ties.
      * @param {number} x
      * @param {number} y
      * @param {number} [slack=0] - extra px allowed (a tie click's aim tolerance)
-     * @param {number|null} [segment=null] - the asking seat (−1 = the
-     *   anchor, 0…count−1 = a chain seat); null keeps the chain-end measure
+     * @param {'anchor'|'mid'|'end'|null} [seat=null] - the asking seat's
+     *   ROLE; null keeps the chain-end measure (the seatless capacity ask).
+     *   An unknown name is refused with a clear error (issue #90).
      * @returns {boolean}
      */
-    isPointWithinReach(x, y, slack = 0, segment = null) {
+    isPointWithinReach(x, y, slack = 0, seat = null) {
+        if (seat != null && !SEAT_ROLES.includes(seat)) {
+            throw new Error(`[Rope] isPointWithinReach: seat must be 'anchor', 'mid' or 'end' (or null), got ${String(seat)}`);
+        }
         if (this._isFree) return true; // no length property — any tie re-lays (issue #56)
         const anchor = this._anchor?.position;
         if (!anchor) return false;
         const count = this._segments.length;
-        // The seat's own covering fraction for a laid chain seat; the rope's
-        // capacity circle for the anchor seat, seatless callers and seats
-        // past the laid chain (defensive fallback, unreachable via the flow).
-        const reach = segment != null && segment >= 0 && segment < count
-            ? seatFraction(segment, count)
-            : seatFraction(count - 1, count);
+        if (count === 0) return false; // no chain laid: nothing covers
+        // A tie aimed at a CHAIN seat (mid) measures that seat's own
+        // covering circle; the anchor seat, seatless callers and the end
+        // seat keep the capacity circle — the end seat's own covering
+        // fraction IS the chain capacity (one number).
+        const reach = seat === 'mid'
+            ? seatFraction('mid', count)
+            : seatFraction('end', count);
         return Math.hypot(x - anchor.x, y - anchor.y) <= this._length * reach + slack;
     }
 
@@ -1326,7 +1238,7 @@ export default class Rope extends BaseObject {
         const frozen = !this._isFree && this.lengthFrozen;
         const span = frozen
             ? this._length
-            : Math.max(demanded / seatFraction(count - 1, count), MIN_ROPE_SPAN);
+            : Math.max(demanded / seatFraction('end', count), MIN_ROPE_SPAN);
         this.setEndpoints(
             { x: anchor.x, y: anchor.y },
             { x: anchor.x + ux * span, y: anchor.y + uy * span }
@@ -1346,12 +1258,15 @@ export default class Rope extends BaseObject {
      * One mode (issue #89 — the counting strategy no longer splits by
      * family or by caller): the chain's segment count re-derives from the
      * span (ADR 0007 decision 3), so a longer re-lay grows the tail and a
-     * shorter one prunes it; knots that hold named seats re-seat onto the
-     * new count's own end/middle (issue #87 — see _keepSeats), and a knot
-     * on a seat the rope never named keeps its index while the count still
-     * lays it. Appended/dropped tail bodies ride in the converge packet so
-     * the world swaps them too; a same-count re-lay trades nothing and
-     * merely re-lines the bodies it has.
+     * shorter one prunes it; the knots keep their seats by themselves
+     * (issue #87 through #90's roles — every knot addresses a ROLE, and
+     * each role re-derives its body from the live chain: an 'end' knot IS
+     * the tail's knot, a 'mid' knot the middle's, the anchor the anchor in
+     * every count, so nothing re-seats and nothing prunes off the scan —
+     * the reconcile realizes each knot's link from whatever body its seat
+     * names after the change). Appended/dropped tail bodies ride in the
+     * converge packet so the world swaps them too; a same-count re-lay
+     * trades nothing and merely re-lines the bodies it has.
      *
      * Call while the rope is OUT of the physics world (before/at
      * placement) — the recreated constraint objects must not be stale
@@ -1371,14 +1286,12 @@ export default class Rope extends BaseObject {
             // the chain size, the tie-grow's covering re-lay included.
             // Earlier segments keep their indices; appended/dropped tail
             // segments ride in the packet so the world swaps bodies too.
-            const oldCount = this._segments.length;
             const targetCount = Rope.segmentsForSpan(this._length);
             const { added, dropped } = this._resizeChain(targetCount);
-            // Knots keep their seats (issue #87): a re-count trades the
-            // tail, so let every knot that holds a named seat ride the new
-            // count's own end/middle — the anchor is the anchor in every
-            // count, and a same-count re-lay re-seats nobody.
-            this._keepSeats(oldCount, targetCount);
+            // The seats keep themselves across a re-count (issue #87 kept
+            // by #90's roles): knots address roles, and the roles re-derive
+            // their bodies from the live chain — nothing to re-seat, no
+            // knot can land on a traded-away body.
             // The appended tail lands ON the end point (issue #56, handoff
             // fix 4): a re-lay that GREW the chain puts its new last body
             // exactly where the endpoints say, instead of half a pitch
@@ -1429,10 +1342,9 @@ export default class Rope extends BaseObject {
      * `_layChainFrom` use, so there is one chain shape across every spawn
      * path, by construction rather than by convention; dropped tail
      * segments exit the list, and the packet's `dropped` lets the engine's
-     * chain-swap consumer pull them out of the world on the next step
-     * (knots on shrunken seats prune off the reconcile scan — their bodies
-     * no longer resolve). The anchor and every earlier body keep their
-     * index, so live knot refs stay valid.
+     * chain-swap consumer pull them out of the world on the next step. The
+     * anchor and every earlier body keep their index; knots hold ROLES
+     * (issue #90), so none of them can sit on a traded-away tail body.
      * @param {number} targetCount - SEGMENTS…MAX_SEGMENTS
      * @returns {{added: Matter.Body[], dropped: Matter.Body[]}}
      * @private
@@ -1450,49 +1362,6 @@ export default class Rope extends BaseObject {
             dropped.push(this._segments.pop());
         }
         return { added, dropped };
-    }
-
-    /**
-     * Re-seat every live knot that holds a named seat across a re-count
-     * (issue #87): a knot on the old END seat rides the new tail, a knot
-     * on the old MID seat the new middle (midSeatSegment), and the anchor
-     * knot stays the anchor (−1 is the anchor body in every count). The
-     * reconcile realizes the migrated knot's link from its NEW seat's body
-     * on the next step; a knot on a body the shorter re-lay dropped never
-     * appears here as a named seat (its seat was one of the three that
-     * re-seat, or it was never named and keeps its index — the count that
-     * lost it prunes it off the reconcile scan, as before).
-     *
-     * Called from setEndpoints wherever a re-segmentation trades the tail
-     * (a free tie-grow's re-count included — the old chain-end ride of
-     * issue #56 was this for the end seat only, and is retired: the seats,
-     * not the tie, now do the keeping). A same-count re-lay re-seats
-     * nobody — the seat arithmetic it re-derives is identical.
-     *
-     * The three roles cannot collide: for every count ≥ 2 the mid seat is
-     * strictly inboard of the end seat (midSeatSegment(count) < count − 1;
-     * the SEGMENTS floor keeps every live count there), so a mid knot and
-     * an end knot always land on distinct seats — the one-knot-per-seat
-     * gate (#85) is never stress-tested by a migration.
-     * @param {number} oldCount - the chain count the knots were seated on
-     * @param {number} newCount - the re-derived count after the re-lay
-     * @returns {void}
-     * @private
-     */
-    _keepSeats(oldCount, newCount) {
-        if (newCount === oldCount) return;
-        const oldMid = midSeatSegment(oldCount);
-        const oldEnd = oldCount - 1;
-        const newMid = midSeatSegment(newCount);
-        const newEnd = newCount - 1;
-        for (const ref of this._attachments) {
-            if (ref.segment === -1) continue; // the anchor rides every count
-            // (An old count whose mid seat IS its tail cannot happen — the
-            // SEGMENTS floor keeps every laid count ≥ 6 — so the two checks
-            // below never share a seat.)
-            if (ref.segment === oldEnd) ref.segment = newEnd;
-            else if (ref.segment === oldMid) ref.segment = newMid;
-        }
     }
 
     /**

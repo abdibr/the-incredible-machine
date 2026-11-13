@@ -130,7 +130,7 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         // and the count re-derives from the grown span (313.4px → 8 — one
         // covering rule, issue #89), re-seating the knot 2 → 3 (the new
         // middle) before its link even realizes…
-        rope.attachEndpoint(2, balloon, 'knot');
+        rope.attachEndpoint('mid', balloon, 'knot');
         expect(ropeSegs(rope)).toHaveLength(8); // the tie-grow re-counted
         engine.step(DT);
         let link = engine.getAttachedConstraints().find((c) => c.bodyB === balloon.bodies[0]);
@@ -144,7 +144,7 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         rope.setEndpoints({ x: 200, y: 100 }, { x: 200, y: 520 }); // 420px
         expect(ropeSegs(rope)).toHaveLength(11); // ceil(420/40)
         expect(rope.bodies[4]).toBe(oldSeat); // the body kept its chain index…
-        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([5]); // …its knot didn't
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['mid']); // …the knot IS the mid seat throughout
         const bodies = worldIds(engine);
         for (const body of rope.bodies) {
             expect(bodies.has(body.id), 'every appended segment joins the world').toBe(true);
@@ -178,7 +178,7 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         expect(Math.abs(rope.bodies[11].position.y - 520)).toBeLessThan(420 / 40); // < a pitch
     });
 
-    it('a shorter re-lay rides the end knot onto the new tail; an over-pruned unnamed seat unties off the scan', () => {
+    it('a shorter re-lay rides the end knot onto the new tail; the roles never lose a knot', () => {
         const engine = makeEngine();
         const rope = new Rope(200, 100, { length: 700 }); // 16 segments
         const balloon = new Balloon(200, 205);
@@ -186,9 +186,12 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         engine.addObject(balloon);
         expect(ropeSegs(rope)).toHaveLength(16);
 
-        rope.attachEndpoint(8, balloon, 'knot'); // mid of 16 is 7 — seat 8 was never a named seat
-        rope.attachEndpoint(15, balloon, 'knot'); // the END seat
-        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([8, 15]);
+        // Two knots on one rope: the mid seat (the middle of 16, inside its
+        // covering window) and the END seat (the tail, inside the capacity).
+        // One knot per seat; two seats may tie the same target point.
+        rope.attachEndpoint('mid', balloon, 'knot');
+        rope.attachEndpoint('end', balloon, 'knot');
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['mid', 'end']);
         engine.step(DT);
         expect(engine.getAttachedConstraints().filter((c) => c.bodyB === balloon.bodies[0]))
             .toHaveLength(2);
@@ -196,19 +199,20 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         const before = rope.bodies.map((b) => b.id);
         rope.setEndpoints({ x: 200, y: 100 }, { x: 200, y: 380 }); // 280px → 7 counts
         expect(ropeSegs(rope)).toHaveLength(7);
-        // The END knot rides the new tail (issue #87): its ref re-seated
-        // 15 → 6 during the re-count. The seat-8 knot is still listed —
-        // its seat was never named, so nothing re-seats it; the count that
-        // lost its body prunes it off the reconcile scan on the next step.
-        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([6, 8]);
+        // The knots keep their seats by themselves (issue #87 kept by #90's
+        // roles): both refs still name their roles — the mid knot on the new
+        // middle (seg 3 of 7), the end knot on the new tail. No ref can sit
+        // on a traded-away body: a role always resolves a live body.
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['mid', 'end']);
         engine.step(DT);
-        // The re-seated knot realizes from the NEW tail's body; the seat-8
-        // knot untied off the scan — its body was traded away with the
-        // tail.
-        expect(rope.getAttachmentRefs()).toEqual([{ segment: 6, target: balloon, pointId: 'knot' }]);
+        // Both links realize from the roles' new bodies.
+        expect(rope.getAttachmentRefs()).toHaveLength(2);
         const links = engine.getAttachedConstraints().filter((c) => c.bodyB === balloon.bodies[0]);
-        expect(links).toHaveLength(1);
-        expect(links[0].bodyA).toBe(rope.bodies[7]); // the new tail (anchor + seat 6)
+        expect(links).toHaveLength(2);
+        const midSeat = rope.getTieSeats().find((s2) => s2.role === 'mid').body;
+        const endSeat = rope.getTieSeats().find((s2) => s2.role === 'end').body;
+        expect(links.map((l) => l.bodyA).sort((a, b) => a.id - b.id))
+            .toEqual([midSeat, endSeat].sort((a, b) => a.id - b.id));
         const after = worldIds(engine);
         for (const id of before.slice(8)) {
             expect(after.has(id), 'pruned segments leave the world').toBe(false);
@@ -246,7 +250,7 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         const balloon = new Balloon(230, 124.4); // knot at (230, 150): 58.3px out ≤ 91.7
         engine.addObject(rope);
         engine.addObject(balloon);
-        rope.attachEndpoint(5, balloon, 'knot'); // the first tie freezes the length
+        rope.attachEndpoint('end', balloon, 'knot'); // the first tie freezes the length
         expect(rope.lengthFrozen).toBe(true);
         expect(ropeSegs(rope)).toHaveLength(6);
 
@@ -260,7 +264,7 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         // (issue #87).
         expect(ropeSegs(rope)).toHaveLength(15); // ceil(600/40)
         expect(rope.bodies.slice(0, chainBefore.length)).toEqual(chainBefore);
-        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([14]);
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['end']); // the end knot IS the tail's through the re-count
         expect(rope._length).toBe(600);
         // The rebuilt rest lengths span the new span (half a pitch to
         // seg-0, 1½ pitches out to the appended tail on `end`).
@@ -281,7 +285,7 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         engine.addObject(balloon);
 
         const tail = pinned.bodies[pinned.bodies.length - 1]; // seat 5
-        pinned.attachEndpoint(5, balloon, 'knot');
+        pinned.attachEndpoint('end', balloon, 'knot');
 
         // The grow covered the knot (span = tied·6/5.5) and the count is
         // the grown span's OWN answer — 13, re-counted like any re-lay
@@ -294,7 +298,7 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         expect(pinned._length).toBeCloseTo(grown, 5);
         expect(ropeSegs(pinned)).toHaveLength(Rope.segmentsForSpan(grown));
         expect(ropeSegs(pinned)).toHaveLength(13);
-        expect(pinned.getAttachmentRefs().map((r) => r.segment)).toEqual([12]);
+        expect(pinned.getAttachmentRefs().map((r) => r.seat)).toEqual(['end']);
         expect(pinned.bodies[13]).not.toBe(tail); // the tail is the re-count's own body
         engine.step(DT);
         const link = engine.getAttachedConstraints().find((c) => c.bodyB === balloon.bodies[0]);
@@ -308,14 +312,14 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         const free = objectRegistry.create('free-rope', 200, 400, { length: 60 });
         engine.addObject(free);
         engine.addObject(far);
-        free.attachEndpoint(-1, balloon, 'knot'); // the spawn lays 6
+        free.attachEndpoint('anchor', balloon, 'knot'); // the spawn lays 6
         expect(ropeSegs(free)).toHaveLength(6);
-        free.attachEndpoint(2, far, 'knot');
+        free.attachEndpoint('mid', far, 'knot');
         expect(ropeSegs(free).length).toBe(Rope.segmentsForSpan(free._length));
         expect(ropeSegs(free).length).toBeGreaterThan(6);
         const recounted = ropeSegs(free).length;
         expect(recounted).toBe(16); // grown 865px → past the cap: 16 bodies
-        expect(free.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 7]); // the tie's mid seat now the cap-chain's (seat 7)
+        expect(free.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid']); // the tie is the mid seat, wherever the cap-chain puts it
     });
 });
 
@@ -323,7 +327,7 @@ describe('Span-derived counts — the restore re-derives the chain from the span
     it('a rope row carries no chain count; the restore re-derives the chain from the span', () => {
         const rope = new Rope(200, 100, { length: 480 }); // 12 segments
         const balloon = new Balloon(230, 124.4); // knot within the end seat's cover
-        rope.attachEndpoint(11, balloon, 'knot'); // the end seat, inside its cover
+        rope.attachEndpoint('end', balloon, 'knot'); // the end seat, inside its cover
         const rows = serializePlacedBoard([balloon, rope]);
         expect(rows[1].options.segments, 'no chain count rides the row').toBeUndefined();
         expect(rows[1].options.length).toBe(480);
@@ -336,7 +340,7 @@ describe('Span-derived counts — the restore re-derives the chain from the span
         const restored = board2.find((o) => o.type === 'rope');
         expect(restored._length).toBe(480);
         expect(restored.bodies.length - 1).toBe(12); // segmentsForSpan(480)
-        expect(restored.getAttachmentRefs().map((r) => r.segment)).toEqual([11]);
+        expect(restored.getAttachmentRefs().map((r) => r.seat)).toEqual(['end']);
 
         rope.dispose();
         balloon.dispose();
@@ -365,7 +369,7 @@ describe('Span-derived counts — the restore re-derives the chain from the span
         const firstSeat = rope.bodies[1];
 
         const converge = trackEvent('rope:chain-converge');
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
 
         // The re-root moves the chain onto the clicked knot; the count is
         // not re-derived against anything — it is the unchanged span's own
@@ -407,7 +411,7 @@ describe('Span-derived counts — the hand and the freeze (issue #56)', () => {
         // frozen span (the reach circle is capacity, not the hand's reach).
         const balloon = new Balloon(140, 140);
         engine.addObject(balloon);
-        rope.attachEndpoint(-1, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         expect(rope.lengthFrozen).toBe(true);
         rope.relayFreeEnd(300, 700); // a 632px demand
         // The tie never shrinks the span: the relay's converged span holds,

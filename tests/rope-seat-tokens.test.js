@@ -1,30 +1,28 @@
 /**
- * Knots are saved and restored by seat role — GitHub issue #88.
+ * Knots are saved and restored by seat role — GitHub issues #88 + #90.
  *
  * A placed rope's saved knots record their seat as the ROLE it plays —
  * `anchor` / `mid` / `end` (the rope's own named-seat answer, issue #84) —
- * instead of a count-bound segment index. Restoring a board re-binds each
- * knot to the same seat of the restored chain, whatever that chain's
- * count: a mid knot restored onto a chain with a different count lands on
- * the restored chain's middle body. Boards saved under the old
- * segment/endpoint token forms still load — the anchor stays the anchor,
- * the chain end stays the end, any other seat collapses to the nearest of
- * the three with a warning — and save → load → save is idempotent.
+ * and binding re-ties each knot to the same seat of the restored chain,
+ * whatever that chain's count: a mid token restored onto a chain with a
+ * different count lands on the restored chain's middle body. Since #90 the
+ * role is the ONLY seat address: every token carries a role name, the
+ * legacy numeric forms (`segment`, issue #56; `endpoint`, issue 04) load
+ * no more and are refused with a clear warning apiece, and nothing throws.
  *
  * Seams under test:
  * - serializePlacedBoard (levelReset) — the save side: rope rows carry
  *   `{ seat: 'anchor'|'mid'|'end', targetType, targetOrdinal, pointId }`
- *   tokens, named through the rope's own getTieSeats() answer; a knot on a
- *   seat the rope does not name keeps the legacy numeric token.
+ *   tokens, carried straight from the rope's own role-keyed refs.
  * - Rope.bindAttachment / its token migration — the restore side: seat
- *   tokens resolve to the live chain's seat indices; legacy segment and
- *   endpoint tokens migrate (anchor → anchor, chain end → end, any other
- *   seat → nearest role) each with a warning; nothing throws.
+ *   tokens bind at the seat the restored chain gives that role; a
+ *   non-role seat name or a legacy numeric token drops with a warning,
+ *   nothing throws.
  * - restorePlacedFromSnapshot — the full two-phase round-trip.
  *
  * Companion suites: rope-seat-keeps (#87 — live knots keep their seats
- * across re-counts, live refs stay segment-indexed), connector-reset (the
- * 04 token seam), rope-ties (legacy endpoint tokens, segment ties).
+ * across re-counts), connector-reset (the 04 token seam), rope-ties
+ * (role ties + one knot per seat).
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -37,7 +35,7 @@ import Bucket from '../js/objects/Bucket.js';
 
 registerAllObjects();
 
-/** A spy over console.warn for migration-warning counts. */
+/** A spy over console.warn for refusal-warning counts. */
 function spyWarns() {
     const warns = vi.fn();
     const origWarn = console.warn;
@@ -51,19 +49,19 @@ const balloonWithKnotAt = (x, knotY) => new Balloon(x, knotY - KNOT_OFFSET);
 
 describe('Seat-role tokens — the save side (serializePlacedBoard, issue #88)', () => {
     it('a rope with anchor, mid and end knots saves three tokens naming their seats', () => {
-        // A 420px pinned rope lays 11 segments: mid seat 5 (covering 210),
-        // end seat 10 (covering 400). Ties sit inside their coverings —
-        // nothing grows, so the seat identity is all the test exercises.
+        // A 420px pinned rope lays 11 segments: mid covering 210, end 400.
+        // Ties sit inside their coverings — nothing grows, so the seat
+        // identity is all the test exercises.
         const bucket = new Bucket(760, 500, { isFixed: true });
         const balloonMid = balloonWithKnotAt(300, 265.6); // 165.6 from the anchor
         const balloonEnd = balloonWithKnotAt(300, 445.6); // 345.6 from the anchor
         const rope = new Rope(300, 100, { length: 420 });
         expect(rope._segments.length).toBe(11); // precondition: mid 5, end 10
 
-        rope.attachEndpoint(-1, bucket, 'rim');
-        rope.attachEndpoint(5, balloonMid, 'knot');
-        rope.attachEndpoint(10, balloonEnd, 'knot');
-        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 5, 10]);
+        rope.attachEndpoint('anchor', bucket, 'rim');
+        rope.attachEndpoint('mid', balloonMid, 'knot');
+        rope.attachEndpoint('end', balloonEnd, 'knot');
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid', 'end']);
 
         const rows = serializePlacedBoard([bucket, rope, balloonMid, balloonEnd]);
         expect(rows[1].attachments).toEqual([
@@ -71,25 +69,26 @@ describe('Seat-role tokens — the save side (serializePlacedBoard, issue #88)',
             { seat: 'mid', targetType: 'balloon', targetOrdinal: 2, pointId: 'knot' },
             { seat: 'end', targetType: 'balloon', targetOrdinal: 3, pointId: 'knot' },
         ]);
+        // No token carries a numeric seat any more (issue #90).
+        expect(rows[1].attachments.every((t) => t.segment === undefined && t.endpoint === undefined)).toBe(true);
 
         rope.dispose();
         for (const obj of [bucket, balloonMid, balloonEnd]) obj.dispose();
     });
 
-    it('a knot on a seat the rope does not name keeps the legacy numeric token', () => {
-        // The connect flow can only reach the three named seats; the
-        // segment-index API (a test, a future caller) cannot. A knot on a
-        // seat none of the named-seat answers covers (seat 3 of 6 — the mid
-        // is seat 2) must not silently masquerade as a role: it saves
-        // numerically and migrates on the next load.
-        const balloon = balloonWithKnotAt(300, 150); // 50 from the anchor ≤ 58.3
+    it('tokens carry the seat role and nothing numeric, whatever the seat', () => {
+        // The connect flow ties through the three named seats and the API
+        // ties nothing else (issue #90) — every knot is one of the three
+        // roles, so every token is the role name. Slot check with a single
+        // mid knot: no segment/endpoint key may ride along.
+        const balloon = balloonWithKnotAt(300, 141.6); // 41.6 from the anchor ≤ 41.7
         const rope = new Rope(300, 100, { length: 100 });
-        rope.attachEndpoint(3, balloon, 'knot');
-        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([3]);
+        rope.attachEndpoint('mid', balloon, 'knot');
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['mid']);
 
         const rows = serializePlacedBoard([balloon, rope]);
         expect(rows[1].attachments).toEqual([
-            { segment: 3, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+            { seat: 'mid', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
         ]);
 
         rope.dispose();
@@ -103,9 +102,9 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
         const balloonMid = balloonWithKnotAt(300, 265.6);
         const balloonEnd = balloonWithKnotAt(300, 445.6);
         const rope = new Rope(300, 100, { length: 420 });
-        rope.attachEndpoint(-1, bucket, 'rim');
-        rope.attachEndpoint(5, balloonMid, 'knot');
-        rope.attachEndpoint(10, balloonEnd, 'knot');
+        rope.attachEndpoint('anchor', bucket, 'rim');
+        rope.attachEndpoint('mid', balloonMid, 'knot');
+        rope.attachEndpoint('end', balloonEnd, 'knot');
         const rows = serializePlacedBoard([bucket, rope, balloonMid, balloonEnd]);
 
         // Fixed object rebuilt from level data first, placed rows restored
@@ -118,13 +117,14 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
         const balloonEnd2 = restored.find((o) => o.type === 'balloon'
             && o.getAttachmentWorldPoint('knot').y > 400);
 
-        expect(rope2.getAttachmentRefs()).toEqual([
-            { segment: -1, target: fresh[0], pointId: 'rim' },
-            { segment: 5, target: balloonMid2, pointId: 'knot' },
-            { segment: 10, target: balloonEnd2, pointId: 'knot' },
+        expect(rope2.getAttachmentRefs().map(({ seat, target, pointId }) => ({ seat, target, pointId }))).toEqual([
+            { seat: 'anchor', target: fresh[0], pointId: 'rim' },
+            { seat: 'mid', target: balloonMid2, pointId: 'knot' },
+            { seat: 'end', target: balloonEnd2, pointId: 'knot' },
         ]);
-        // The restored rope's own named-seat answer still names them.
-        expect(rope2.getTieSeats().map((s) => s.segment)).toEqual([-1, 5, 10]);
+        // The restored rope's own named seats hold the knots.
+        expect(rope2.getTieSeats().map((s) => s.role)).toEqual(['anchor', 'mid', 'end']);
+        expect(rope2.getTieSeats()[2].body).toBe(rope2.bodies[rope2.bodies.length - 1]); // the end knot is on the tail
         expect(rope2.bodies.length - 1).toBe(11);
 
         rope2.dispose();
@@ -132,18 +132,18 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
     });
 
     it('a mid token restored onto a chain with a different count lands on the middle body', () => {
-        // The saved chain laid 6 segments (its mid was seat 2, its end seat
-        // 5); the restored row lays 12. The ROLE tokens must follow the
-        // restored count — mid → seat 5, end → seat 11 — not the literal
-        // saved indices.
+        // The saved chain laid 6 segments (its mid was seg 2, its end seg
+        // 5); the restored row lays 7. The ROLE tokens must follow the
+        // restored count — mid → the 7-chain's middle body — not any
+        // literal saved index.
         const bucket = new Bucket(760, 500, { isFixed: true });
         const balloonMid = balloonWithKnotAt(300, 141.6); // 41.6 from the anchor
         const balloonEnd = balloonWithKnotAt(300, 191.6); // 91.6 from the anchor
         const rope = new Rope(300, 100, { length: 100 });
         expect(rope._segments.length).toBe(6);
-        rope.attachEndpoint(-1, bucket, 'rim');
-        rope.attachEndpoint(2, balloonMid, 'knot');
-        rope.attachEndpoint(5, balloonEnd, 'knot');
+        rope.attachEndpoint('anchor', bucket, 'rim');
+        rope.attachEndpoint('mid', balloonMid, 'knot');
+        rope.attachEndpoint('end', balloonEnd, 'knot');
         const rows = serializePlacedBoard([bucket, rope, balloonMid, balloonEnd]);
         expect(rows[1].attachments.map((t) => t.seat)).toEqual(['anchor', 'mid', 'end']);
 
@@ -157,10 +157,10 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
         const restored = restorePlacedFromSnapshot(fresh, rows);
         const rope2 = restored.find((o) => o.type === 'rope');
         expect(rope2.bodies.length - 1).toBe(7); // segmentsForSpan(280)
-        expect(rope2.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 3, 6]);
-        // The mid knot's body IS the restored chain's middle body.
+        expect(rope2.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid', 'end']);
+        // The mid knot's body IS the restored chain's middle body (seg 3
+        // of 7 — bodies[4] past the anchor).
         const [, mid] = rope2.getTieSeats();
-        expect(mid.segment).toBe(3);
         expect(mid.body).toBe(rope2.bodies[4]);
         expect(rope2._length).toBeCloseTo(280, 3); // the binds grew nothing
 
@@ -177,9 +177,9 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
         const midB = balloonWithKnotAt(300, 160);  // 34.4 from the knot ≤ 41.7
         const endB = balloonWithKnotAt(300, 210);  // 84.4 from the knot ≤ 91.7
         const rope = objectRegistry.create('free-rope', 300, 100);
-        rope.attachEndpoint(-1, anchorB, 'knot'); // spawns the 6-chain
-        rope.attachEndpoint(2, midB, 'knot');
-        rope.attachEndpoint(5, endB, 'knot');
+        rope.attachEndpoint('anchor', anchorB, 'knot'); // spawns the 6-chain
+        rope.attachEndpoint('mid', midB, 'knot');
+        rope.attachEndpoint('end', endB, 'knot');
         expect(rope.bodies.length - 1).toBe(6);
 
         const rows = serializePlacedBoard([anchorB, midB, endB, rope]);
@@ -189,9 +189,9 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
         const restored = restorePlacedFromSnapshot(board2, rows);
         const rope2 = restored.find((o) => o.type === 'free-rope');
         expect(rope2.bodies.length - 1).toBe(6); // the birth-at-bind spawned it
-        expect(rope2.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 2, 5]);
+        expect(rope2.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid', 'end']);
         const [, mid] = rope2.getTieSeats();
-        expect(mid.body).toBe(rope2.bodies[3]); // seat 2's body
+        expect(mid.body).toBe(rope2.bodies[3]); // seg 2's body
 
         rope.dispose();
         for (const obj of [anchorB, midB, endB]) obj.dispose();
@@ -199,87 +199,126 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
     });
 });
 
-describe('Seat-role tokens — legacy numeric tokens migrate (issue #88)', () => {
-    it('legacy segment tokens migrate: anchor stays, end stays, mid-chain collapses to nearest — each with a warning, nothing throws', () => {
+describe('Seat-role tokens — anything that is not a role name is refused (issue #90)', () => {
+    it('legacy segment tokens drop with one clear warning apiece; nothing throws, the board still restores', () => {
         const data = {
             type: 'rope', x: 300, y: 100, angle: 0, isFixed: false,
             options: { length: 100 },
             attachments: [
                 { segment: -1, targetType: 'bucket', targetOrdinal: 0, pointId: 'rim' },
-                { segment: 5, targetType: 'balloon', targetOrdinal: 1, pointId: 'knot' }, // the chain end
-                { segment: 1, targetType: 'balloon', targetOrdinal: 2, pointId: 'knot' }, // → mid (2)
-                { segment: 4, targetType: 'balloon', targetOrdinal: 3, pointId: 'knot' }, // → end (5) — taken
-            ],
-        };
-        const rope = Rope.deserialize(data);
-        const bucket = new Bucket(760, 500, { isFixed: true });
-        const balloonA = balloonWithKnotAt(300, 191.6); // the end tie's target
-        const balloonB = balloonWithKnotAt(300, 141.6); // the mid-collapse target
-        const balloonC = balloonWithKnotAt(300, 155);   // would tie seat 5 too
-
-        const { warns, restore } = spyWarns();
-        try {
-            expect(() => rope.bindAttachment([bucket, balloonA, balloonB, balloonC])).not.toThrow();
-        } finally {
-            restore();
-        }
-        // Four legacy migrations warned — anchor, end, and two collapses —
-        // and the seat-4 collapse's refused tie (seat 5 already holds a
-        // knot) warned as a drop. Nothing threw.
-        expect(warns).toHaveBeenCalledTimes(5);
-        expect(rope.getAttachmentRefs()).toEqual([
-            { segment: -1, target: bucket, pointId: 'rim' },
-            { segment: 2, target: balloonB, pointId: 'knot' }, // 1 → mid
-            { segment: 5, target: balloonA, pointId: 'knot' }, // 5 → the chain end
-        ]);
-
-        rope.dispose();
-        for (const obj of [bucket, balloonA, balloonB, balloonC]) obj.dispose();
-    });
-
-    it('a seat exactly between mid and end collapses anchor-ward', () => {
-        // A 500px rope lays 13 segments: mid 6, end 12. Seat 9 sits exactly
-        // between them (3 seats each way) — the tie resolves anchor-ward,
-        // the same rule the mid seat itself ties by on even counts.
-        const data = {
-            type: 'rope', x: 300, y: 100, angle: 0, isFixed: false,
-            options: { length: 500 },
-            attachments: [
-                { segment: 9, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
-            ],
-        };
-        const rope = Rope.deserialize(data);
-        const balloon = balloonWithKnotAt(300, 335.6); // 235.6 ≤ 250 covered
-
-        const { warns, restore } = spyWarns();
-        try {
-            rope.bindAttachment([balloon]);
-        } finally {
-            restore();
-        }
-        expect(warns).toHaveBeenCalledTimes(1);
-        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([6]);
-
-        rope.dispose();
-        balloon.dispose();
-    });
-
-    it('the migrated state is a fixed point: save → load → save re-uses the tokens warning-free', () => {
-        const data = {
-            type: 'rope', x: 300, y: 100, angle: 0, isFixed: false,
-            options: { length: 100 },
-            attachments: [
-                { segment: -1, targetType: 'bucket', targetOrdinal: 0, pointId: 'rim' },
+                { segment: 5, targetType: 'balloon', targetOrdinal: 1, pointId: 'knot' },
                 { segment: 1, targetType: 'balloon', targetOrdinal: 2, pointId: 'knot' },
             ],
         };
         const rope = Rope.deserialize(data);
         const bucket = new Bucket(760, 500, { isFixed: true });
-        const balloon = new Balloon(300, 141.6);
-        rope.bindAttachment([bucket, rope, balloon]); // 1 → mid (2), warned
+        const balloonA = balloonWithKnotAt(300, 191.6);
+        const balloonB = balloonWithKnotAt(300, 155);
 
-        // Board order bucket(0), rope(1), balloon(2): the migrated knots
-        // re-save as named seats.
+        const { warns, restore } = spyWarns();
+        try {
+            expect(() => rope.bindAttachment([bucket, balloonA, balloonB])).not.toThrow();
+        } finally {
+            restore();
+        }
+        // Three legacy tokens, three clear refusal warnings (one apiece —
+        // no migration, no nearest-seat collapse); nothing threw and
+        // nothing bound: a pre-#90 board reloads without its knots and is
+        // invited to re-tie and re-save.
+        expect(warns).toHaveBeenCalledTimes(3);
+        expect(warns.mock.calls.every(([m]) => m.includes("not a seat role"))).toBe(true);
+        expect(rope.getAttachmentRefs()).toEqual([]);
+
+        rope.dispose();
+        for (const obj of [bucket, balloonA, balloonB]) obj.dispose();
+    });
+
+    it('legacy endpoint tokens refuse the same way, with one warning apiece', () => {
+        const data = {
+            type: 'rope', x: 200, y: 100, angle: 0, isFixed: false,
+            options: { length: 100 },
+            attachments: [
+                { endpoint: 0, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+                { endpoint: 1, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+            ],
+        };
+        const rope = Rope.deserialize(data);
+        const balloon = balloonWithKnotAt(320, 125.6);
+        const { warns, restore } = spyWarns();
+        try {
+            expect(() => rope.bindAttachment([balloon])).not.toThrow();
+        } finally {
+            restore();
+        }
+        expect(warns).toHaveBeenCalledTimes(2);
+        expect(rope.getAttachmentRefs()).toEqual([]);
+        rope.dispose();
+        balloon.dispose();
+    });
+
+    it('a garbage seat name refuses with the same clear error; restore stays a no-throw warn-drop', () => {
+        const data = {
+            type: 'rope', x: 200, y: 100, angle: 0, isFixed: false,
+            options: { length: 100 },
+            attachments: [
+                { seat: 'left', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+                { seat: 3, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+            ],
+        };
+        const rope = Rope.deserialize(data);
+        const balloon = balloonWithKnotAt(320, 125.6);
+        const { warns, restore } = spyWarns();
+        try {
+            expect(() => rope.bindAttachment([balloon])).not.toThrow();
+        } finally {
+            restore();
+        }
+        expect(warns).toHaveBeenCalledTimes(2);
+        expect(warns.mock.calls.every(([m]) => m.includes("not a seat role"))).toBe(true);
+        expect(rope.getAttachmentRefs()).toEqual([]);
+        rope.dispose();
+        balloon.dispose();
+    });
+
+    it('two tokens naming the same seat cannot share it: the second refuses with a warning, nothing throws', () => {
+        // The one-knot-per-seat gate (#85) is the rope-side guard on every
+        // path — a restore included: even a row (corrupt or hand-edited)
+        // carrying two tokens for the same role holds only the first, and
+        // the refusal is the bind's ordinary warn-drop.
+        const balloon = balloonWithKnotAt(300, 150); // 50px from the anchor: inside the end seat too
+        const ropeRow = {
+            ...new Rope(300, 100, { length: 100 }).serialize(),
+            attachments: [
+                { seat: 'end', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+                { seat: 'end', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+            ],
+        };
+        const rows = [balloon.serialize(), ropeRow];
+        const board2 = [];
+        const { warns, restore } = spyWarns();
+        try {
+            expect(() => restorePlacedFromSnapshot(board2, rows)).not.toThrow();
+        } finally {
+            restore();
+        }
+        const rope2 = board2.find((o) => o.type === 'rope');
+        expect(rope2.getAttachmentRefs()).toHaveLength(1); // one knot per seat through restore too
+        expect(warns).toHaveBeenCalledTimes(1); // the refused duplicate
+        expect(warns.mock.calls[0][0]).toContain('already holds a knot');
+
+        balloon.dispose();
+        for (const obj of board2) obj.dispose();
+    });
+
+    it('the role tokens are a fixed point: save → load → save re-uses the tokens warning-free', () => {
+        const bucket = new Bucket(760, 500, { isFixed: true });
+        const balloon = new Balloon(300, 141.6); // 41.6 from the anchor ≤ 41.7: the mid of the 6-chain
+        const rope = new Rope(300, 100, { length: 100 });
+        rope.attachEndpoint('anchor', bucket, 'rim');
+        rope.attachEndpoint('mid', balloon, 'knot');
+
+        // Board order bucket(0), rope(1), balloon(2): the knots re-save
+        // as their roles.
         const rows = serializePlacedBoard([bucket, rope, balloon]);
         expect(rows[1].attachments).toEqual([
             { seat: 'anchor', targetType: 'bucket', targetOrdinal: 0, pointId: 'rim' },
@@ -293,9 +332,9 @@ describe('Seat-role tokens — legacy numeric tokens migrate (issue #88)', () =>
         } finally {
             restore();
         }
-        expect(warns).not.toHaveBeenCalled(); // nothing to migrate
+        expect(warns).not.toHaveBeenCalled(); // nothing to refuse
         const rope2 = fresh.find((o) => o.type === 'rope');
-        expect(rope2.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 2]);
+        expect(rope2.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid']);
 
         rope.dispose();
         for (const obj of [bucket, balloon]) obj.dispose();

@@ -58,7 +58,7 @@ function grabForMove(ddm, part, x = 300, y = 300) {
 function grabTiedRope(ddm) {
     const rope = objectRegistry.create('rope', 300, 100);
     const balloon = objectRegistry.create('balloon', 420, 260);
-    rope.attachEndpoint(2, balloon, 'knot');
+    rope.attachEndpoint('mid', balloon, 'knot');
     grabForMove(ddm, rope, 300, 100);
     return { rope, balloon };
 }

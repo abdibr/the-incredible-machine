@@ -45,17 +45,15 @@ export function resetReturnPosture(runOriginPosture, levelData) {
  *
  * Each row is the object's own serialize() — ropes intentionally emit no
  * attachment data of their own — and the annotator then writes live knot
- * refs onto each rope's row as ordinal tokens. Issue #88: the token names
- * its seat by role — `{ seat: 'anchor'|'mid'|'end', targetType,
- * targetOrdinal, pointId }` — the role read through the rope's own
- * named-seat answer (getTieSeats, issue #84), so restoring a board re-binds
- * each knot to the same seat of the restored chain whatever that chain's
- * count. A knot on a seat the rope does not name (a segment-index tie) is
- * not silently re-seated at save: it keeps the legacy numeric token
- * `{ segment, … }` and migrates at bind (nearest named seat, warned).
- * The ordinal indexes THIS array; board order is stable across play/reset
- * cycles (fixed objects rebuilt from level JSON first, placed parts restored
- * in snapshot order), which is what makes an ordinal restorable.
+ * refs onto each rope's row as ordinal tokens. The token IS the ref with
+ * the target mapped to its board ordinal: every knot ref carries its seat
+ * ROLE (issue #90 — the only seat address), so the token names the seat
+ * directly — `{ seat: 'anchor'|'mid'|'end', targetType, targetOrdinal,
+ * pointId }` — and restoring re-binds each knot to the same seat of the
+ * restored chain whatever that chain's count. The ordinal indexes THIS
+ * array; board order is stable across play/reset cycles (fixed objects
+ * rebuilt from level JSON first, placed parts restored in snapshot order),
+ * which is what makes an ordinal restorable.
  *
  * @param {import('../objects/BaseObject.js').default[]} board — shared live board (fixed + placed, board order)
  * @returns {object[]} serialized rows (rope rows may carry `attachments`)
@@ -73,20 +71,17 @@ export function serializePlacedBoard(board) {
         // the family fact (Rope.ROPE_FAMILY_TYPES) for the sites that ask
         // the roster, while knot tokens stay the only decision here.
         if (typeof obj.getAttachmentRefs !== 'function') continue;
-        // Seat roles read through the rope's own named-seat answer (issue
-        // #88 on the #84 seam): a live ref's seat index names its role when
-        // that seat is one of the rope's three named seats; any other seat
-        // keeps the legacy numeric token and migrates at bind.
-        const seats = typeof obj.getTieSeats === 'function' ? obj.getTieSeats() : [];
         const tokens = [];
         for (const ref of obj.getAttachmentRefs()) {
             // Target no longer on the board → the knot dies with it
             const ordinal = ordinalByObject.get(ref.target);
             if (ordinal === undefined) continue;
-            const named = seats.find((s) => s.segment === ref.segment);
-            tokens.push(named
-                ? { seat: named.role, targetType: ref.target.type, targetOrdinal: ordinal, pointId: ref.pointId }
-                : { segment: ref.segment, targetType: ref.target.type, targetOrdinal: ordinal, pointId: ref.pointId });
+            tokens.push({
+                seat: ref.seat,
+                targetType: ref.target.type,
+                targetOrdinal: ordinal,
+                pointId: ref.pointId,
+            });
         }
         if (tokens.length > 0) entries[index].attachments = tokens;
     }
