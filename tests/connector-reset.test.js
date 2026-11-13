@@ -35,8 +35,8 @@ describe('connector snapshot seam — serializePlacedBoard (issue 04)', () => {
         expect(entries[0].attachments).toBeUndefined();
         expect(entries[2].attachments).toBeUndefined();
         expect(entries[1].attachments).toEqual([
-            { segment: -1, targetType: 'bucket', targetOrdinal: 0, pointId: 'rim' },
-            { segment: 5, targetType: 'balloon', targetOrdinal: 2, pointId: 'knot' },
+            { seat: 'anchor', targetType: 'bucket', targetOrdinal: 0, pointId: 'rim' },
+            { seat: 'end', targetType: 'balloon', targetOrdinal: 2, pointId: 'knot' },
         ]);
     });
 

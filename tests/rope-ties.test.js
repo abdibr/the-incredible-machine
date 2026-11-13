@@ -151,7 +151,7 @@ describe('Rope segment ties (issue #56) — legacy endpoint tokens migrate', () 
         }
     });
 
-    it("a { segment: 6 } token past this chain's laid seats drops with a single warning", () => {
+    it("a { segment: 6 } token past this chain's laid seats collapses onto the end seat with a warning (issue #88)", () => {
         const warns = vi.fn();
         const origWarn = console.warn;
         console.warn = warns;
@@ -160,6 +160,34 @@ describe('Rope segment ties (issue #56) — legacy endpoint tokens migrate', () 
                 type: 'rope', x: 200, y: 100, angle: 0, isFixed: false,
                 options: { length: 100 },
                 attachments: [{ segment: 6, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' }],
+            };
+            const rope = Rope.deserialize(data);
+            const balloon = new Balloon(320, 260);
+            rope.bindAttachment([balloon]);
+            console.warn = origWarn;
+            // Issue #88: any schema seat that is not the restored chain's
+            // end collapses to the nearest of the three named seats — seat
+            // 6 (in-schema, past the laid 0…5) collapses onto the end.
+            expect(warns).toHaveBeenCalledTimes(1); // the migration warn
+            expect(rope.getAttachmentRefs()).toEqual([
+                { segment: 5, target: balloon, pointId: 'knot' },
+            ]);
+            rope.dispose();
+            balloon.dispose();
+        } finally {
+            console.warn = origWarn;
+        }
+    });
+
+    it('a { segment: 99 } token outside the schema range still drops with a single warning', () => {
+        const warns = vi.fn();
+        const origWarn = console.warn;
+        console.warn = warns;
+        try {
+            const data = {
+                type: 'rope', x: 200, y: 100, angle: 0, isFixed: false,
+                options: { length: 100 },
+                attachments: [{ segment: 99, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' }],
             };
             const rope = Rope.deserialize(data);
             const balloon = new Balloon(320, 260);
@@ -292,11 +320,17 @@ describe('Rope segment ties (issue #56) — mid-chain knots across counts', () =
         free.attachEndpoint(3, balloon, 'knot'); // mid-chain seat on the spawned chain
 
         const rows = serializePlacedBoard([balloon, bucket, pinned, free]);
+        // Tokens name the seats by role (issue #88); the non-named seats
+        // (4 of 11 — the mid is 5; 3 of 6 — the mid is 2) keep the legacy
+        // numeric token and migrate at bind.
         expect(rows[2].attachments).toContainEqual({
-            segment: -1, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot',
+            seat: 'anchor', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot',
         });
         expect(rows[2].attachments).toContainEqual({
             segment: 4, targetType: 'bucket', targetOrdinal: 1, pointId: 'rim',
+        });
+        expect(rows[3].attachments).toContainEqual({
+            seat: 'anchor', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot',
         });
         expect(rows[3].attachments).toContainEqual({
             segment: 3, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot',
@@ -308,10 +342,12 @@ describe('Rope segment ties (issue #56) — mid-chain knots across counts', () =
         const bucket2 = board2.find((o) => o.type === 'bucket');
         const pinned2 = board2.find((o) => o.type === 'rope');
         const free2 = board2.find((o) => o.type === 'free-rope');
-        // The pinned rope: both tokens bind through the two-phase ordinals…
+        // The pinned rope: both tokens bind through the two-phase ordinals,
+        // and the seat-4 token collapses onto the mid seat (5 of 11, issue
+        // #88's nearest-role migration) with a warning.
         expect(pinned2.getAttachmentRefs()).toContainEqual({ segment: -1, target: balloon2, pointId: 'knot' });
-        expect(pinned2.getAttachmentRefs()).toContainEqual({ segment: 4, target: bucket2, pointId: 'rim' });
-        expect(pinned2._length).toBeCloseTo(Math.hypot(600, 100) * 11 / 4.5, 3); // the seat-4 tie's grown span: seat 4 covers (4 + 0.5)/11, frozen count
+        expect(pinned2.getAttachmentRefs()).toContainEqual({ segment: 5, target: bucket2, pointId: 'rim' });
+        expect(pinned2._length).toBeCloseTo(Math.hypot(600, 100) * 11 / 4.5, 3); // the saved span — the seat-4 grow fired at tie time, the restored bind grows nothing
         expect(pinned2.lengthFrozen).toBe(true); // the bind re-derives the freeze
         expect(pinned2._segments.length).toBe(11); // the restore births the persisted count, not a re-derived one
         // A SECOND save → restore cycle changes nothing (issue #56): the row
@@ -325,10 +361,11 @@ describe('Rope segment ties (issue #56) — mid-chain knots across counts', () =
         expect(pinned3._length).toBeCloseTo(pinned2._length, 3);
         expect(pinned3._segments.length).toBe(pinned2._segments.length);
 
-        // …and the free rope re-spawns at bind with its mid-chain knot back.
+        // …and the free rope re-spawns at bind with its mid-chain knot back,
+        // migrated onto the spawned chain's mid seat (2 of 6).
         expect(free2.bodies.length).toBeGreaterThan(0);
         expect(free2.constraints.length).toBeGreaterThan(0);
-        expect(free2.getAttachmentRefs()).toContainEqual({ segment: 3, target: balloon2, pointId: 'knot' });
+        expect(free2.getAttachmentRefs()).toContainEqual({ segment: 2, target: balloon2, pointId: 'knot' });
 
         for (const obj of [balloon, bucket, pinned, free]) obj.dispose();
         for (const obj of board2) obj.dispose();

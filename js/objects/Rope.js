@@ -21,12 +21,13 @@
  * the anchor body (tie token `segment: -1`) or on any chain segment the
  * rope has actually laid (0…count−1). A seat accepts its first knot and
  * refuses a second (one knot per seat, three per rope through the flow's
- * three named seats). Tie tokens still carry the SCHEMA range
- * (−1…MAX_SEGMENTS-1) for serialized-token compat (the old endpoint 0 ≡ the
- * anchor, endpoint 1 ≡ the chain's last segment); a live chain lays only
- * its span's worth of those seats, and a seat past it refuses. Rope refs,
- * tokens and the flow's square geometry carry `segment`; restore tokens
- * still accept the legacy `endpoint` keys, migrated at bind.
+ * three named seats). The seat-role token schema (issue #88): saved tokens
+ * name their seat by role ('anchor' | 'mid' | 'end') and bind at whatever
+ * seat of the restored chain that role holds — the legacy `segment`
+ * (issue #56) and `endpoint` (issue 04) forms still load, migrated at bind
+ * (anchor stays, chain end stays, any other seat collapses to the nearest
+ * named seat, each with a warning); live refs, the flow's squares and the
+ * segment-index API carry `segment` throughout.
  *
  * Span-derived chain counts (ADR 0007 decision 3, issue #56): a rope lays
  * its chain at ~40px per segment — `ceil(span / SEGMENT_DENSITY_PX)`,
@@ -199,6 +200,34 @@ function seatFraction(seat, count) {
  */
 function midSeatSegment(count) {
     return Math.floor((count - 1) / 2);
+}
+
+/**
+ * The nearest named seat to a legacy token's chain seat (issue #88): of the
+ * three seats the rope answers by name — the anchor (the span's 0), the mid
+ * (midSeatSegment) and the end (count−1) — the one whose span position is
+ * nearest the token's own (seatFraction for chain seats, 0 for the anchor).
+ * Distances run in seat units doubled so every comparison is an exact
+ * integer one (the anchor's half-integer centre can never tie), and ties
+ * resolve anchor-ward — the same rule the mid seat itself ties by on even
+ * counts (midSeatSegment). Module-private beside seatFraction: only the
+ * bind-time legacy-token migration asks it; a modern token never collapses.
+ * @param {number} segment - the legacy token's chain seat (0…MAX_SEGMENTS-1)
+ * @param {number} count - the chain's segment count (the seat arithmetic's denominator)
+ * @returns {{role: 'anchor'|'mid'|'end', segment: number}} the seat's role and its index
+ */
+function nearestNamedSeat(segment, count) {
+    const mid = midSeatSegment(count);
+    const candidates = [
+        { role: 'anchor', segment: -1, dist: segment * 2 + 1 },
+        { role: 'mid', segment: mid, dist: Math.abs(segment - mid) * 2 },
+        { role: 'end', segment: count - 1, dist: Math.abs(segment - (count - 1)) * 2 },
+    ];
+    let nearest = candidates[0];
+    for (const candidate of candidates) {
+        if (candidate.dist < nearest.dist) nearest = candidate; // strict < keeps ties anchor-ward
+    }
+    return nearest;
 }
 
 /**
@@ -765,7 +794,9 @@ export default class Rope extends BaseObject {
      * Live knots in ref form for serialization (issue 04): the board
      * annotator (levelReset.serializePlacedBoard) maps each target to its
      * board ordinal and writes `attachments` onto the rope's serialized
-     * entry — rope.serialize() itself intentionally emits no tokens.
+     * entry — token seats NAME their role on the rope's named seats (issue
+     * #88), other seats ride the legacy numeric token; rope.serialize()
+     * itself intentionally emits no tokens.
      * @returns {Array<{segment: number, target: import('./BaseObject.js').default, pointId: string}>}
      */
     getAttachmentRefs() {
@@ -790,9 +821,13 @@ export default class Rope extends BaseObject {
     /**
      * Resolve pending attachment tokens (from deserialize) against a board
      * array — the full beginPlay snapshot whose order the tokens'
-     * `targetOrdinal`s index into. Unresolvable tokens are dropped with a
-     * warning; the pending list always ends empty. A severed rope binds
-     * nothing.
+     * `targetOrdinal`s index into. Token seats resolve BEFORE the bind:
+     * a seat-role token binds at the seat the chain this rope holds at
+     * bind names (issue #88 — the anchor tie of a restored free bundle
+     * births the chain, so the later mid/end names resolve against the
+     * birthed count; rows save anchor-first). Unresolvable tokens are
+     * dropped with a warning; the pending list always ends empty. A
+     * severed rope binds nothing.
      * @param {import('./BaseObject.js').default[]|null} board
      */
     bindAttachment(board) {
@@ -816,19 +851,67 @@ export default class Rope extends BaseObject {
     }
 
     /**
-     * Tie-token restore shapes (issue #56): current tokens carry `segment`
-     * (−1 = the anchor, 0…MAX_SEGMENTS-1 = that chain segment); legacy issue-04
-     * tokens carry `endpoint` (0 = the anchor, 1 = the chain end) and are
-     * migrated in with a warning. Anything else binds as nothing (the
-     * caller warn-drops it) — null, garbage keys, out-of-range endpoints.
+     * Tie-token restore shapes (issue #88): the current token names its
+     * seat by role — `{ seat: 'anchor'|'mid'|'end', targetType,
+     * targetOrdinal, pointId }` — and binds at whatever seat of the chain
+     * this rope holds AT BIND that role then holds (the anchor seat −1 in
+     * every count, the mid `midSeatSegment(count)`, the end `count−1`), so
+     * restoring re-binds the knot to the same seat whatever the chain's
+     * count. A 'mid'/'end' name on a rope that restored without a chain has
+     * no seat to hold — dropped with a warning (issue #88). Legacy forms
+     * carry a numeric seat and migrate in with a warning apiece:
+     * - `segment` (issue #56, −1 = the anchor, 0…MAX_SEGMENTS-1 = that
+     *   chain segment): the anchor stays the anchor, the restored chain's
+     *   end stays the end, and any other seat collapses to the nearest
+     *   named seat (nearestNamedSeat) — save → load → save re-saves the
+     *   named form and stays a fixed point from then on;
+     * - `endpoint` (issue 04): 0 = the anchor, 1 = the chain end.
+     * Anything else binds as nothing (the caller warn-drops it) — null,
+     * garbage keys, seats outside the schema range. Nothing throws.
      * @param {object} raw
      * @returns {{segment: number, targetType: string, targetOrdinal: number, pointId: string}|null}
      * @private
      */
     _migrateTieToken(raw) {
         if (!raw || typeof raw !== 'object') return null;
+        // Named-seat form (issue #88): resolve the role against the chain
+        // this rope holds at bind and bind at the resolved seat. The anchor
+        // is the anchor in every count — including a bodyless bundle's, whose
+        // anchor-seat tie is the first tie that births the chain (issue #55)
+        // — while a chain role on a bundle has no body to hold and drops.
+        if (raw.seat !== undefined) {
+            const count = this._segments.length;
+            if (raw.seat === 'anchor') return this._seatToken(raw, -1);
+            if (raw.seat === 'mid' || raw.seat === 'end') {
+                if (count > 0) {
+                    return this._seatToken(raw, raw.seat === 'mid' ? midSeatSegment(count) : count - 1);
+                }
+                console.warn(`[Rope] Dropping seat token (${raw.seat}) — this rope restored without a chain, no seat to hold`);
+                return null;
+            }
+            console.warn(`[Rope] Dropping seat token (${raw.seat}) — not a seat role (anchor, mid, end)`);
+            return null;
+        }
         if (raw.segment !== undefined) {
-            return Number.isInteger(raw.segment) ? raw : null;
+            if (!Number.isInteger(raw.segment)) return null;
+            const count = this._segments.length;
+            if (raw.segment === -1) {
+                console.warn('[Rope] Legacy tie token (segment -1) re-saved as the anchor seat — re-save the board.');
+                return this._seatToken(raw, -1);
+            }
+            if (count > 0 && raw.segment === count - 1) {
+                console.warn(`[Rope] Legacy tie token (segment ${raw.segment}) re-saved as the end seat — re-save the board.`);
+                return this._seatToken(raw, count - 1);
+            }
+            if (count > 0 && Rope.validSegment(raw.segment)) {
+                const seat = nearestNamedSeat(raw.segment, count);
+                console.warn(`[Rope] Legacy tie token (segment ${raw.segment}) migrated to the ${seat.role} seat (segment ${seat.segment}) — re-save the board.`);
+                return this._seatToken(raw, seat.segment);
+            }
+            // Out of the schema range, or any seat on a rope that restored
+            // without a chain (the attach call refuses both, with a
+            // warning, exactly as before issue #88).
+            return raw;
         }
         if (raw.endpoint === 0 || raw.endpoint === 1) {
             // Legacy endpoint 1 meant "the chain's last segment" — issue #56
@@ -838,9 +921,28 @@ export default class Rope extends BaseObject {
             // then refuse-drops (a bundle has no chain segment to tie).
             const segment = raw.endpoint === 0 ? -1 : Math.max(0, this._segments.length - 1);
             console.warn(`[Rope] Legacy tie token (endpoint ${raw.endpoint}) migrated to segment ${segment} — re-save the board.`);
-            return { ...raw, segment };
+            return this._seatToken(raw, segment);
         }
         return null;
+    }
+
+    /**
+     * The resolved bind token: a migrated row's seat, stripped to the
+     * four fields the two-phase bind reads (issue #88 — legacy `endpoint`/
+     * `segment` keys and the resolved role name do not survive migration;
+     * live refs stay segment-indexed).
+     * @param {object} raw - the deserialized token
+     * @param {number} segment - the seat index the role resolves to at bind
+     * @returns {{segment: number, targetType: string, targetOrdinal: number, pointId: string}}
+     * @private
+     */
+    _seatToken(raw, segment) {
+        return {
+            segment,
+            targetType: raw.targetType,
+            targetOrdinal: raw.targetOrdinal,
+            pointId: raw.pointId,
+        };
     }
 
     /**

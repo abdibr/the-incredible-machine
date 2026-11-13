@@ -634,11 +634,13 @@ describe('Click-flow ties survive the snapshot round-trip (AC)', () => {
         // The first tie froze the length: it and the flag ride the row.
         expect(snapshot[2].options.length).toBe(40);
         expect(snapshot[2].options.lengthFrozen).toBe(true);
+        // Tokens name the seats by role (issue #88): seat 5 of the 6-chain
+        // is the chain's end; the anchor knot's seat is the anchor.
         expect(snapshot[2].attachments).toContainEqual({
-            segment: 5, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot',
+            seat: 'end', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot',
         });
         expect(snapshot[2].attachments).toContainEqual({
-            segment: -1, targetType: 'bucket', targetOrdinal: 1, pointId: 'rim',
+            seat: 'anchor', targetType: 'bucket', targetOrdinal: 1, pointId: 'rim',
         });
 
         const board2 = [];

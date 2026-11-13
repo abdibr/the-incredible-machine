@@ -427,7 +427,7 @@ describe('SessionRecorder rope-family knot narration (C1, issue #75)', () => {
         eventBus.emit('loop:frame', { dt: 16.667, elapsed: 16.667 });
         const ropeRow = recorder.openRun.boardSnapshot.find((r) => r.type === 'free-rope');
         expect(ropeRow.attachments).toEqual([
-            { segment: -1, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+            { seat: 'anchor', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
         ]);
         recorder.dispose();
     });

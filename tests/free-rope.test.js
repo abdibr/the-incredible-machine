@@ -236,7 +236,7 @@ describe('Free Rope (issue #55/#56) — board-load chain', () => {
         const rows = serializePlacedBoard([balloon, rope]);
         expect(rows[1].type).toBe('free-rope');
         expect(rows[1].attachments).toEqual([
-            { segment: -1, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+            { seat: 'anchor', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
         ]);
 
         // The fresh-engine board load: deserialize (a coil until a world
