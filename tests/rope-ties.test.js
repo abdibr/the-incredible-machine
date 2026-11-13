@@ -10,13 +10,15 @@
  * - a mid-chain knot realizes its engine link from that segment's body,
  *   and the stale link drops one step after untie (every rope body joins
  *   the reconcile scan);
- * - several knots on one segment (two targets, per-knot untie);
+ * - one knot per seat (issue #85): a second tie into an occupied seat
+ *   refuses; other seats tie on and untie per seat;
  * - the legacy issue-04 token migration: `{ endpoint: 0|1 }` binds as
  *   `{ segment: -1|chain-tail }` with a warning, and a token past the
  *   live chain's laid seats drops;
  * - getAttachmentRefs ordering (anchor −1 first);
  * - ConnectFlow.getRopeSquares on a bodyless free bundle: a single coil
- *   square (segment −1), then a full per-body chain after the first tie.
+ *   square (segment −1), then the three named seats after the first tie
+ *   (issue #85 — squares per seat, not per chain body).
  *
  * Companion suites: rope-knots (endpoint→chain-end ties), rope-connector
  * (API + realization), rope.test (zero attach calls), free-rope (bundle
@@ -84,7 +86,7 @@ describe('Rope segment ties (issue #56) — the seat gate', () => {
         expect(physics.getAttachedConstraints()).toHaveLength(0); // stale link dropped
     });
 
-    it('one segment hosts several knots: two targets, two links, per-knot untie', () => {
+    it('one knot per seat: a second tie into an occupied seat refuses; other seats tie on', () => {
         const physics = new PhysicsEngine(800, 600);
         engines.push(physics);
         const rope = new Rope(200, 100, { length: 60 });
@@ -95,15 +97,25 @@ describe('Rope segment ties (issue #56) — the seat gate', () => {
         physics.addObject(bucket);
 
         rope.attachEndpoint(4, balloon, 'knot');
-        rope.attachEndpoint(4, bucket, 'rim');
+        const refs = rope.getAttachmentRefs();
+        expect(refs).toHaveLength(1);
+        // The seat is taken: a second tie into it refuses (issue #85 — one
+        // knot per seat; the flow squares only three seats, so a fourth
+        // knot is unreachable, and no tie may stack onto one).
+        expect(() => rope.attachEndpoint(4, bucket, 'rim')).toThrow(/already holds a knot/);
+        expect(rope.getAttachmentRefs()).toEqual(refs);
         physics.step(DT);
+        expect(physics.getAttachedConstraints()).toHaveLength(1); // the one knot only
+
+        // Another seat still takes its first knot.
+        rope.attachEndpoint(-1, bucket, 'rim');
+        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 4]);
         physics.step(DT);
         expect(physics.getAttachedConstraints()).toHaveLength(2);
-        expect(rope.getAttachmentRefs().every((r) => r.segment === 4)).toBe(true);
 
-        rope.detachEndpoint(4, bucket, 'rim');
+        rope.detachEndpoint(4, balloon, 'knot');
         physics.step(DT);
-        expect(physics.getAttachedConstraints()).toHaveLength(1); // balloon's knot lives on
+        expect(physics.getAttachedConstraints()).toHaveLength(1); // the rim knot lives
     });
 });
 describe('Rope segment ties (issue #56) — legacy endpoint tokens migrate', () => {
@@ -190,7 +202,8 @@ describe('Rope segment ties (issue #56) — the bundle coil square', () => {
 
         rope.attachEndpoint(-1, balloon, 'knot'); // first tie spawns the chain
         squares = flow.getRopeSquares([rope], null);
-        expect(squares).toHaveLength(7); // anchor + SEGMENTS chain bodies
+        expect(squares).toHaveLength(3); // the three named seats (issue #85)
+        expect(squares.map((s) => s.segment)).toEqual([-1, 2, 5]);
         expect(squares[0]).toEqual(expect.objectContaining({ rope, segment: -1, tied: true }));
 
         rope.clearAttachments(); // last untie collapses back to the bundle

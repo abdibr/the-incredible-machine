@@ -11,15 +11,16 @@
  * beyond-reach ties are refused by the connect flow, and a tie always
  * covers its own knot (max length with slack — never shrunk, never a rod).
  *
- * Tie seats (issue #56): a knot may sit on the anchor body (tie token
- * `segment: -1`) or on any chain segment the rope has actually laid
- * (0…count−1). Any seat accepts knots and several knots may share a seat
- * (per-knot untie). The SCHEMA range (−1…MAX_SEGMENTS-1) stays for
- * serialized-token compat (the old endpoint 0 ≡ the anchor, endpoint 1 ≡
- * the chain's last segment); a live chain lays only its span's worth of
- * those seats, and a seat past it refuses. Rope refs, tokens and the
- * flow's square geometry carry `segment`; restore tokens still accept the
- * legacy `endpoint` keys, migrated at bind.
+ * Tie seats (issue #56, one knot per seat since #85): a knot may sit on
+ * the anchor body (tie token `segment: -1`) or on any chain segment the
+ * rope has actually laid (0…count−1). A seat accepts its first knot and
+ * refuses a second (one knot per seat, three per rope through the flow's
+ * three named seats). Tie tokens still carry the SCHEMA range
+ * (−1…MAX_SEGMENTS-1) for serialized-token compat (the old endpoint 0 ≡ the
+ * anchor, endpoint 1 ≡ the chain's last segment); a live chain lays only
+ * its span's worth of those seats, and a seat past it refuses. Rope refs,
+ * tokens and the flow's square geometry carry `segment`; restore tokens
+ * still accept the legacy `endpoint` keys, migrated at bind.
  *
  * Span-derived chain counts (ADR 0007 decision 3, issue #56): a rope lays
  * its chain at ~40px per segment — `ceil(span / SEGMENT_DENSITY_PX)`,
@@ -300,12 +301,11 @@ export default class Rope extends BaseObject {
         this._segments = [];
         this._constraints = [];
 
-        // Rope→payload knots (issue 04): live refs only, one flat tie list
-        // (several knots may share a segment; a knot sits on the anchor
-        // body with segment -1, or on chain segment 0…MAX_SEGMENTS-1 — the
-        // schema range; the live chain lays only its span's worth, issue
-        // #56). Tokens live in serialized data only and bind through
-        // bindAttachment().
+        // Live knots (issue 04), one flat tie list — one knot per seat
+        // since #85 (a knot sits on the anchor body with segment -1, or on
+        // chain segment 0…MAX_SEGMENTS-1 — the schema range; the live chain
+        // lays only its span's worth, issue #56). Tokens live in serialized
+        // data only and bind through bindAttachment().
         this._attachments = [];
         this._pendingAttachments = [];
 
@@ -579,13 +579,15 @@ export default class Rope extends BaseObject {
      * that chain segment's body — the schema range; the chain lays only
      * its span's worth of seats and a seat beyond it refuses, issue #56)
      * to a named attachment point on a live target. Any laid seat accepts
-     * knots, and several knots may share a seat (per-knot untie). The rope
-     * stores only live refs — the physical engine link is realized on the
-     * next step (see onBeforeUpdate). A bodyless free bundle accepts only
-     * the anchor tie (−1): its first tie is the birth of the chain (issue
-     * #55). An authored free rope already has its chain, so that same first
-     * anchor tie re-roots it at the clicked knot (issue #56) before the
-     * coverage rules below run.
+     * its first knot, and a seat that already holds one refuses a second
+     * tie — one knot per seat, three per rope through the flow's three
+     * squares (issue #85; the seat gate throws before anything re-lays or
+     * grows). The rope stores only live refs — the physical engine link
+     * is realized on the next step (see onBeforeUpdate). A bodyless free
+     * bundle accepts only the anchor tie (−1): its first tie is the birth
+     * of the chain (issue #55). An authored free rope already has its
+     * chain, so that same first anchor tie re-roots it at the clicked knot
+     * (issue #56) before the coverage rules below run.
      * @param {number} segment
      * @param {import('./BaseObject.js').default} target
      * @param {string} pointId
@@ -597,6 +599,20 @@ export default class Rope extends BaseObject {
         const known = target?.attachmentPoints?.some((p) => p.id === pointId);
         if (!known) {
             throw new Error(`[Rope] attachEndpoint: target ${target?.type ?? target} offers no attachment point "${pointId}"`);
+        }
+        // One knot per seat (issue #85): a seat that already holds a knot
+        // refuses a second tie — no knot is created, nothing re-lays, no
+        // grow runs. The connect flow squares only the three named seats
+        // and can only start a seek from a free one, so a click-tied rope
+        // holds at most three knots; this gate is the rope-side guard for
+        // every path (the armed free-rope seek's second tie click included,
+        // refusals of old multi-knot seats at restore bind included), and
+        // untie stays per-knot: a tied square's click unties exactly the
+        // seat's own knot. The segment-index API still binds any first
+        // knot on any laid seat — seats answer indices, they do not
+        // replace them (issue #84).
+        if (this._attachments.some((ref) => ref.segment === segment)) {
+            throw new Error(`[Rope] attachEndpoint: seat ${segment} already holds a knot — one knot per seat`);
         }
         if (this.isFreeBundle && segment !== -1) {
             throw new Error(`[Rope] attachEndpoint: a bodyless bundle has no chain segment to tie (${segment})`);
@@ -610,15 +626,15 @@ export default class Rope extends BaseObject {
         // newborn chain into the world.
         if (this.isFreeBundle) {
             this._spawnChain(target, pointId);
-        } else if (this._isFree && segment === -1
-            && !this._attachments.some((ref) => ref.segment === -1)) {
+        } else if (this._isFree && segment === -1) {
             // An authored free rope laid its chain as it entered the world
             // (issue #56, birthAuthoredChain), so its FIRST anchor tie
             // re-roots that chain at the clicked knot instead of birthing a
             // second one — the tie hangs from exactly the knot that was
-            // clicked, over the span the chain already has. Derived from the
-            // live knots, so a later anchor tie (a second target on the
-            // anchor seat) only adds a knot, the way every other seat does.
+            // clicked, over the span the chain already has. No knot-empty
+            // check here: the one-knot-per-seat gate above (issue #85) has
+            // already refused any second anchor tie, so a run past this
+            // line IS the anchor seat's first tie.
             const world = target.getAttachmentWorldPoint?.(pointId) ?? null;
             if (world) this._reRootChain(world.x, world.y);
         }

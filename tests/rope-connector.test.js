@@ -140,7 +140,7 @@ describe('Rope as connector (issue 04)', () => {
         physics.dispose();
     });
 
-    it('ties several knots to one endpoint and one point to several ropes', () => {
+    it('refuses a second knot on an occupied seat, while one point still serves several ropes', () => {
         const physics = new PhysicsEngine(800, 600);
         const rope = new Rope(200, 100);
         const rope2 = new Rope(260, 100);
@@ -152,15 +152,17 @@ describe('Rope as connector (issue 04)', () => {
         physics.addObject(fixedBucket);
 
         rope.attachEndpoint(5, balloon, 'knot');
-        rope.attachEndpoint(5, fixedBucket, 'rim'); // two knots on one segment
+        expect(() => rope.attachEndpoint(5, fixedBucket, 'rim')).toThrow(); // one knot per seat (issue #85)
         rope2.attachEndpoint(5, fixedBucket, 'rim'); // same point, another rope
         for (let i = 0; i < 10; i++) physics.step(16.67);
 
-        // 3 links: rope-last↔balloon, rope-last↔bucket-floor, rope2-last↔bucket-floor
+        // 2 links: rope-last↔balloon, rope2-last↔bucket-floor — a rope seat
+        // holds one knot, but an attachment point still serves every rope
+        // that ties it.
         const links = physics.getAttachedConstraints();
-        expect(links).toHaveLength(3);
+        expect(links).toHaveLength(2);
         const floorLinks = links.filter((l) => l.bodyB === fixedBucket.bodies[2]);
-        expect(floorLinks).toHaveLength(2);
+        expect(floorLinks).toHaveLength(1);
         physics.dispose();
     });
 
