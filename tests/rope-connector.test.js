@@ -99,7 +99,7 @@ describe('Rope as connector (issue 04)', () => {
     it('validates attachEndpoint calls', () => {
         const rope = new Rope(200, 100);
         const balloon = new Balloon(400, 300);
-        expect(() => rope.attachEndpoint(6, balloon, 'knot')).toThrow();
+        expect(() => rope.attachEndpoint(6, balloon, 'knot')).toThrow(); // a number is no seat role
         expect(() => rope.attachEndpoint('x', balloon, 'knot')).toThrow();
         expect(() => rope.attachEndpoint('anchor', balloon, 'no-such-point')).toThrow();
         expect(rope.getAttachmentRefs()).toEqual([]);
