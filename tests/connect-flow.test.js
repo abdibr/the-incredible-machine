@@ -589,10 +589,15 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
             expect(flow.handlePointerDown(rim.x, rim.y, [rope, balloon, bucket])).toBe(true);
 
             expect(flow.refusal).toBe(null); // no reach refusal for the free family
-            expect(rope.getAttachmentRefs()).toContainEqual({ segment: 2, target: bucket, pointId: 'rim' });
+            // The tie covered its knot 400+px out, re-layed the chain and
+            // re-counted it (the free family's unlimited span): the knot
+            // keeps its SEAT, so it rides to the re-counted chain's middle
+            // (issue #87), and the armed seek followed the same seat.
+            const reSeated = rope.getTieSeats()[1];
+            expect(rope.getAttachmentRefs()).toContainEqual({ segment: reSeated.segment, target: bucket, pointId: 'rim' });
             // The free family's seek stays armed after a tie (ADR 0007
             // amendment 3): the same seat aims for the next knot.
-            expect(flow.seek).toEqual({ rope, segment: 2 });
+            expect(flow.seek).toEqual({ rope, segment: reSeated.segment });
             rope.dispose();
             balloon.dispose();
             bucket.dispose();
@@ -950,7 +955,7 @@ describe('ConnectFlow — the tie seat is a role, not a raw index (issue #56)', 
         flow._mode = 'EDITING';
     });
 
-    it('a mid-chain seat stays put across a re-count; only the chain end rides', () => {
+    it('a mid-seat knot rides a re-count onto the new middle; the flow seat follows (issue #87)', () => {
         // A free rope is the family that re-counts (its span IS its chain,
         // ADR 0007 decision 4), so it is the one that can float a seat: the
         // first anchor tie spawns the six-segment chain hanging from the knot.
@@ -961,12 +966,12 @@ describe('ConnectFlow — the tie seat is a role, not a raw index (issue #56)', 
         physics.addObject(rope);
         rope.attachEndpoint(-1, balloon, 'knot');
         expect(rope._segments).toHaveLength(6);
-        const seatTwo = rope._segments[2]; // seat 2 — mid-chain, not the end
+        const midBody = rope._segments[2]; // seat 2 — the spawned chain's middle
 
-        // Seek seat 2. Only the chain END reels (the hand's span is the end
-        // seat's role), so the seat the flow captured is a plain index here —
-        // and index 2 is mid-chain on any count.
-        const mid = seatTwo.position;
+        // Seek the mid seat. Only the chain END reels (the hand's span is the
+        // end seat's role), so a mid seek aims without re-laying: the seat
+        // the flow captured is index 2 here.
+        const mid = midBody.position;
         expect(flow.handlePointerDown(mid.x, mid.y, [rope, balloon])).toBe(true);
         expect(flow.seek).toEqual({ rope, segment: 2 });
 
@@ -978,22 +983,28 @@ describe('ConnectFlow — the tie seat is a role, not a raw index (issue #56)', 
         expect(flow.seek).toEqual({ rope, segment: 2 });
         expect(rope._segments).toHaveLength(6); // mid seats aim, they don't drag the span
 
-        // The tie covers its own knot — and covering a seat-2 knot 447.7px out
-        // re-lays the chain far past six segments. That re-count is the
-        // regression surface: the knot must keep seat 2, not ride to the end
-        // (the end-ride belongs to the end seat alone).
+        // The tie covers its own knot — and covering a mid-seat knot ~447.7px
+        // out re-lays the chain far past six segments. That re-count is the
+        // seat surface: the knot KEEPS ITS SEAT, so it rides from literal
+        // seat 2 onto the re-counted chain's own middle (issue #87 — issue
+        // #56 kept mid indices and rode only the end; the seats, not the
+        // tie, now do the keeping).
         expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon, far])).toBe(true);
         expect(rope._segments.length).toBeGreaterThan(6); // the free chain re-counted
         expect(rope._segments).toHaveLength(Rope.segmentsForSpan(rope._length)); // …count-honest
-        expect(rope.getAttachmentRefs()).toContainEqual({ segment: 2, target: far, pointId: 'knot' });
-        expect(flow.seek).toEqual({ rope, segment: 2 }); // the seek's seat did not float either
+        const reSeated = rope.getTieSeats()[1]; // the NEW middle seat
+        expect(reSeated.segment).toBeGreaterThan(2); // the re-count drew the middle outboard
+        expect(rope.getAttachmentRefs()).toContainEqual({ segment: reSeated.segment, target: far, pointId: 'knot' });
+        // …and the armed seek followed the same seat it started on.
+        expect(flow.seek).toEqual({ rope, segment: reSeated.segment });
 
-        // …and it realizes from ITS OWN body: seat 2's segment, not the tail's.
+        // …and it realizes from the NEW middle's body — not the old seat-2
+        // body (which survives the count but is mid-chain no more).
         physics.step(16.67);
         const link = physics.getAttachedConstraints().find((c) => c.bodyB === far.bodies[0]);
         expect(link).toBeTruthy();
-        expect(link.bodyA).toBe(rope._segments[2]);
-        expect(link.bodyA).toBe(seatTwo);
+        expect(link.bodyA).toBe(rope._segments[reSeated.segment]);
+        expect(link.bodyA).not.toBe(midBody);
 
         physics.dispose();
         rope.dispose();

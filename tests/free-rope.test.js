@@ -419,13 +419,18 @@ describe('Free Rope (issue #56) — unlimited span', () => {
         const count = ropeSegs(rope).length;
         expect(count).toBe(Rope.segmentsForSpan(rope._length));
         expect(count).toBeGreaterThan(6);
-        // And the knot's engine link realizes against the re-counted chain.
+        // The tie was the MID seat: the knot keeps its seat, so the
+        // re-count re-seats it onto the re-counted chain's own middle
+        // (issue #87 — the literal seat-2 body survives but is mid no more).
         engine.step(DT);
         const link = engine.getAttachedConstraints().find(
             (c) => c.bodyB === bucket.bodies[2]
         );
-        expect(link, 'the mid-chain knot survives the re-segmentation').toBeTruthy();
-        expect(link.bodyA).toBe(rope.bodies[3]); // seat 2 = _segments[2]
+        expect(link, 'the mid-seat knot survives the re-segmentation').toBeTruthy();
+        const [, midSeat] = rope.getTieSeats(); // the re-counted chain's middle
+        expect(midSeat.segment).toBeGreaterThan(2); // the middle drew outboard of seat 2
+        expect(link.bodyA).toBe(rope.bodies[midSeat.segment + 1]);
+        expect(link.bodyA).toBe(midSeat.body); // the knot is ON the mid square
     });
 
     it('the hand re-lays a tied spawned rope to any span — no length freeze after the first tie', () => {

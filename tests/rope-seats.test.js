@@ -132,7 +132,7 @@ describe('Rope named tie seats (issue #84) — the three-seat answer', () => {
         expect(mid.segment).toBe(4); // exact middle of the 9-chain
         expect(mid.body).toBe(rope.bodies[5]);
         expect(mid.body).not.toBe(bornMidBody); // the old middle's body is mid no more
-        expect(end.segment).toBe(8); // the chain-end ride re-bound the knot (issue #56)
+        expect(end.segment).toBe(8); // the re-count re-seated the knot (issue #87)
         rope.dispose();
         balloon.dispose();
     });

@@ -244,6 +244,12 @@ class ConnectFlow {
                         }
                         pulled.setPosition(px, py);
                     }
+                    // Capture the seek seat's role BEFORE the tie: the tie
+                    // may re-count the chain, and the re-count re-seats the
+                    // seats (issue #87) — only the pre-tie answer names the
+                    // seat this seek started on.
+                    const rope = this._seek.rope;
+                    const heldRole = this._seekRoleOf(rope, this._seek.segment);
                     try {
                         this._seek.rope.attachEndpoint(this._seek.segment, target.target, target.pointId);
                     } catch (e) {
@@ -259,17 +265,18 @@ class ConnectFlow {
                     // tie keeps the seek — its span is the aim's property,
                     // every later target ties as far as anything on the
                     // board, so the flow stays armed for the next tie.
-                    const rope = this._seek.rope;
-                    const wasTailSeek = this._seek.segment >= 0
-                        && this._seek.segment === rope.bodies.length - 2;
                     if (rope.isFree) {
-                        // The tie's covering grow re-counts the chain
-                        // (span-derived counts): a chain-end seek re-resolves
-                        // onto the rebuilt end so the next tie lands on the
-                        // seat that covers the aim — not a stale mid-index.
-                        if (wasTailSeek) {
-                            this._seek = { rope, segment: rope.bodies.length - 2 };
-                        }
+                        // The tie's covering grow may re-count the chain
+                        // (span-derived counts) and the re-count re-seats the
+                        // seats (issue #87): the seek keeps the same seat it
+                        // started on, whatever index that is now — one rule
+                        // for the anchor (never moves), the mid and the end
+                        // (the tail re-resolve of issue #56 is its end-seat
+                        // case), never a stale mid-index.
+                        const seated = heldRole
+                            ? rope.getTieSeats().find((s) => s.role === heldRole)
+                            : null;
+                        this._seek = { rope, segment: seated ? seated.segment : this._seek.segment };
                     } else {
                         this.cancel(); // the tie ends the seek at a settled state
                     }
@@ -353,6 +360,23 @@ class ConnectFlow {
         const bodies = rope?.bodies;
         if (!bodies || !bodies[0]) return null;
         return segment === -1 ? bodies[0] : bodies[segment + 1];
+    }
+
+    /**
+     * The role of the seat a seek holds, by its segment (issue #84's seat
+     * answer): 'anchor' at −1, otherwise the live seat whose index matches —
+     * the flow only ever arms a seek from a drawn square, i.e. a named seat.
+     * The re-count consumer reads this BEFORE the tie so a re-seated seat
+     * can be found again by role after it (issue #87). Unknown seats answer
+     * null (never reachable through the squares).
+     * @param {import('../objects/Rope.js').default} rope
+     * @param {number} segment
+     * @returns {'anchor'|'mid'|'end'|null}
+     * @private
+     */
+    _seekRoleOf(rope, segment) {
+        if (segment === -1) return 'anchor';
+        return rope.getTieSeats().find((s) => s.segment === segment)?.role ?? null;
     }
 
     /**

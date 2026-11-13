@@ -59,6 +59,18 @@
  * indices; they do not replace them — attach/detach, tokens and squares
  * are untouched.
  *
+ * Seats across growth and re-lay (issue #87): when the chain's count
+ * changes — a free rope's tie-grow re-count, the hand re-laying a rope
+ * whose knots already live on it, a pinned tie-grow stretching the span
+ * — every knot keeps its seat: setEndpoints re-seats the knot on the
+ * old END seat onto the new tail, the knot on the old MID seat onto the
+ * new middle (the anchor is the anchor in every count), and the
+ * reconcile realizes each knot's link from whatever body its seat names
+ * after the change. The keep-rule is the seats' own, run wherever a
+ * re-count trades the tail — it replaced issue #56's chain-end ride, so
+ * a knot stays attached because the seats re-derive, not because a tie
+ * writes them.
+ *
  * Free-rope birth (issue #55 + issue #56): the free family splits on the
  * LENGTH option. A length-less free rope is issue #55's inert coil — no
  * anchor, no segments, nothing in the world — and its first tie births the
@@ -675,15 +687,18 @@ export default class Rope extends BaseObject {
         // tied span / seat inboard-ness: the chain rests exactly taut at
         // the knot, zero residual.
         // The grow's count follows the family (issue #56 — the keystone).
-        // A knot stores a LITERAL seat index, so a re-count mid-tie moves
-        // every knot onto the wrong body (or off the chain):
+        // A knot keeps its seat across a re-count (issue #87 — setEndpoints
+        // re-seats the mid/end knots off the new count), so the split now
+        // stands only on the authored-chain argument:
         // - a PINNED rope's chain is authored by the level, so its tie-grow
         //   FREEZES the count (`resegment: false`) — the tie may lengthen
-        //   the rope, never reshape its chain; seat 5 stays the tail;
+        //   the rope, never reshape its chain; seat 5 stays the tail and
+        //   the seats hold trivially;
         // - a FREE rope owns no authored chain at all (decision 4, issue
         //   #56): its span IS the chain, so the grow re-counts like any
-        //   other re-lay, and it stays unlimited after the first tie —
-        //   every later tie re-lays the chain to cover itself again.
+        //   other re-lay, every knot rides its seat through setEndpoints,
+        //   and it stays unlimited after the first tie — every later tie
+        //   re-lays the chain to cover itself again.
         // Severed ropes keep accounting-only growth (nothing lays or
         // reconciles for them); a spawned bundle never reaches here past
         // capacity (its first tie sits at the anchor, tied = 0).
@@ -710,22 +725,8 @@ export default class Rope extends BaseObject {
                             { resegment: this._isFree }
                         );
                         this._length = grown; // exact seal (setEndpoints re-derived with float dust)
-                        // The chain-end ride (issue #56): a FREE rope's grow
-                        // re-counts the chain through setEndpoints, so a knot
-                        // tied at the grow-time chain's last seat re-binds
-                        // onto the rebuilt chain's end — the END slot is the
-                        // end, it rides re-segmentation (several knots on
-                        // that seat ride together). Middle-seat knots keep
-                        // their index: their body kept its seat, and the
-                        // length-0 link hauls its residual to the knot. A
-                        // pinned rope froze its count, so its tail is still
-                        // the tail and this never fires.
-                        const newTail = this._segments.length - 1;
-                        if (segment === oldCount - 1 && oldCount !== newTail + 1) {
-                            for (const ref of this._attachments) {
-                                if (ref.segment === segment) ref.segment = newTail;
-                            }
-                        }
+                        // No ride needed here (issue #87): setEndpoints already
+                        // re-seated every named-seat knot — this tie included.
                     } else {
                         this._length = grown; // severed: reconcile skips it — accounting only
                     }
@@ -1289,9 +1290,11 @@ export default class Rope extends BaseObject {
      * Two modes (issue #56 — the tie-grow/re-lay split):
      * - `resegment: true` (default, every genuine re-lay): the chain's
      *   segment count re-derives from the span (ADR 0007 decision 3), so a
-     *   longer re-lay grows the tail and a shorter one prunes it, every
-     *   earlier knot's seat riding its body. Appended/dropped tail bodies
-     *   ride in the converge packet so the world swaps them too.
+     *   longer re-lay grows the tail and a shorter one prunes it; knots that
+     *   hold named seats re-seat onto the new count's own end/middle
+     *   (issue #87 — see _keepSeats), and a knot on a seat the rope never
+     *   named keeps its index while the count still lays it. Appended/dropped
+     *   tail bodies ride in the converge packet so the world swaps them too.
      * - `resegment: false` (a pinned rope's tie-grow): the chain keeps
      *   exactly the bodies it has — same length, same seat indices, no
      *   body minted or dropped — and only re-lines them along start→end
@@ -1318,9 +1321,10 @@ export default class Rope extends BaseObject {
         if (!this._severed) {
             // Span-derived count (issue #56, ADR 0007 decision 3): a re-lay
             // re-derives the chain size. Earlier segments keep their
-            // indices (live knot refs stay valid); appended/dropped tail
-            // segments ride in the packet so the world swaps bodies too. A
-            // frozen (no-re-count) re-lay keeps the authored chain whole.
+            // indices; appended/dropped tail segments ride in the packet so
+            // the world swaps bodies too. A frozen (no-re-count) re-lay
+            // keeps the authored chain whole.
+            const oldCount = this._segments.length;
             const targetCount = resegment
                 ? Rope.segmentsForSpan(this._length)
                 : this._segments.length;
@@ -1335,6 +1339,11 @@ export default class Rope extends BaseObject {
             const { added, dropped } = resegment
                 ? this._resizeChain(targetCount)
                 : { added: [], dropped: [] };
+            // Knots keep their seats (issue #87): a re-count trades the
+            // tail, so let every knot that holds a named seat ride the new
+            // count's own end/middle — the anchor is the anchor in every
+            // count, and a same-count re-lay re-seats nobody.
+            if (resegment) this._keepSeats(oldCount, targetCount);
             // The appended tail lands ON the end point (issue #56, handoff
             // fix 4): a re-lay that GREW the chain puts its new last body
             // exactly where the endpoints say, instead of half a pitch
@@ -1406,6 +1415,49 @@ export default class Rope extends BaseObject {
             dropped.push(this._segments.pop());
         }
         return { added, dropped };
+    }
+
+    /**
+     * Re-seat every live knot that holds a named seat across a re-count
+     * (issue #87): a knot on the old END seat rides the new tail, a knot
+     * on the old MID seat the new middle (midSeatSegment), and the anchor
+     * knot stays the anchor (−1 is the anchor body in every count). The
+     * reconcile realizes the migrated knot's link from its NEW seat's body
+     * on the next step; a knot on a body the shorter re-lay dropped never
+     * appears here as a named seat (its seat was one of the three that
+     * re-seat, or it was never named and keeps its index — the count that
+     * lost it prunes it off the reconcile scan, as before).
+     *
+     * Called from setEndpoints wherever a re-segmentation trades the tail
+     * (a free tie-grow's re-count included — the old chain-end ride of
+     * issue #56 was this for the end seat only, and is retired: the seats,
+     * not the tie, now do the keeping). A same-count re-lay re-seats
+     * nobody — the seat arithmetic it re-derives is identical.
+     *
+     * The three roles cannot collide: for every count ≥ 2 the mid seat is
+     * strictly inboard of the end seat (midSeatSegment(count) < count − 1;
+     * the SEGMENTS floor keeps every live count there), so a mid knot and
+     * an end knot always land on distinct seats — the one-knot-per-seat
+     * gate (#85) is never stress-tested by a migration.
+     * @param {number} oldCount - the chain count the knots were seated on
+     * @param {number} newCount - the re-derived count after the re-lay
+     * @returns {void}
+     * @private
+     */
+    _keepSeats(oldCount, newCount) {
+        if (newCount === oldCount) return;
+        const oldMid = midSeatSegment(oldCount);
+        const oldEnd = oldCount - 1;
+        const newMid = midSeatSegment(newCount);
+        const newEnd = newCount - 1;
+        for (const ref of this._attachments) {
+            if (ref.segment === -1) continue; // the anchor rides every count
+            // (An old count whose mid seat IS its tail cannot happen — the
+            // SEGMENTS floor keeps every laid count ≥ 6 — so the two checks
+            // below never share a seat.)
+            if (ref.segment === oldEnd) ref.segment = newEnd;
+            else if (ref.segment === oldMid) ref.segment = newMid;
+        }
     }
 
     /**

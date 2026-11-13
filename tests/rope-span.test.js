@@ -13,14 +13,18 @@
  * - Constructor / _spawnChain — both birth paths (pinned drop, free-rope
  *   spawn) derive the count honestly.
  * - Rope.setEndpoints — the re-lay trades the tail: earlier seats keep
- *   their indices (live knot refs stay valid), the packet emits
- *   `added`/`dropped`, and PhysicsEngine._restoreRopeConstraints
+ *   their indices; knots that hold named seats re-seat onto the new
+ *   count's own end/middle (issue #87). A knot on a seat the rope never
+ *   named keeps its index while the count still lays it, and knots whose
+ *   seats the tail trade removed prune off the reconcile scan. The packet
+ *   emits `added`/`dropped`, and PhysicsEngine._restoreRopeConstraints
  *   reconciles the world (added join, dropped leave, the chain swap
  *   co-terminates).
  * - rope.relayFreeEnd — the hand re-derives the count under the demand;
  *   a frozen pinned rope holds its span, a free rope takes any.
- * - Dead-seat pruning: knots whose seats a shorter re-lay pruned drop
- *   on the reconcile scan (their bodies no longer resolve).
+ * - Dead-seat pruning: a named seat RIDES the re-count (issue #87 — the
+ *   end knot onto the new tail); only a seat the rope never named unties
+ *   off the scan when its body is gone.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -107,7 +111,7 @@ describe('Span-derived counts — the counting rule (issue #56)', () => {
 });
 
 describe('Span-derived counts — tail trades and the world reconcile (issue #56)', () => {
-    it('setEndpoints grows the tail: appended segments join the world, early seats keep their knots', () => {
+    it('setEndpoints grows the tail: appended segments join the world; the mid knot rides the new middle', () => {
         const engine = makeEngine();
         const rope = new Rope(200, 100, { length: 100 });
         const balloon = new Balloon(200, 205);
@@ -115,18 +119,20 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         engine.addObject(balloon);
         expect(ropeSegs(rope)).toHaveLength(6);
 
-        // A knot on seat 2 realizes before the re-lay…
+        // A knot on the MID seat (seat 2 of 6) realizes before the re-lay…
         rope.attachEndpoint(2, balloon, 'knot');
         engine.step(DT);
         let link = engine.getAttachedConstraints().find((c) => c.bodyB === balloon.bodies[0]);
         expect(link.bodyA).toBe(rope.bodies[3]); // seat 2 = _segments[2]
 
-        // …and keeps riding the SAME seat-2 body through the re-lay:
-        // appending keeps early bodies (and their seats) in place.
+        // …and rides the re-count onto the NEW middle (issue #87): the knot
+        // holds the mid SEAT, so the 6 → 11 re-count re-seats it 2 → 5 and
+        // the world keeps every chain body that the append didn't take away.
         const oldSeat = rope.bodies[3];
         rope.setEndpoints({ x: 200, y: 100 }, { x: 200, y: 520 }); // 420px
         expect(ropeSegs(rope)).toHaveLength(11); // ceil(420/40)
-        expect(rope.bodies[3]).toBe(oldSeat);
+        expect(rope.bodies[3]).toBe(oldSeat); // the body kept its chain index…
+        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([5]); // …its knot didn't
         const bodies = worldIds(engine);
         for (const body of rope.bodies) {
             expect(bodies.has(body.id), 'every appended segment joins the world').toBe(true);
@@ -137,8 +143,8 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         }
         engine.step(DT);
         link = engine.getAttachedConstraints().find((c) => c.bodyB === balloon.bodies[0]);
-        expect(link, 'the mid-chain knot survives the re-segmentation').toBeTruthy();
-        expect(link.bodyA).toBe(rope.bodies[3]);
+        expect(link, 'the mid-seat knot survives the re-segmentation').toBeTruthy();
+        expect(link.bodyA).toBe(rope.bodies[6]); // the new middle body (seat 5 of 11)
         // Anchor and tail sit on the endpoints — the anchor exactly (static),
         // the tail as exactly as a post-step read can be: the lay itself puts
         // it ON `end` (issue #56, handoff fix 4 — an appended tail is not
@@ -150,10 +156,17 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         // intent without asserting that integration is a no-op.
         expect([rope.bodies[0].position.x, rope.bodies[0].position.y]).toEqual([200, 100]);
         expect(rope.bodies[11].position.x).toBeCloseTo(200, 3);
-        expect(Math.abs(rope.bodies[11].position.y - 520)).toBeLessThan(1); // < one step's free fall
+        // The tail's residual after the step is a HAUL, not a snap: the
+        // re-lay parked the knot on the NEW mid seat (issue #87) and its
+        // rest sits ~79px past the balloon, so the knot link's first step
+        // drags the chain inboard a few px. The intent is unchanged — the
+        // append did not snap the tail off the end point, and the residual
+        // stays under a pitch (~40px) — it is just the knot's strain now,
+        // not one free-fall step (the gravity component is still ~0.6px).
+        expect(Math.abs(rope.bodies[11].position.y - 520)).toBeLessThan(420 / 40); // < a pitch
     });
 
-    it('dropping the tail removes bodies and chain constraints; over-pruned knots untie off the scan', () => {
+    it('a shorter re-lay rides the end knot onto the new tail; an over-pruned unnamed seat unties off the scan', () => {
         const engine = makeEngine();
         const rope = new Rope(200, 100, { length: 700 }); // 16 segments
         const balloon = new Balloon(200, 205);
@@ -161,8 +174,8 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         engine.addObject(balloon);
         expect(ropeSegs(rope)).toHaveLength(16);
 
-        rope.attachEndpoint(8, balloon, 'knot');
-        rope.attachEndpoint(15, balloon, 'knot'); // the tail seat too
+        rope.attachEndpoint(8, balloon, 'knot'); // mid of 16 is 7 — seat 8 was never a named seat
+        rope.attachEndpoint(15, balloon, 'knot'); // the END seat
         expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([8, 15]);
         engine.step(DT);
         expect(engine.getAttachedConstraints().filter((c) => c.bodyB === balloon.bodies[0]))
@@ -171,17 +184,24 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         const before = rope.bodies.map((b) => b.id);
         rope.setEndpoints({ x: 200, y: 100 }, { x: 200, y: 380 }); // 280px → 7 counts
         expect(ropeSegs(rope)).toHaveLength(7);
+        // The END knot rides the new tail (issue #87): its ref re-seated
+        // 15 → 6 during the re-count. The seat-8 knot is still listed —
+        // its seat was never named, so nothing re-seats it; the count that
+        // lost its body prunes it off the reconcile scan on the next step.
+        expect(rope.getAttachmentRefs().map((r) => r.segment)).toEqual([6, 8]);
         engine.step(DT);
-        // Seats 8 and 15 no longer resolve: their knots prune off the
-        // reconcile scan and their realized links co-terminated.
-        expect(rope.getAttachmentRefs(), 'both knots sat on pruned seats').toEqual([]);
-        expect(engine.getAttachedConstraints().filter((c) => c.bodyB === balloon.bodies[0]))
-            .toEqual([]);
+        // The re-seated knot realizes from the NEW tail's body; the seat-8
+        // knot untied off the scan — its body was traded away with the
+        // tail.
+        expect(rope.getAttachmentRefs()).toEqual([{ segment: 6, target: balloon, pointId: 'knot' }]);
+        const links = engine.getAttachedConstraints().filter((c) => c.bodyB === balloon.bodies[0]);
+        expect(links).toHaveLength(1);
+        expect(links[0].bodyA).toBe(rope.bodies[7]); // the new tail (anchor + seat 6)
         const after = worldIds(engine);
         for (const id of before.slice(8)) {
             expect(after.has(id), 'pruned segments leave the world').toBe(false);
         }
-        for (const id of before.slice(0, 8)) {
+        for (const id of before.slice(0, 7)) {
             expect(after.has(id), 'kept segments stay').toBe(true);
         }
     });
@@ -262,7 +282,10 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         expect(pinned.getAttachmentRefs().map((r) => r.segment)).toEqual([5]);
 
         // A free rope owns no authored chain: its span IS the chain, so the
-        // same grow re-derives the count from the span it grew to.
+        // same grow re-derives the count from the span it grew to — and the
+        // mid-seat knot rides the re-count onto the new middle (issue #87;
+        // the grow re-layed along the anchor→tie direction, then the count
+        // capped at MAX_SEGMENTS).
         const far = new Balloon(900, 500);
         const free = objectRegistry.create('free-rope', 200, 400, { length: 60 });
         engine.addObject(free);
@@ -272,7 +295,9 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         free.attachEndpoint(2, far, 'knot');
         expect(ropeSegs(free).length).toBe(Rope.segmentsForSpan(free._length));
         expect(ropeSegs(free).length).toBeGreaterThan(6);
-        expect(free.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 2]);
+        const recounted = ropeSegs(free).length;
+        expect(recounted).toBe(16); // grown 1697px → past the cap: 16 bodies
+        expect(free.getAttachmentRefs().map((r) => r.segment)).toEqual([-1, 7]); // the tie's mid seat now the cap-chain's (seat 7)
     });
 });
 
