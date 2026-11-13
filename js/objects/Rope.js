@@ -42,6 +42,16 @@
  * re-laying to the demanded span. The pinned rope's frozen circle and
  * refusal are untouched.
  *
+ * Named tie seats (issue #84): beside the segment-index surface the rope
+ * ANSWERS its three tie seats — anchor, mid, end — through getTieSeats():
+ * each seat's role, seat index (the same number attachEndpoint ties
+ * through), tie body, world point at ask time, and reach as a fraction of
+ * the span. The mid seat is a role resolved per ask against the live chain
+ * (the chain's middle body), never a stored index, so a re-lay or a tie-grow
+ * keeps it the middle with nothing written at tie time. Seats answer
+ * indices; they do not replace them — attach/detach, tokens and squares
+ * are untouched.
+ *
  * Free-rope birth (issue #55 + issue #56): the free family splits on the
  * LENGTH option. A length-less free rope is issue #55's inert coil — no
  * anchor, no segments, nothing in the world — and its first tie births the
@@ -156,6 +166,48 @@ export function isRopeFamily(obj) {
  */
 function seatFraction(seat, count) {
     return (seat + 0.5) / count;
+}
+
+/**
+ * The chain's middle seat (issue #84): of a `count`-body chain the one body
+ * whose seat centre sits nearest the span midpoint — exact for odd counts,
+ * tied anchor-ward (the lower index) on even counts, which keeps the mid
+ * seat strictly inboard of the end seat for every count ≥ the SEGMENTS
+ * floor. Module-private arithmetic beside seatFraction: it is asked through
+ * getTieSeats and never stored, so a re-lay or tie-grow moves it by itself.
+ * @param {number} count - the chain's segment count
+ * @returns {number} the mid seat's chain index
+ */
+function midSeatSegment(count) {
+    return Math.floor((count - 1) / 2);
+}
+
+/**
+ * One named-seat answer (issue #84): the shape every body-bearing seat
+ * answers — role, seat index, tie body, world point at ask time (a fresh
+ * snapshot: Matter mutates `position` in place), and the seat's reach as a
+ * fraction of the span. One factory, so the three seats answer identical
+ * shapes by construction rather than by copies, the way makeSegmentBody
+ * mints bodies and _buildChainConstraints builds chains. The reach is THE
+ * seat arithmetic's one spelling: the anchor seat 0 (its tie consumes no
+ * chain — the glossary's own "0 of the span"), every chain seat
+ * seatFraction(segment, count) — the end seat's covering limit.
+ * @param {'anchor'|'mid'|'end'} role
+ * @param {number} segment - the seat index the segment-index API ties through
+ * @param {Matter.Body} body - the seat's tie body (non-null here; the
+ *   bodyless bundle's coil seat builds its own literal in getTieSeats)
+ * @param {number} count - the chain's segment count (the reach's denominator)
+ * @returns {{role: string, segment: number, body: Matter.Body,
+ *   worldPoint: {x: number, y: number}, reach: number}}
+ */
+function makeSeatAnswer(role, segment, body, count) {
+    return {
+        role,
+        segment,
+        body,
+        worldPoint: { x: body.position.x, y: body.position.y },
+        reach: segment === -1 ? 0 : seatFraction(segment, count),
+    };
 }
 
 /**
@@ -451,6 +503,73 @@ export default class Rope extends BaseObject {
         return segment === -1
             ? (this._anchor ?? null)
             : (this._segments[segment] ?? null);
+    }
+
+    // ── Named tie seats (issue #84: anchor, mid, end) ────────
+
+    /**
+     * The rope's three named tie seats — anchor, mid, end (issue #84), in
+     * that order. Each seat answers:
+     * - `role` — 'anchor' | 'mid' | 'end';
+     * - `segment` — the seat index the SEGMENT-INDEX API ties through
+     *   (−1 = the anchor; the same number attachEndpoint/detachEndpoint,
+     *   the tie tokens and the squares already speak — this seam replaces
+     *   nothing, it names the seats);
+     * - `body` — the seat's tie body (a live Matter body, or null where
+     *   no body exists — a bodyless free bundle's coil seat);
+     * - `worldPoint` — where the seat ties at ask time (the rope body's
+     *   centre: where a square draws and a knot link pins, length 0). A
+     *   fresh snapshot per ask — Matter mutates `position` in place, so
+     *   per-frame consumers re-ask each frame instead of holding the point;
+     * - `reach` — where the seat's tie body sits as a fraction of the span
+     *   (seatFraction): the anchor seat 0 (its tie consumes no chain), the
+     *   end seat (count − 0.5)/count — the same number the reach gate and
+     *   the tie-grow's covering rule use today.
+     *
+     * The mid seat is a ROLE, never stored (issue #84): it resolves on
+     * every ask against the live chain — the chain's middle body (ties
+     * anchor-ward on an even count, midSeatSegment) — so after any re-lay
+     * or tie-grow, of either family, it is still the middle, and no tie
+     * write can ever move it.
+     *
+     * Seat presence follows the live structure: a laid rope answers three;
+     * a bodyless free bundle answers only its anchor seat (no chain yet —
+     * body null, the coil point stands in, exactly the square ConnectFlow
+     * already draws there); a disposed rope answers nothing (parity with
+     * `bodies`, which reads empty). A severed rope keeps its chain, so its
+     * seats still answer — ConnectFlow is what withholds squares.
+     * @returns {Array<{role: 'anchor'|'mid'|'end', segment: number,
+     *   body: Matter.Body|null, worldPoint: {x: number, y: number}|null,
+     *   reach: number}>}
+     */
+    getTieSeats() {
+        const seats = [];
+        const count = this._segments.length;
+        // The anchor seat: the nail (pinned rope), the spawned chain's
+        // moving knot (free rope, issue #55) — or, on a bodyless bundle,
+        // the coil square's seat with no body and the coil centre for a
+        // point (the same answer ConnectFlow's bundle branch draws).
+        if (this._anchor) {
+            seats.push(makeSeatAnswer('anchor', -1, this._anchor, count));
+        } else if (this.isFreeBundle) {
+            seats.push({
+                role: 'anchor',
+                segment: -1,
+                body: null,
+                worldPoint: { x: this._x, y: this._y },
+                reach: 0,
+            });
+        }
+        // The chain seats: mid resolves against the LIVE count (never
+        // stored, issue #84), end is whatever the tail currently is —
+        // both the same seat indices the segment-index API ties through.
+        if (count > 0) {
+            const mid = midSeatSegment(count);
+            seats.push(makeSeatAnswer('mid', mid, this._segments[mid], count));
+            const end = count - 1;
+            seats.push(makeSeatAnswer('end', end, this._segments[end], count));
+        }
+        return seats;
     }
 
     // ── Attachments (issue 04: rope as a connector) ────────
