@@ -476,6 +476,128 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         rope.dispose();
         balloon.dispose();
     });
+
+    // The 100px rope's seat circles from the anchor at (300, 100): the mid
+    // seat (2 of 6) covers 41.67px, the end seat (5 of 6) the 91.67px
+    // capacity — the aim slack band extends either by the 14px tolerance.
+    describe('the reach follows the seat (issue #86)', () => {
+        const MID_CIRCLE = 100 * 2.5 / 6;  // 41.67px
+        const END_CIRCLE = 100 * 5.5 / 6;  // 91.67px: today's chain-end measure
+
+        it('a mid tie beyond the mid seat\'s reach refuses — no knot, the seek stays in flight, the refusal paints', () => {
+            const rope = new Rope(300, 100, { length: 100 });
+            const balloon = new Balloon(300, 144.4); // knot (300, 170): 70px out — inside the END circle + slack, past the mid band
+            expect(70).toBeGreaterThan(MID_CIRCLE + 14);
+            expect(70).toBeLessThan(END_CIRCLE + 14);
+            const mid = rope.getTieSeats()[1];
+            expect(mid.segment).toBe(2);
+
+            flow.handlePointerDown(mid.worldPoint.x, mid.worldPoint.y, [rope]);
+            expect(flow.seek).toEqual({ rope, segment: 2 });
+
+            // Glow follows the seat: the far target stays faint under a
+            // mid seek (it would glow under an end seek).
+            const targets = flow.getTieSquares([rope, balloon], null);
+            expect(targets).toHaveLength(1);
+            expect(targets[0].glows).toBe(false);
+
+            const knot = balloon.getAttachmentWorldPoint('knot');
+            expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true); // consumed
+            expect(flow.seek).toEqual({ rope, segment: 2 }); // the seek survives
+            expect(rope.getAttachmentRefs()).toEqual([]); // no knot was created
+            expect(rope._length).toBe(100); // a refused tie re-lays and grows nothing
+            expect(rope.lengthFrozen).toBe(false);
+            expect(flow.refusal).toMatchObject({ x: knot.x, y: knot.y });
+            const squares = flow.getRopeSquares([rope], null);
+            expect(squares.find((s) => s.role === 'mid').refused).toBe(true); // the handle flashes red
+            rope.dispose();
+            balloon.dispose();
+        });
+
+        it('a mid tie in the slack band grows the span so the chain rests under the mid knot', () => {
+            const rope = new Rope(300, 100, { length: 100 });
+            const balloon = new Balloon(300, 120.4); // knot (300, 146): 46px — past the mid circle, inside its aim band
+            expect(46).toBeGreaterThan(MID_CIRCLE);
+            expect(46).toBeLessThan(MID_CIRCLE + 14);
+            const mid = rope.getTieSeats()[1];
+            flow.handlePointerDown(mid.worldPoint.x, mid.worldPoint.y, [rope]);
+
+            // Glow follows the seat: the in-band target ties (grows to cover).
+            const targets = flow.getTieSquares([rope, balloon], null);
+            expect(targets[0].glows).toBe(true);
+
+            const knot = balloon.getAttachmentWorldPoint('knot');
+            expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
+            expect(flow.seek).toBe(null); // a pinned tie ends the seek settled
+            expect(rope.getAttachmentRefs()).toEqual([{ segment: 2, target: balloon, pointId: 'knot' }]);
+            expect(rope.lengthFrozen).toBe(true);
+            // The covering grow answers the MID seat's own fraction: the
+            // chain re-lays so seat 2's body rests exactly at the knot —
+            // just enough (tied · 6/2.5), never hauling the target inboard.
+            expect(rope._length).toBeCloseTo(46 * 6 / 2.5, 5);
+            const midBody = rope.bodies[3]; // bodies[0] = anchor, i+1 per seat
+            expect(midBody.position.x).toBeCloseTo(300, 3);
+            expect(midBody.position.y).toBeCloseTo(146, 3);
+            // Rest lengths still sum to the grown chain's capacity — slack
+            // sags beyond the knot, never a rigid rod (max length plus slack).
+            const restSum = rope.constraints.reduce((sum, c) => sum + c.length, 0);
+            expect(restSum).toBeCloseTo((46 * 6 / 2.5) * 5.5 / 6, 5);
+            rope.dispose();
+            balloon.dispose();
+        });
+
+        it('the same aim ties as an end tie and refuses as a mid tie — the seat picks the reach', () => {
+            const rope = new Rope(300, 100, { length: 100 });
+            const balloon = new Balloon(300, 144.4); // knot (300, 170): 70px out
+            const knot = balloon.getAttachmentWorldPoint('knot');
+
+            // The END seat ties the 70px aim with today's own covering: well
+            // inside the capacity, no grow, the seek closes settled.
+            const end = rope.getTieSeats()[2].worldPoint;
+            expect(70).toBeLessThan(END_CIRCLE);
+            flow.handlePointerDown(end.x, end.y, [rope, balloon]);
+            expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
+            expect(rope.getAttachmentRefs()).toEqual([{ segment: 5, target: balloon, pointId: 'knot' }]);
+            expect(rope._length).toBe(100); // in-capacity tie: no grow (today's behaviour)
+            expect(flow.seek).toBe(null);
+
+            // The MID seat aims at the same 70px and refuses: a mid knot
+            // would sit beyond the seat's own circle, so the reach is the
+            // MID number — with the identical refusal feedback.
+            const mid = rope.getTieSeats()[1].worldPoint;
+            flow.handlePointerDown(mid.x, mid.y, [rope, balloon]);
+            expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
+            expect(flow.seek).toEqual({ rope, segment: 2 });
+            expect(rope.getAttachmentRefs()).toHaveLength(1); // no second knot
+            expect(flow.refusal).toMatchObject({ x: knot.x, y: knot.y });
+            rope.dispose();
+            balloon.dispose();
+        });
+
+        it('a free rope refuses nothing at any distance, mid seat included', () => {
+            if (!objectRegistry.has('free-rope')) registerAllObjects();
+            const rope = objectRegistry.create('free-rope', 260, 300, { length: 60 });
+            const balloon = new Balloon(300, 100); // the anchor tie spawns the chain
+            rope.attachEndpoint(-1, balloon, 'knot');
+            expect(rope.bodies.length).toBe(7); // 1 anchor + the fresh-drop six
+            const mid = rope.getTieSeats()[1]; // seat 2 of the spawned chain
+            const bucket = new Bucket(700, 120); // the rim, ~400px out from the mid square
+            const rim = bucket.getAttachmentWorldPoint('rim');
+
+            flow.handlePointerDown(mid.worldPoint.x, mid.worldPoint.y, [rope, bucket, balloon]);
+            expect(flow.seek).toEqual({ rope, segment: 2 });
+            expect(flow.handlePointerDown(rim.x, rim.y, [rope, balloon, bucket])).toBe(true);
+
+            expect(flow.refusal).toBe(null); // no reach refusal for the free family
+            expect(rope.getAttachmentRefs()).toContainEqual({ segment: 2, target: bucket, pointId: 'rim' });
+            // The free family's seek stays armed after a tie (ADR 0007
+            // amendment 3): the same seat aims for the next knot.
+            expect(flow.seek).toEqual({ rope, segment: 2 });
+            rope.dispose();
+            balloon.dispose();
+            bucket.dispose();
+        });
+    });
 });
 
 describe('Click-flow ties survive the snapshot round-trip (AC)', () => {

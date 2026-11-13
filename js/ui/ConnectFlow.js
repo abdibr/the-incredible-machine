@@ -7,8 +7,11 @@
  * draws whatever this flow reports (squares, seek preview, glow).
  *
  * Flow: clicking a free rope tie square enters a seek — the preview
- * line follows the cursor and target squares within the rope's reach glow.
- * A seek at the FREE end reels the rope to the cursor (Rope.relayFreeEnd —
+ * line follows the cursor and target squares within the seeking seat's
+ * reach glow (reach follows the seat, issue #86: the end seat's reach is
+ * the chain capacity, the anchor seat keeps it too, a mid seat's is its
+ * own covering circle). A seek at the FREE end reels the rope to the
+ * cursor (Rope.relayFreeEnd —
  * the hand sets the length while the rope is untied; the tie square rides
  * the cursor, so a further tie click lands inside the seeking square's own
  * hit radius and wins the seat over the re-click cancel). The anchored
@@ -16,10 +19,13 @@
  * in-reach target creates the knot (engine link realized lazily on the
  * next physics
  * step, the issue 04 seam) and freezes the length; a tie click beyond the
- * rope's reach is REFUSED (ADR 0007 decision 4, issue #54): no knot, the
+ * seeking seat's reach is REFUSED (ADR 0007 decision 4, issue #54, per
+ * seat since #86): no knot, the
  * seek survives, and the refusal paints for REFUSAL_FLASH_MS — the handle
  * flashes red, a reason badge marks the refused aim ("rope too short";
- * "seat already tied" since #85). Esc or re-clicking the seeking square
+ * "seat already tied" since #85). The slack band past a seat's circle
+ * (the aim tolerance) still reaches — the tie it allows grows the span
+ * just enough to cover the knot. Esc or re-clicking the seeking square
  * cancels; clicking an already-tied square unties one knot (the target
  * stays, the rope side frees). One knot per seat (issue #85): the squares
  * are the rope's three named tie seats (issue #84) — anchor, mid, end —
@@ -183,17 +189,25 @@ class ConnectFlow {
                     return true;
                 }
                 const world = target.target.getAttachmentWorldPoint(target.pointId);
-                // Fixed-length reach (ADR 0007 decision 4, issue #54): a
-                // tie beyond the rope's reach is REFUSED — no knot, the
-                // seek stays alive, and the refusal feedback paints (red
-                // handle flash + "rope too short" badge) until it expires.
-                // Free rope (issue #55 spawn, #56 span): isPointWithinReach
-                // answers true for the whole free family — a bodyless coil
-                // has no reach circle, and a spawned free rope keeps it
-                // that way: no length property of its own, so every tie
-                // (first or later, any distance) ties and re-lays the chain
-                // to span the demand instead of refusing.
-                if (world && this._seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE)) {
+                // Fixed-length reach (ADR 0007 decision 4, issue #54), now
+                // following the seat (issue #86): a tie beyond the seeking
+                // seat's own reach is REFUSED — no knot, the seek stays
+                // alive, and the refusal feedback paints (red handle flash
+                // + "rope too short" badge) until it expires. A chain seat
+                // measures its own covering circle (the end seat's is the
+                // chain capacity, so its number answers exactly as before;
+                // the anchor seat keeps the whole-rope capacity circle — its
+                // knot consumes no chain and realizes at the anchor itself);
+                // the slack band past a seat's circle (the aim tolerance)
+                // still reaches, and the tie it allows grows the span just
+                // enough to cover the knot (Rope.attachEndpoint's per-seat
+                // covering grow). Free rope (issue #55 spawn, #56 span):
+                // isPointWithinReach answers true for the whole free family
+                // — a bodyless coil has no reach circle, and a spawned free
+                // rope keeps it that way: no length property of its own, so
+                // every tie (first or later, any distance) ties and re-lays
+                // the chain to span the demand instead of refusing.
+                if (world && this._seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE, this._seek.segment)) {
                     // A fixed-end tie realizes as a length-0 pin between
                     // the rope's anchor and the tied attachment point (the
                     // zero-length engine link of ADR 0007 decision 6,
@@ -444,13 +458,14 @@ class ConnectFlow {
 
     /**
      * Every attachment-point square on the board: during a seek the ones
-     * within the seeking rope's reach glow (glow = tieable, ADR 0007
-     * decision 4, issue #54 — the same isPointWithinReach predicate the tie
-     * click accepts, with the click's aim tolerance); outside a seek, hover
-     * shows the faint square. Out-of-reach targets stay visible while
-     * seeking but faint — clicking them is refused with feedback. Dead
-     * targets (popped, disposed) resolve no world point and drop out; the
-     * seeking rope never offers itself a target.
+     * within the seeking seat's reach glow (glow = tieable, ADR 0007
+     * decision 4, issue #54, per seat since #86 — the same predicate the
+     * tie click accepts, passed the seek's seat, with the click's aim
+     * tolerance); outside a seek, hover shows the faint square.
+     * Out-of-reach targets stay visible while seeking but faint — clicking
+     * them is refused with feedback. Dead targets (popped, disposed)
+     * resolve no world point and drop out; the seeking rope never offers
+     * itself a target.
      * @param {import('../objects/BaseObject.js').default[]} objects — the live board
      * @param {{x: number, y: number}|null} hover — cursor canvas position or null
      * @returns {Array<{target: import('../objects/BaseObject.js').default, pointId: string, x: number, y: number, glows: boolean, hovered: boolean, visible: boolean}>}
@@ -469,7 +484,7 @@ class ConnectFlow {
                 squares.push({
                     target: obj, pointId: point.id, x: world.x, y: world.y,
                     glows: !!seek
-                        && seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE),
+                        && seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE, seek.segment),
                     hovered,
                     visible: !!seek || hovered,
                 });

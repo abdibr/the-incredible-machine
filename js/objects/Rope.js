@@ -10,6 +10,12 @@
  * (lengthFrozen, derived from the knots — never drifts from the tie state),
  * beyond-reach ties are refused by the connect flow, and a tie always
  * covers its own knot (max length with slack — never shrunk, never a rod).
+ * The reach follows the seat (issue #86): a chain seat's tie gates on that
+ * seat's own covering circle, so a mid tie beyond the mid seat's reach is
+ * refused while the end seat's circle stays the chain capacity; the anchor
+ * seat keeps the whole-rope circle (its knot consumes no chain) and a tie
+ * inside the slack band still grows the span just enough for the chain to
+ * rest under its knot.
  *
  * Tie seats (issue #56, one knot per seat since #85): a knot may sit on
  * the anchor body (tie token `segment: -1`) or on any chain segment the
@@ -1192,28 +1198,44 @@ export default class Rope extends BaseObject {
 
     /**
      * Whether a world point lies within this rope's reach from its anchor
-     * (issue #54, ADR 0007 decision 4; issue #56 re-ringed it): a slack
-     * chain can span any distance up to its rest-length sum —
-     * (count − 0.5)/count of the fixed length, because the tie body is the
-     * last segment's center — and must not be stretched past it. A free
-     * rope (issue #56, ADR 0007 decision 4) has no length property of its
-     * own: it answers true unconditionally — first tie, spawned re-tie,
-     * any distance — and the tie re-lays the chain to span the demand
-     * instead of refusing. The connect flow gates both its tie clicks and
-     * its glow with this one predicate, so what glows is exactly what
-     * ties; the anchor knot (segment −1) realizes at the anchor itself, so
-     * the same measure covers every seat of a pinned rope.
+     * for the seat asking (issue #86, ADR 0007 decision 4; issue #54
+     * founded the gate, #56 re-ringed it): a tied chain seat measures its
+     * OWN covering circle — seatFraction(seat, count) of the fixed length,
+     * the same number getTieSeats answers for that seat — because a knot
+     * past it would sit beyond where the seat's tie body rests and the
+     * slack band (the click's aim tolerance) is all that may still tie and
+     * grow. The end seat's circle is the chain capacity, so its tie gates
+     * exactly as it always did. The anchor seat (−1) and callers asking
+     * with no seat keep the whole-rope capacity circle: the anchor knot
+     * realizes AT the anchor itself and consumes no chain, so its aim is
+     * gated by the rope's full reach, the pre-seat measure unchanged. A
+     * seat past the laid chain answers the same capacity circle (defensive
+     * only — getTieSeats answers exclusively laid seats, so the flow can
+     * never seek one). A free rope (issue #56, ADR 0007 decision 4) has no
+     * length property of its own: it answers true unconditionally — first
+     * tie, spawned re-tie, any distance — and the tie re-lays the chain to
+     * span the demand instead of refusing. The connect flow gates both its
+     * tie clicks and its glow with this one predicate, passing the seeking
+     * seat, so what glows is exactly what ties.
      * @param {number} x
      * @param {number} y
      * @param {number} [slack=0] - extra px allowed (a tie click's aim tolerance)
+     * @param {number|null} [segment=null] - the asking seat (−1 = the
+     *   anchor, 0…count−1 = a chain seat); null keeps the chain-end measure
      * @returns {boolean}
      */
-    isPointWithinReach(x, y, slack = 0) {
+    isPointWithinReach(x, y, slack = 0, segment = null) {
         if (this._isFree) return true; // no length property — any tie re-lays (issue #56)
         const anchor = this._anchor?.position;
         if (!anchor) return false;
         const count = this._segments.length;
-        return Math.hypot(x - anchor.x, y - anchor.y) <= this._length * seatFraction(count - 1, count) + slack;
+        // The seat's own covering fraction for a laid chain seat; the rope's
+        // capacity circle for the anchor seat, seatless callers and seats
+        // past the laid chain (defensive fallback, unreachable via the flow).
+        const reach = segment != null && segment >= 0 && segment < count
+            ? seatFraction(segment, count)
+            : seatFraction(count - 1, count);
+        return Math.hypot(x - anchor.x, y - anchor.y) <= this._length * reach + slack;
     }
 
     /**

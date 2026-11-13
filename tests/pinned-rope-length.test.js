@@ -120,6 +120,42 @@ describe('Pinned rope fixed length (issue #54, ADR 0007 decision 4)', () => {
         rope.dispose();
     });
 
+    // The 40px rope's circles, measured from the anchor at (300, 100): the
+    // mid seat (2 of 6) covers 40 · 2.5/6 = 16.67px, the end seat (5 of 6)
+    // the 36.67px capacity — the mid seat's reach is much shorter.
+    it('isPointWithinReach gates the asked seat by its own circle (issue #86)', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const mid = rope.getTieSeats()[1]; // segment 2 of the six-chain
+        // A mid tie aims at the MID seat's own circle: inside it reaches,
+        // past it refuses — even where the chain end still covers.
+        expect(rope.isPointWithinReach(300, 100 + 40 * mid.reach - 0.5, 0, mid.segment)).toBe(true);
+        expect(rope.isPointWithinReach(300, 100 + 40 * mid.reach + 0.5, 0, mid.segment)).toBe(false);
+        // The slack band: past the seat's circle but inside the aim
+        // tolerance still reaches — the tie it allows grows the span.
+        expect(rope.isPointWithinReach(300, 100 + 40 * mid.reach + 1, 14, mid.segment)).toBe(true);
+        expect(rope.isPointWithinReach(300, 100 + 40 * mid.reach + 15, 14, mid.segment)).toBe(false);
+
+        // The end seat asks for the same number the seatless gate answers —
+        // its covering fraction IS the chain capacity.
+        const end = rope.getTieSeats()[2];
+        expect(end.segment).toBe(5);
+        expect(rope.isPointWithinReach(300, 100 + CAPACITY(40), 0, end.segment)).toBe(true);
+        expect(rope.isPointWithinReach(300, 100 + CAPACITY(40) + 1, 0, end.segment)).toBe(false);
+
+        // The anchor seat keeps the whole-rope capacity circle: its knot
+        // consumes no chain (realizes at the anchor itself), so the same
+        // measure that gated pre-seat ties keeps gating its aim.
+        expect(rope.isPointWithinReach(300, 100 + CAPACITY(40), 0, -1)).toBe(true);
+        expect(rope.isPointWithinReach(300, 100 + CAPACITY(40) + 1, 0, -1)).toBe(false);
+
+        // Defensive only — a seat the live chain has not laid falls back to
+        // the capacity circle (the flow can never seek one: getTieSeats
+        // answers only laid seats).
+        expect(rope.isPointWithinReach(300, 100 + CAPACITY(40), 0, 9)).toBe(true);
+        expect(rope.isPointWithinReach(300, 100 + CAPACITY(40) + 1, 0, 9)).toBe(false);
+        rope.dispose();
+    });
+
     it('the free-end seek reels the rope to the cursor — the hand sets the length, the tie freezes it', () => {
         const flow = new ConnectFlow();
         flow._mode = 'EDITING';

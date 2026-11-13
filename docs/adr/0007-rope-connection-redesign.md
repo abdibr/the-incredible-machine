@@ -55,6 +55,10 @@ Vocabulary this amendment fixes, now in `GLOSSARY.md`: **seat**, **tie-grow**, *
 
 Test surface at amendment time: `tests/rope-span.test.js` (count rule, re-lay tail trades, the frozen re-lay, the persisted count vs a re-root) and `tests/rope-ties.test.js` (seat addresses, several knots per seat, per-target pruning) are the executable contract. Full suite: 53 files / 601 tests, all green.
 
+## Amendment (2026-11-13) — reach follows the seat (issue #86)
+
+Narrows § decision 4 and the previous amendment's point 3: with named tie seats answering (#84, #85), the pinned rope's beyond-reach refusal gates **per seat** — a chain seat's tie click is measured against that seat's own covering circle `seatFraction(seat, count)` of the frozen length (the end seat's circle is the chain capacity, so its number is unchanged; a mid tie beyond the mid seat's reach is refused outright instead of tying and demanding a large grow). Two provisos survive unchanged from § decision 4: the aim-tolerance slack past a seat's circle still reaches — the tie it allows **grows the span just enough for the chain to rest under that seat** (`attachEndpoint`'s per-seat covering grow), and never shrinks the rope; and the **anchor seat** keeps the whole-rope capacity circle, because its knot realizes at the anchor itself and consumes no chain. The free family still refuses nothing at any distance. The gate lives in `Rope.isPointWithinReach(x, y, slack, segment)`; the connect flow passes the seeking seat at its tie gate and its glow, so what glows is exactly what ties.
+
 ## Out of scope
 
 - **EditorPanel save brokenness** — pre-existing; placed-rows persistence continues to ride the per-play placed snapshot annotation path.
