@@ -79,6 +79,9 @@ export const REFUSAL_FLASH_MS = 600;
  * reason is #85's one-knot-per-seat refusal). */
 export const ROPE_TOO_SHORT = 'rope too short';
 export const SEAT_TIED = 'seat already tied';
+/** A rope-side seat-gate refusal (issue #93): the tie throw that must not
+ * vanish silently — the flow paints this badge at the refused aim. */
+export const TIE_REFUSED = 'tie refused';
 
 class ConnectFlow {
     constructor() {
@@ -260,11 +263,14 @@ class ConnectFlow {
                     try {
                         this._seek.rope.attachEndpoint(this._seek.role, target.target, target.pointId);
                     } catch (e) {
-                        // The reach was just verified and the target is
-                        // enumerated from the live board — a throw here is a
-                        // safety net only, but it must not crash the app
-                        // mid-seek: keep the seek alive.
+                        // No tie click may vanish silently (issue #93, the
+                        // bugfile's tie repro): whatever refused at the
+                        // rope's own seam — a seat gate the aim checks could
+                        // not see — paints its refusal at the aim, the same
+                        // feedback path as the reach and occupied refusals;
+                        // the seek stays alive.
                         console.warn(`[ConnectFlow] Tie refused: ${e.message}`);
+                        this._refuse(x, y, 'refused');
                         return true;
                     }
                     // Tie exit per family (issue #56): a pinned rope's first
@@ -336,14 +342,16 @@ class ConnectFlow {
 
     /**
      * Record a refused tie: the click aimed somewhere the rope cannot tie —
-     * beyond its reach (ADR 0007 decision 4, issue #54) or into a seat that
-     * already holds a knot (issue #85) — so no knot is created and the seek
-     * survives; the handle flashes red and a reason badge paints at the
-     * refused aim until the flash expires ("rope too short", or "seat
-     * already tied" for the occupied-seat refusal).
+     * beyond its reach (ADR 0007 decision 4, issue #54), into a seat that
+     * already holds a knot (issue #85), or a refusal the rope's own seat
+     * gates raised at the tie call (issue #93 — a throw the flow must paint,
+     * never swallow) — so no knot is created and the seek survives; the
+     * handle flashes red and a reason badge paints at the refused aim until
+     * the flash expires ("rope too short", "seat already tied", or
+     * "tie refused" for the rope-side gate).
      * @param {number} x - refused aim x
      * @param {number} y - refused aim y
-     * @param {'short'|'occupied'} [reason='short'] - why the tie refused
+     * @param {'short'|'occupied'|'refused'} [reason='short'] - why the tie refused
      * @private
      */
     _refuse(x, y, reason = 'short') {

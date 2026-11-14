@@ -16,10 +16,11 @@ import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
 import { restorePlacedFromSnapshot, serializePlacedBoard } from '../js/reset/levelReset.js';
 import { SessionRecorder } from '../js/recorder/SessionRecorder.js';
-import { assertBugFileReplaysExactly, replayRun, replayBugFile } from './helpers/replayBugFile.js';
+import { assertBugFileReplaysExactly, loadBugFile, replayRun, replayBugFile } from './helpers/replayBugFile.js';
 
 registerAllObjects();
 const FIXTURE = fileURLToPath(new URL('./fixtures/bugfiles/ball-drop-ramp.json', import.meta.url));
+const FIXTURE_UFZS = fileURLToPath(new URL('./fixtures/bugfiles/bug-20261114T021258Z-ufzs.json', import.meta.url));
 
 const DT = 1000 / 60;
 
@@ -155,3 +156,54 @@ describe('record ≡ replay (ADR 0006)', () => {
 });
 
 /** ── (part 2: divergence detection + committed fixture) ── */
+
+/**
+ * Committed bugfile regression fixtures (ADR 0006 decision 13 and the
+ * graduated-divergence verdicts). Each fixture is a REAL reporter recording,
+ * committed verbatim (byte-exact: the split ticket comments stitched, no
+ * re-serialization), rebuilt per the ADR 0006 replay flow (fresh deserialize
+ * = the restore), and replayed against its recorded stream.
+ */
+describe('committed bugfile regression fixtures (ADR 0006)', () => {
+    it('ball-drop-ramp replays bit-exactly', () => {
+        const report = assertBugFileReplaysExactly(FIXTURE);
+        expect(report.ok).toBe(true);
+    });
+
+    /**
+     * bug-20261114T021258Z-ufzs — "the free rope disconnects from the other
+     * rope without a reason" (issue #93). The recording's board snapshot
+     * carries the free rope's SAVED SPAN (length 86.209, endPoint (120.55,
+     * 290.06) — the hand's last re-lay, laid across the pinned rope's
+     * chain), so the snapshot-authoritative rebuild re-derives the chain
+     * along that lay: the tail sags into the bucket and its segments
+     * contact `bucket-wall` at ticks 77/79/82 of the recorded dt tape —
+     * exactly the recorded stream.
+     *
+     * DELIBERATE DIVERGENCE from the pre-fix rebuild (the wrong side): the
+     * free-rope restore was spawning the chain through the fresh-coil birth
+     * (`_spawnChain`'s straight-down default), teleporting the tail into a
+     * vertical dead hang under the balloon — 0 collisions, the stream diverged
+     * (event-count 3 vs 0). The verdict (ADR 0006 amendment, issue #93): the
+     * saved span is the restore lay — recorded-correct; the straight-down
+     * rebuild was unintended restore drift from the free family's restore
+     * path. This test fails if that wrong side returns.
+     */
+    it('bug-20261114T021258Z-ufzs replays bit-exactly: the saved span is the restore lay (issue #93)', () => {
+        const file = loadBugFile(FIXTURE_UFZS);
+        const report = assertBugFileReplaysExactly(FIXTURE_UFZS);
+        expect(report.ok).toBe(true);
+
+        // The pinned collision stream AT THE RECORDED DT TAPE: the free
+        // rope's tail segments contact the bucket wall on the same three
+        // ticks the reporter's run saw (77/79/82, tail inward: seg-5,
+        // seg-4, seg-3).
+        const run = file.runs[0];
+        const collisions = run.events.filter((e) => e.topic === 'physics:collision');
+        expect(collisions.map((e) => [e.tick, e.data.b.body])).toEqual([
+            [77, 'rope-seg-5'], [79, 'rope-seg-4'], [82, 'rope-seg-3'],
+        ]);
+        expect(collisions.every((e) => e.data.a.body === 'bucket-wall'
+            && e.data.a.ref === 'bucket@1' && e.data.b.ref === 'free-rope@3')).toBe(true);
+    });
+});

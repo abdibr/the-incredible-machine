@@ -10,7 +10,7 @@ import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 import { resolveGoalZoneObject } from '../goals/GoalChecker.js';
-import { ROPE_TOO_SHORT, SEAT_TIED } from '../ui/ConnectFlow.js';
+import { ROPE_TOO_SHORT, SEAT_TIED, TIE_REFUSED } from '../ui/ConnectFlow.js';
 import { selectionHandleSet } from '../ui/selectionHandles.js';
 
 /**
@@ -504,7 +504,8 @@ class Renderer {
      * flight — the preview line to the cursor and the glow on in-reach
      * targets (glow = tieable, issue #54). A refused tie flashes its
      * seeking handle red plus a reason badge at the refused aim — "rope
-     * too short" (issue #54) or "seat already tied" (issue #85).
+     * too short" (issue #54), "seat already tied" (issue #85), or "tie
+     * refused" (the rope-side gate, issue #93).
      * Edit modes only (EDITING/SANDBOX): gates itself so PLAY
      * boards draw nothing.
      *
@@ -580,11 +581,13 @@ class Renderer {
         }
 
         // Refused-tie badge (ADR 0007 decision 4, issue #54; reason added
-        // by issue #85): "rope too short" or "seat already tied" marks the
-        // refused aim while the flash lives.
+        // by issue #85, the rope-side gate by issue #93): "rope too short",
+        // "seat already tied" or "tie refused" marks the refused aim while
+        // the flash lives.
         const refusal = this._connectFlow.refusal;
         if (refusal) {
-            const badge = refusal.reason === 'occupied' ? SEAT_TIED : ROPE_TOO_SHORT;
+            const badge = refusal.reason === 'occupied' ? SEAT_TIED
+                : refusal.reason === 'short' ? ROPE_TOO_SHORT : TIE_REFUSED;
             const half = refusal.reason === 'occupied' ? 60 : 52; // the seat text runs wider
             ctx.font = 'bold 12px sans-serif';
             ctx.textAlign = 'center';

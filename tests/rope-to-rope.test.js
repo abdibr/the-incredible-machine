@@ -45,6 +45,8 @@ import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
 import { objectRegistry } from '../js/objects/ObjectRegistry.js';
 import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import { serializePlacedBoard, restorePlacedFromSnapshot } from '../js/reset/levelReset.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const { Body } = Matter;
 
@@ -503,5 +505,144 @@ describe('Rope as a tie target (issue #57) — the snapshot seam', () => {
         expect(console.warn).toHaveBeenCalled(); // the refusal was told out loud
         ropeA.dispose();
         ropeB.dispose();
+    });
+});
+
+/**
+ * The bugfile tie repro — bug-20261114T021258Z-ufzs (issue #93).
+ *
+ * The reporter clicked to tie the two ropes; their download's board
+ * snapshot carries no rope-to-rope tie — the free rope (anchor seat → the
+ * balloon's knot, span re-laid across the pinned rope's chain) and the
+ * pinned rope (end seat → the bucket's rim) only rest against each other.
+ * A tie click in this exact configuration must make the knot REALIZE and
+ * SURVIVE the save/restore through the token seam — or the flow must paint
+ * why it can't. No silent refusal is acceptable between those two; the
+ * second test pins that the flow's last silent path (a rope-side
+ * `attachEndpoint` throw swallowed by the click loop) paints now.
+ *
+ * The board is the recording's own `boardSnapshot`, restored through the
+ * same placed-snapshot seam the sandbox rewind runs (restorePlacedFrom-
+ * Snapshot + the two-phase token bind), so every square the repro clicks
+ * is a square exactly where the reporter saw one.
+ */
+describe("The bugfile tie repro — bug-20261114T021258Z-ufzs (issue #93)", () => {
+    const UFZS_FIXTURE = fileURLToPath(new URL('./fixtures/bugfiles/bug-20261114T021258Z-ufzs.json', import.meta.url));
+
+    /** The recorded board: [pinned rope, bucket, balloon, free rope]. */
+    function recordedBoard() {
+        const file = JSON.parse(readFileSync(UFZS_FIXTURE, 'utf8'));
+        const placed = [];
+        restorePlacedFromSnapshot(placed, file.runs[0].boardSnapshot);
+        return placed;
+    }
+
+    it("the reporter's tie click ties the ropes — the knot realizes and survives the token seam", () => {
+        const board = recordedBoard();
+        const [pinnedRope, , balloon, freeRope] = board;
+        const flow = new ConnectFlow();
+        flow._mode = 'SANDBOX';
+
+        // The restored free chain rides its SAVED SPAN — the recorded lay
+        // (length 86.209 toward endPoint (120.55, 290.06)), not the
+        // straight-down hang the pre-fix restore spawned (the divergence
+        // verdict, ADR 0006 amendment): the tail sits half a pitch inboard
+        // of the saved endPoint, on the anchor→endPoint direction.
+        const savedEnd = freeRope.serialize().options.endPoint;
+        const tail = freeRope.bodies[freeRope.bodies.length - 1];
+        expect(tail.position.x).toBeLessThan(freeRope.bodies[0].position.x - 40); // lays leftward, not straight down
+        expect(Math.hypot(tail.position.x - savedEnd.x, tail.position.y - savedEnd.y)).toBeLessThan(8);
+
+        // The reporter's click, through the real flow: seek from the free
+        // rope's untied END seat square...
+        const freeEndSquare = freeRope.getTieSeats().find((s) => s.role === 'end').worldPoint;
+        expect(flow.handlePointerDown(freeEndSquare.x, freeEndSquare.y, board)).toBe(true);
+        expect(flow.seek).toEqual({ rope: freeRope, role: 'end' });
+
+        // ...then click the other rope's target square (the pinned rope's
+        // tail endpoint; click exactly on the square so the nearest-square
+        // tiebreak picks the rope, not the bucket rim 2.75px above it).
+        const ropeTarget = pinnedRope.getAttachmentWorldPoint('end');
+        flow.setPreview(ropeTarget.x, ropeTarget.y); // the end seek reels the tail to the aim
+        expect(flow.handlePointerDown(ropeTarget.x, ropeTarget.y, board)).toBe(true);
+        expect(flow.refusal).toBeNull(); // the tie landed — nothing was refused
+        expect(freeRope.getAttachmentRefs()).toEqual([
+            { seat: 'anchor', target: balloon, pointId: 'knot' },
+            { seat: 'end', target: pinnedRope, pointId: 'end' },
+        ]);
+        expect(pinnedRope.getAttachmentRefs().map((r) => r.pointId)).toEqual(['rim']); // the target side keeps its own knot
+
+        // The knot realizes: one step after play the zero-length link ties
+        // both tails — alongside the two knots the recorded board already
+        // carried (the free rope's balloon link and the pinned rope's rim link).
+        const physics = new PhysicsEngine(1000, 600);
+        engines.push(physics);
+        for (const obj of board) physics.addObject(obj);
+        physics.step(DT);
+        const links = physics.getAttachedConstraints();
+        expect(links).toHaveLength(3);
+        const knotLink = links.find((link) =>
+            (link.bodyA === tail || link.bodyB === tail)
+            && (link.bodyA === pinnedRope.bodies[pinnedRope.bodies.length - 1]
+                || link.bodyB === pinnedRope.bodies[pinnedRope.bodies.length - 1]));
+        expect(knotLink).toBeDefined(); // free tail ↔ pinned tail, length 0
+        expect(knotLink.length).toBe(0);
+
+        // ...and survives the token seam: the annotator carries the
+        // rope-to-rope token, the restore re-binds it, and the re-bound
+        // knot re-realizes through the reconcile's inbound pairs (#57).
+        const rows = serializePlacedBoard(board);
+        expect(rows[3].attachments).toContainEqual({
+            seat: 'end', targetType: 'rope', targetOrdinal: 0, pointId: 'end',
+        });
+        const restored = [];
+        restorePlacedFromSnapshot(restored, rows);
+        const [pinned2, , balloon2, free2] = restored;
+        expect(free2.getAttachmentRefs()).toEqual([
+            { seat: 'anchor', target: balloon2, pointId: 'knot' },
+            { seat: 'end', target: pinned2, pointId: 'end' },
+        ]);
+        const physics2 = new PhysicsEngine(1000, 600);
+        engines.push(physics2);
+        for (const obj of restored) physics2.addObject(obj);
+        physics2.step(DT);
+        const tail2 = free2.bodies[free2.bodies.length - 1];
+        const pinnedTail2 = pinned2.bodies[pinned2.bodies.length - 1];
+        expect(physics2.getAttachedConstraints().some((link) =>
+            (link.bodyA === tail2 && link.bodyB === pinnedTail2)
+            || (link.bodyA === pinnedTail2 && link.bodyB === tail2))).toBe(true);
+        for (const obj of board) obj.dispose();
+        for (const obj of restored) obj.dispose();
+    });
+
+    it('a tie the rope-side gates refuse paints instead of vanishing — no silent refusal (issue #93)', () => {
+        const board = recordedBoard();
+        const [pinnedRope, , , freeRope] = board;
+        const flow = new ConnectFlow();
+        flow._mode = 'SANDBOX';
+
+        // Seek from the free rope's untied END seat square.
+        const freeEndSquare = freeRope.getTieSeats().find((s) => s.role === 'end').worldPoint;
+        flow.handlePointerDown(freeEndSquare.x, freeEndSquare.y, board);
+        expect(flow.seek).toEqual({ rope: freeRope, role: 'end' });
+
+        // The rope-side seat gates can still refuse what the flow's aim
+        // checks enumerated (a race at the rope's own seam — the occupied
+        // and severed gates re-read inside attachEndpoint). Whatever the
+        // flow could not land, it must SAY: the refusal paints at the aim,
+        // the seek survives, and no knot appears — the click never
+        // vanishes silently (the reporter's case).
+        const throwRefusal = new Error('[Rope] attachEndpoint: the end seat already holds a knot — one knot per seat');
+        const attachSpy = vi.spyOn(freeRope, 'attachEndpoint').mockImplementation(() => {
+            throw throwRefusal;
+        });
+        const ropeTarget = pinnedRope.getAttachmentWorldPoint('end');
+        flow.setPreview(ropeTarget.x, ropeTarget.y);
+        expect(flow.handlePointerDown(ropeTarget.x, ropeTarget.y, board)).toBe(true);
+        expect(attachSpy).toHaveBeenCalled();
+        expect(flow.refusal).toMatchObject({ x: ropeTarget.x, y: ropeTarget.y, reason: 'refused' }); // the refused aim paints
+        expect(freeRope.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor']); // no knot landed
+        expect(flow.seek).toEqual({ rope: freeRope, role: 'end' }); // the seek survives a refused tie
+        for (const obj of board) obj.dispose();
     });
 });

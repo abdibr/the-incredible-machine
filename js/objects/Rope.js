@@ -1213,22 +1213,37 @@ export default class Rope extends BaseObject {
 
     /**
      * Give birth to the free chain from a tie (issue #55): the first tie on
-     * a bodyless bundle spawns the chain hanging straight down from the tie
-     * point at the rope's current length (the pinned default — a spawned
-     * free rope never gets hand-laid). The laying itself is the shared
-     * `_layChainFrom` both births use (same labels, radii, filters and
-     * constraint builder), so a spawned chain and a laid rope are
-     * indistinguishable downstream (knots, reach, snapshots), and so is an
-     * authored chain born at `addObject`. The engine's 'rope:chain-spawned'
-     * consumer (registration-guarded) owns the world add — addObject long
-     * ran for the bodyless rope and will not run again.
+     * a bodyless bundle spawns the chain from the tie point at the rope's
+     * current length. The laying itself is the shared `_layChainFrom` both
+     * births go through — `_spawnChain` (a tie births the chain) and
+     * `birthAuthoredChain` (an authored span births it at `addObject`) —
+     * so a spawned chain and a laid rope are indistinguishable downstream
+     * (knots, reach, snapshots), and so is an authored chain born at
+     * `addObject`. The engine's 'rope:chain-spawned' consumer (registration-
+     * guarded) owns the world add — addObject long ran for the bodyless
+     * rope and will not run again.
+     *
+     * The lay DIRECTION follows the span's own answer (issue #93, the
+     * bugfile's divergence verdict): a restored spawned row carries its
+     * recorded span as real state (`_authoredSpan` — FreeRope.deserialize
+     * rides the row's `spawned` veto), and the chain must re-derive from
+     * the row exactly as the live world held it, endPoint included — the
+     * fresh-coil straight-down birth teleported a restored lay across the
+     * board (bug-20261114T021258Z-ufzs: the recorded event-count vs 0). A
+     * fresh LIVE coil (no span of its own) keeps issue #55's documented
+     * straight-down birth; a collapsed bundle's nulled endPoint falls back
+     * to it through `_spanDirection()`.
+     *
      * @param {import('./BaseObject.js').default} target
      * @param {string} pointId
      * @private
      */
     _spawnChain(target, pointId) {
         const world = target.getAttachmentWorldPoint?.(pointId) ?? null;
-        this._layChainFrom(world?.x ?? this._x, world?.y ?? this._y);
+        const { x: ux, y: uy } = this._authoredSpan
+            ? this._spanDirection()
+            : { x: 0, y: 1 }; // a fresh coil hangs straight down (issue #55)
+        this._layChainFrom(world?.x ?? this._x, world?.y ?? this._y, ux, uy);
         eventBus.emit('rope:chain-spawned', { rope: this });
     }
 

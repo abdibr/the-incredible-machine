@@ -869,6 +869,33 @@ describe('Renderer draws the connect-flow squares (edit modes only)', () => {
         balloon.dispose();
     });
 
+    it('a rope-side refused tie paints a tie-refused badge instead of vanishing (issue #93)', () => {
+        const rope = new Rope(300, 100, { length: 40 });
+        const balloon = new Balloon(300, 118); // knot in reach (43.6px ≤ 50.7): the tie would land
+        const end = rope.bodies[rope.bodies.length - 1].position;
+        const knot = balloon.getAttachmentWorldPoint('knot');
+        flow.handlePointerDown(end.x, end.y, [rope]); // seek
+        // The rope's own seat gate refuses what the aim checks enumerated —
+        // the flow paints the refusal instead of swallowing the throw.
+        vi.spyOn(rope, 'attachEndpoint').mockImplementation(() => {
+            throw new Error('[Rope] attachEndpoint: the anchor seat already holds a knot — one knot per seat');
+        });
+        flow.handlePointerDown(knot.x, knot.y, [rope, balloon]);
+
+        const r = new Renderer();
+        r._mode = 'EDITING';
+        r.setConnectFlow(flow);
+        r.hoverPoint = null;
+        const ctx = makeDrawCtx();
+        r._drawConnectSquares(ctx, [rope, balloon]);
+
+        expect(ctx.fillText).toHaveBeenCalledWith('tie refused', knot.x, knot.y + 23);
+        expect(flow.refusal).toMatchObject({ x: knot.x, y: knot.y, reason: 'refused' });
+        expect(rope.getAttachmentRefs()).toEqual([]); // nothing landed
+        rope.dispose();
+        balloon.dispose();
+    });
+
     it('PLAY boards draw nothing — squares, preview and glow are edit-only', () => {
         const rope = new Rope(300, 100, { length: 40 });
         const end = rope.bodies[rope.bodies.length - 1].position;
