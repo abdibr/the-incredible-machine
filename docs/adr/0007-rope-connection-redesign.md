@@ -109,3 +109,55 @@ Deleted with the surface: `Rope.validSegment` (the −1…MAX_SEGMENTS−1 schem
 Consequences, accepted deliberately: boards and bug files saved before #90 lose their rope knots at load (warned per token, the rest of the board restores — re-tie and re-save); the bug-file download schema bumps to v3 (`js/recorder/schema.js`).
 
 Test surface at amendment time: `tests/rope-seats.test.js` (the three-seat answer), `tests/rope-ties.test.js` (the role gate, one knot per seat, realization), `tests/rope-seat-tokens.test.js` (role tokens; numeric/garbage refusals) and `tests/rope-seat-keeps.test.js` (roles keep themselves across re-counts) are the executable contract; the schema-following suites (`connect-flow`, `rope-span`, `pinned-rope-length`, `free-rope`, `rope-connector`, `connector-reset`, `recorder`) were rewritten to roles. Full suite: 58 files / 644 tests, all green.
+
+## Amendment (2026-11-13) — rope-to-rope knots (issue #57)
+
+Builds § decision 6's rope-to-rope half as its own ticket slice (the ticket's own
+acceptance criteria are the narrowing authority): **a rope's endpoint bodies are
+attachment points** — `Rope.attachmentPoints` answers `anchor` (the pinned nail, or
+a spawned free chain's moving knot) and `end` (the tail), offset 0, named by the
+seat roles the bodies bear, so a rope's endpoint squares are valid seek targets and
+clicking one from any rope's seeking square knots rope-to-rope through the same
+connect flow, the same reconcile and the same seated ordinal token bind. The mid
+seat stays seat-square-only (not a target) — the endpoint squares are the scope.
+A bodyless free bundle answers no points: its coil square remains a seek entry for
+its own ties (the bundle never accepts an incoming knot — no body to bear a link).
+
+Four policies ride along:
+
+- **The reconcile's desired set names its inbound pairs** (issue #57): each rope's
+  per-step desired set also includes the pairs other live ropes' knots tie into its
+  attachment points (`{its seat body, the bearer body here}`). Without it, the
+  stale-link scan that releases a rope's own former links would read an incoming
+  knot at one of its bodies as a stale link and kill it every step — the inbound
+  pair stands while the holder's ref lives (untie, dispose, engine removal and
+  severing all stop the counting at their own gates) and dies with it. Same
+  unordered pair either way, so whichever rope reconciles first realizes the link
+  once (the exists check) and the holder's untie is what drops it.
+- **A severed rope holds no knots from either side** (the pre-piece-severing
+  policy, made symmetric by the tie direction). `attachEndpoint` refuses a severed
+  rope-family target; the connect flow offers no target squares for one; the
+  reconcile prunes into-knots whose target is severed. The sever consumer
+  co-terminates the engine links; the prune kills the refs that would re-realize
+  them — nothing dangles. Rewinds do not resurrect a pruned knot (the same
+  accepted shape as the popped-balloon prune).
+- **Rope targets are exempt from the anchor-seat tie pull** — a rope endpoint is
+  structure, not a payload: no nail relocation, no whole-chain drag onto the pin.
+  The knot lands in place and settles the residual gap at play, the same policy as
+  immovable targets. The target side keeps the attachment-point rule — one point
+  serves every rope that ties it; one knot per seat stays the seeking rope's gate.
+- **The two-phase bind gained a retry** (`bindPlacedTokens` in
+  `js/reset/levelReset.js`, mirrored by the replay board builder): a token whose
+  target rope has laid no chain at bind time defers instead of dropping, because
+  the target free rope can birth its chain during its own anchor token's bind pass
+  (issue #55) a board position after the caller's. Passes repeat while tokens keep
+  landing (at most one pass per binder), then one strict pass drops leftovers with
+  warnings — nothing stays pending, nothing arrives silently. A plain
+  `bindAttachment(board)` call is strict exactly as before.
+
+Glossary terms: **Rope as a tie target**, **Severed-target refusal**,
+**Bind-order deferral**. Test surface at amendment time: `tests/rope-to-rope.test.js`
+(the offering, the click flow, the realization, the snapshot seam, the sever
+policy — 17 tests) is the executable contract; `tests/connect-flow.test.js` and
+`tests/rope-ties.test.js` follow the additive target-square reality. Full suite:
+59 files / 662 tests, all green.

@@ -355,25 +355,32 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         const rim = bucket.getAttachmentWorldPoint('rim');
 
         let targets = flow.getTieSquares([rope, balloon, bucket], { x: knot.x, y: knot.y });
-        expect(targets).toHaveLength(2); // balloon knot + bucket rim
-        expect(targets[0].visible).toBe(true); // hover shows the faint square
-        expect(targets[0].glows).toBe(false); // no seek in flight yet
+        // The rope's two endpoint squares joined the target list (issue
+        // #57); the balloon knot and the bucket rim are still there. Hover
+        // at the knot shows only that square of the rope's targets.
+        const targetsFor = (obj) => targets.filter((t) => t.target === obj);
+        expect(targetsFor(balloon)).toHaveLength(1);
+        expect(targetsFor(bucket)).toHaveLength(1);
+        expect(targetsFor(balloon)[0].visible).toBe(true); // hover shows the faint square
+        expect(targetsFor(balloon)[0].glows).toBe(false); // no seek in flight yet
+        expect(targetsFor(rope).every((t) => !t.visible)).toBe(true);
 
         const end = rope.bodies[rope.bodies.length - 1].position;
         flow.handlePointerDown(end.x, end.y, [rope]);
         targets = flow.getTieSquares([rope, balloon, bucket], null);
-        expect(targets).toHaveLength(2);
-        expect(targets[0].glows).toBe(true); // in reach: click one to tie
-        expect(targets[0].visible).toBe(true);
-        expect(targets[1].glows).toBe(false); // beyond reach: a tie click would refuse
-        expect(targets[1].visible).toBe(true); // still shown, faint, during the seek
+        // The seeking rope is never its own tie target.
+        expect(targetsFor(rope)).toHaveLength(0);
+        expect(targetsFor(balloon)[0].glows).toBe(true); // in reach: click one to tie
+        expect(targetsFor(balloon)[0].visible).toBe(true);
+        expect(targetsFor(bucket)[0].glows).toBe(false); // beyond reach: a tie click would refuse
+        expect(targetsFor(bucket)[0].visible).toBe(true); // still shown, faint, during the seek
 
         // The hand reels the rope out toward the rim: reach follows the
         // drag, and the far target becomes tieable mid-seek.
         flow.setPreview(rim.x, rim.y);
         targets = flow.getTieSquares([rope, balloon, bucket], null);
-        expect(targets[1].glows).toBe(true);
-        expect(targets[0].glows).toBe(true);
+        expect(targetsFor(bucket)[0].glows).toBe(true);
+        expect(targetsFor(balloon)[0].glows).toBe(true);
 
         flow.cancel();
         rope.dispose();
@@ -757,7 +764,12 @@ describe('Renderer draws the connect-flow squares (edit modes only)', () => {
         const visible = flow
             .getRopeSquares([rope, balloon], r.hoverPoint)
             .filter((s) => s.visible).length;
-        expect(ctx.fillRect).toHaveBeenCalledTimes(visible);
+        // The hovered rope end also paints its tie-target square (issue
+        // #57): target squares join the rope squares' paint count.
+        const visibleTargets = flow
+            .getTieSquares([rope, balloon], r.hoverPoint)
+            .filter((t) => t.visible).length;
+        expect(ctx.fillRect).toHaveBeenCalledTimes(visible + visibleTargets);
         expect(ctx.fillStyles).toContainEqual('rgba(184, 134, 11, 0.85)'); // tied gold
         rope.dispose();
         balloon.dispose();

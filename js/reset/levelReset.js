@@ -151,24 +151,60 @@ export function restorePlacedFromSnapshot(
     }
     placedObjects.push(...restored);
 
-    // Two-phase bind (issue 04): rope attachment tokens only resolve once
-    // every row has come back — they index the full snapshot order, and the
-    // rebuilt board (fixed from level JSON first, restored placed in
-    // snapshot order) mirrors it one-to-one. On any count disagreement the
-    // ordinals cannot be trusted: bind with no board so every token drops
-    // with a warning, instead of tying across a shifted layout.
+    // Two-phase bind (issue 04; the rope-to-rope retry passes since #57 —
+    // see bindPlacedTokens): rope attachment tokens resolve against the
+    // rebuilt board; on any count disagreement the ordinals cannot be
+    // trusted: bind with no board so every token drops with a warning,
+    // instead of tying across a shifted layout.
     const aligned = rows.length > 0 && placedObjects.length === rows.length;
     if (!aligned) {
         console.warn(
             `[App] Placed snapshot/board size mismatch (${rows.length} rows vs ${placedObjects.length} objects) — dropping attachment tokens.`
         );
     }
-    for (const obj of restored) {
-        if (typeof obj.bindAttachment === 'function') {
-            obj.bindAttachment(aligned ? placedObjects : null);
-        }
-    }
+    bindPlacedTokens(
+        restored,
+        aligned ? placedObjects : null,
+    );
     return restored;
+}
+
+/**
+ * Two-phase bind (issue 04): every token-bearing object resolves its
+ * pending tokens against `board`. Multi-pass since #57: a rope-to-rope
+ * token whose target rope has laid no chain yet is DEFERRED (Rope.bindAttachment)
+ * and retried — the target free rope births its chain during ITS own bind
+ * pass (the spawned bundle's anchor token, issue #55), so a token earlier
+ * in the board order binds on a retry rather than dropping. Each pass must
+ * land at least one token or the retries stop (a dependency chain of k
+ * spawned bundles takes at most k passes, k ≤ the binder count), and a
+ * final strict pass drops whatever still cannot resolve — warned, the
+ * same unresolvable-token honesty as any other token, with nothing left
+ * pending. A null board binds strictly exactly once (the unaligned-board
+ * path: nothing can resolve, so nothing defers).
+ *
+ * @param {import('../objects/BaseObject.js').default[]} bindable — the freshly
+ *   deserialized objects (bindAttachment's duck-checked owners ride it)
+ * @param {import('../objects/BaseObject.js').default[]|null} board — the
+ *   rebuilt board the ordinals index (null binds strictly, no board)
+ */
+export function bindPlacedTokens(bindable, board = null) {
+    const binders = (bindable ?? []).filter(
+        (obj) => typeof obj?.bindAttachment === 'function'
+    );
+    if (!board) {
+        for (const obj of binders) obj.bindAttachment(null);
+        return;
+    }
+    let bound = true;
+    for (let pass = 0; bound && pass < binders.length; pass++) {
+        bound = binders.some(
+            (obj) => obj.bindAttachment(board, { deferUnlaidRopeTargets: true })
+        );
+    }
+    // The strict close-out: everything still pending binds or drops with
+    // its warning — no token is left pending, deferral or not.
+    for (const obj of binders) obj.bindAttachment(board);
 }
 
 /**

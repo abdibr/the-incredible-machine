@@ -45,7 +45,7 @@
 
 import { eventBus } from '../EventBus.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
-import { isRopeFamily } from '../objects/Rope.js';
+import { isRopeFamily, isSeveredRope } from '../objects/Rope.js';
 
 /**
  * How close (px) a click must land to a square for the flow to consume it,
@@ -226,7 +226,16 @@ class ConnectFlow {
                     // evaluated on the pre-pull aim, unchanged.
                     // Free bundle (issue #55): no anchor body exists yet —
                     // skip the pull; the spawn hangs the chain from the aim.
-                    if (this._seek.role === 'anchor' && !target.target.isFixed && !this._seek.rope.isFreeBundle) {
+                    // Rope targets are exempt too (issue #57): a rope's
+                    // endpoint bodies are structure, not payloads — the
+                    // pull would relocate a pinned rope's nail or drag a
+                    // whole chain onto the pin. Rope-to-rope ties land in
+                    // place and settle the residual gap at play, the same
+                    // policy as immovable targets.
+                    if (this._seek.role === 'anchor'
+                        && !target.target.isFixed
+                        && !isRopeFamily(target.target)
+                        && !this._seek.rope.isFreeBundle) {
                         const anchor = this._seek.rope.bodies[0].position;
                         const dx = anchor.x - world.x;
                         const dy = anchor.y - world.y;
@@ -470,6 +479,12 @@ class ConnectFlow {
         const squares = [];
         for (const obj of objects ?? []) {
             if (seek && obj === seek.rope) continue;
+            // A severed rope is not a tie target (issue #57, the
+            // "a severed rope holds no knots" family truth): its endpoint
+            // bodies still answer attachment points, but its pieces are
+            // falling apart and it accepts no new ties from either side
+            // (attachEndpoint refuses, and the reconcile prunes).
+            if (isSeveredRope(obj)) continue;
             for (const point of obj.attachmentPoints ?? []) {
                 const world = obj.getAttachmentWorldPoint(point.id);
                 if (!world) continue;

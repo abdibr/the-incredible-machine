@@ -178,6 +178,20 @@ export function isRopeFamily(obj) {
 }
 
 /**
+ * Whether `obj` names a severed rope-family member (issue #57): the
+ * "a severed rope holds no knots" family truth as one predicate — the
+ * tie-side refusal (`attachEndpoint`), the reconcile prune, the bind
+ * deferral and the connect flow's target-square filter all ask this one
+ * fact instead of hand-rolled family+severed pairs. Safe on null and on
+ * shapeless board rows (non-parts, boundary walls).
+ * @param {{type?: string, isSevered?: boolean}|null|undefined} obj
+ * @returns {boolean}
+ */
+export function isSeveredRope(obj) {
+    return isRopeFamily(obj) && obj.isSevered === true;
+}
+
+/**
  * Where a tie seat sits as a fraction of the rope's span (issue #56, the
  * one spelling of the seat arithmetic; role-keyed since #90 — no seat
  * answers an index): the chain END seat covers (count − 0.5)/count — the
@@ -543,6 +557,43 @@ export default class Rope extends BaseObject {
         return seats;
     }
 
+    // ── Rope as a tie target (issue #57) ─────────────────────
+
+    /**
+     * The rope's endpoint bodies as attachment points (issue #57, the
+     * rope-as-tie-target half of ADR 0007 decision 6): a rope offers the
+     * bodies other ropes' knots tie INTO — the anchor body (the pinned
+     * nail, or a spawned free chain's moving knot) and the tail segment —
+     * named by the seat roles the body bears ('anchor', 'end'), offset 0
+     * (the body's center is the tie point: where a square draws and a
+     * knot link pins, length 0). The mid seat is deliberately not an
+     * attachment point: the acceptance scope is the endpoint squares.
+     *
+     * A bodyless free bundle answers none (its one coil square is a seek
+     * entry only — no body to bear a knot link, and the flow's bundle
+     * spawn is the bundle's own tie); a severed rope still answers —
+     * its chain bodies exist — and the ties-into-a-severed-rope refusal
+     * (`attachEndpoint`'s target gate) and the reconcile's prune hold the
+     * "a severed rope holds no knots" family truth from the tie side.
+     * A disposed rope answers nothing (parity with `bodies`).
+     *
+     * One knot per seat still governs the seeking rope; the TARGET side
+     * keeps the attachment-point rule — one point serves every rope that
+     * ties it (issue 04).
+     * @returns {Array<{id: 'anchor'|'end', body: Matter.Body, offset: {x: number, y: number}}>}
+     */
+    get attachmentPoints() {
+        const points = [];
+        if (this._anchor) {
+            points.push({ id: 'anchor', body: this._anchor, offset: { x: 0, y: 0 } });
+        }
+        const tail = this._segments[this._segments.length - 1];
+        if (tail) {
+            points.push({ id: 'end', body: tail, offset: { x: 0, y: 0 } });
+        }
+        return points;
+    }
+
     // ── Attachments (issue 04: rope as a connector) ────────
 
     /**
@@ -570,6 +621,15 @@ export default class Rope extends BaseObject {
         const known = target?.attachmentPoints?.some((p) => p.id === pointId);
         if (!known) {
             throw new Error(`[Rope] attachEndpoint: target ${target?.type ?? target} offers no attachment point "${pointId}"`);
+        }
+        // Rope-to-rope targets (issue #57): a severed rope holds no knots
+        // — the family truth, from the tie side. Its chain bodies still
+        // answer attachment points, but they are falling apart; the
+        // reconcile prunes any into-knots that predate the cut, so this
+        // refusal keeps new ones from ever landing (a restore token binds
+        // through here and drops with its warning, as any refused tie).
+        if (isSeveredRope(target)) {
+            throw new Error(`[Rope] attachEndpoint: the severed ${target.type} holds no knots — its chain is cut`);
         }
         // One knot per seat (issue #85): a seat that already holds a knot
         // refuses a second tie — no knot is created, nothing re-lays, no
@@ -750,15 +810,33 @@ export default class Rope extends BaseObject {
      * attachEndpoint: the anchor tie of a restored free bundle births the
      * chain, so the later mid/end names resolve against the birthed count
      * (rows save anchor-first). Unresolvable tokens are dropped with a
-     * warning; the pending list always ends empty. A severed rope binds
-     * nothing.
+     * warning; the pending list ends empty when this call binds strictly.
+     * A severed rope binds nothing.
+     *
+     * Issue #57 (the rope-to-rope bind-order seam): a token whose TARGET
+     * is a rope family member that has laid no chain yet is DEFERRED —
+     * kept in `_pendingAttachments` and retried at the next
+     * bindAttachment call — instead of dropping, when the caller allows
+     * deferrals (`deferUnlaidRopeTargets`). The target rope's chain can
+     * birth during ITS own bind pass (the spawned free rope's anchor
+     * token, issue #55), so a token processed earlier in the board order
+     * would otherwise drop on a chain that arrives a pass later. The
+     * caller drives the retry passes (levelReset.bindPlacedTokens); a
+     * plain call (no options) is strict and behaves exactly as before.
+     *
      * @param {import('./BaseObject.js').default[]|null} board
+     * @param {{deferUnlaidRopeTargets?: boolean}} [opts]
+     * @returns {boolean} whether this call BOUND at least one token (a
+     *   deferral neither binds nor drops — the retry-pass driver senses
+     *   progress through it)
      */
-    bindAttachment(board) {
-        const pending = this._pendingAttachments;
+    bindAttachment(board, opts = {}) {
+        const { deferUnlaidRopeTargets = false } = opts;
+        const pendingTokens = this._pendingAttachments;
         this._pendingAttachments = [];
-        if (this._severed) return;
-        for (const raw of pending) {
+        if (this._severed) return false;
+        let bound = false;
+        for (const raw of pendingTokens) {
             const token = this._migrateTieToken(raw);
             if (!token) continue;
             const target = board?.[token.targetOrdinal];
@@ -768,10 +846,23 @@ export default class Rope extends BaseObject {
             }
             try {
                 this.attachEndpoint(token.seat, target, token.pointId);
+                bound = true;
             } catch (e) {
+                // The rope-target deferral (issue #57): a target rope whose
+                // chain has not been laid YET still may — at its own bind
+                // pass (the spawned bundle births there, issue #55). A
+                // severed target is done laying forever and a non-rope
+                // target always has the bodies it will have: neither
+                // defers; the token drops with its warning as before.
+                if (deferUnlaidRopeTargets && isRopeFamily(target)
+                    && !isSeveredRope(target) && target.bodies.length === 0) {
+                    this._pendingAttachments.push(raw);
+                    continue;
+                }
                 console.warn(`[Rope] Dropping attachment token: ${e.message}`);
             }
         }
+        return bound;
     }
 
     /**
@@ -839,6 +930,16 @@ export default class Rope extends BaseObject {
      * issue #56 — joins the scan, so a knot untied last step releases its
      * former link on this one. A severed rope realizes nothing (its
      * payload links were already co-terminated by the sever consumer).
+     *
+     * The desired set also names the INBOUND pairs (issue #57, the
+     * rope-to-rope half): the pairs other live ropes' knots tie into this
+     * rope's attachment points. The scan would otherwise read such a pair
+     * as a stale link at this rope's own body (the bearer is one of mine;
+     * it is wanted by the other rope's ref, not mine) and kill it every
+     * step — the inbound pairs stand while the target ref lives, and die
+     * with it (the holder untied / disposed / removed from the engine,
+     * or severed: its reconcile realizes nothing, and its refs are the
+     * only thing keeping the pairs here).
      * @param {import('../engine/PhysicsEngine.js').PhysicsEngine} engine
      * @private
      */
@@ -857,6 +958,12 @@ export default class Rope extends BaseObject {
             && engine.getObjects().has(knot.target)
             && knot.target.bodies.some(Boolean)
             && knot.target.attachmentPoints.some((p) => p.id === knot.pointId)
+            // The severed-target prune (issue #57, the pre-piece-severing
+            // policy): a cut rope holds no knots from either side — the
+            // sever consumer co-terminates the engine links; this prunes
+            // the live refs that would otherwise re-realize them on the
+            // next step.
+            && !isSeveredRope(knot.target)
         );
         for (const knot of this._attachments) {
             const linkBody = this._tieBody(knot.seat);
@@ -868,6 +975,33 @@ export default class Rope extends BaseObject {
                 targetBody,
                 offset: { x: ap.offset.x, y: ap.offset.y },
             });
+        }
+
+        // The inbound pairs (issue #57): for every LIVE, REGISTERED rope
+        // (the getAttachmentRefs duck check — only the rope family walks
+        // knots) whose ref ties INTO one of this rope's attachment points,
+        // the pair (its seat body ↔ the bearer body here) is wanted by
+        // that ref. A severed holder counts for nothing (its reconcile
+        // realizes nothing); a holder removed from the engine stops
+        // counting at the registration gate, and a disposed holder's refs
+        // are already gone. Same unordered pair the out-knots use —
+        // whichever rope reconciles first realizes it once (the exists
+        // check), and the holder's untie is what drops it.
+        for (const obj of engine.getObjects()) {
+            if (obj === this || typeof obj.getAttachmentRefs !== 'function') continue;
+            if (obj.isSevered) continue;
+            for (const ref of obj.getAttachmentRefs()) {
+                if (ref.target !== this) continue;
+                const seatBody = obj.getTieSeats().find((s) => s.role === ref.seat)?.body ?? null;
+                const ap = this.attachmentPoints.find((p) => p.id === ref.pointId);
+                const bearer = ap?.body ?? null;
+                if (!seatBody || !bearer || !engine.getObjectForBody(seatBody)) continue;
+                desired.set(`${seatBody.id}|${bearer.id}`, {
+                    linkBody: seatBody,
+                    targetBody: bearer,
+                    offset: { x: ap.offset.x, y: ap.offset.y },
+                });
+            }
         }
 
         // Drop engine-attached links at this rope's endpoints that no longer
