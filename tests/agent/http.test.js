@@ -88,8 +88,15 @@ function runObservationProbe(target) {
                 reject(new Error(`observation probe failed (exit ${code}): ${err.slice(-200)}`));
                 return;
             }
+            // engine module noise may ride stdout ahead of the verdict -
+            // the verdict is the last JSON line
+            const verdictLine = out.split('\n').filter((line) => line.trimStart().startsWith('{')).pop();
+            if (verdictLine === undefined) {
+                reject(new Error(`observation probe printed no verdict: ${out.slice(0, 200)}`));
+                return;
+            }
             try {
-                resolve(JSON.parse(out));
+                resolve(JSON.parse(verdictLine));
             } catch {
                 reject(new Error(`observation probe printed no verdict: ${out.slice(0, 200)}`));
             }
