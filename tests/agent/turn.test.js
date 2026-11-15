@@ -232,4 +232,36 @@ describe('observationOptions - the ONE option composition both paths share (tick
             });
         }
     });
+
+    it('string flag values are typed once: the OFF spellings read OFF, every other string ON', async () => {
+        const turnMod = await import('../../agent/turn.js');
+        // a query string has no types: the pinned `?state=&graph=&key=`
+        // empty-string trio reads OFF, and so must the other raw falsy
+        // spellings '0' and 'false' - a `"grid": false` body and a
+        // `?grid=false` query must not disagree
+        expect(turnMod.observationOptions({ grid: '', key: 'false', state: '0' })).toStrictEqual({
+            cell: undefined,
+            grid: false,
+            key: false,
+            state: false,
+            graph: undefined,
+        });
+        // every other non-empty string reads ON, exactly as before
+        expect(turnMod.observationOptions({ grid: '1', key: 'true', state: 'yes', graph: 'any' })).toStrictEqual({
+            cell: undefined,
+            grid: true,
+            key: true,
+            state: true,
+            graph: true,
+        });
+        // non-strings pass through verbatim: real booleans, numbers - and
+        // the undefined that keeps the describeWorld default (ON)
+        expect(turnMod.observationOptions({ grid: false, key: true, state: 0, graph: undefined })).toStrictEqual({
+            cell: undefined,
+            grid: false,
+            key: true,
+            state: 0,
+            graph: undefined,
+        });
+    });
 });
