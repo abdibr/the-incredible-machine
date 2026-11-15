@@ -235,7 +235,7 @@ export async function runProtocol(config) {
             levelGoalLine = goalText(session.levelData);
             const run = await runDriver(driverConfig, session);
             const durationMs = Date.now() - runStart;
-            runs.push({
+            const record = {
                 level: levelId,
                 seed,
                 index: runs.length + 1,
@@ -247,7 +247,9 @@ export async function runProtocol(config) {
                 endBudget: session.budget(),
                 placements: withSlots(session.placements),
                 note: null,
-            });
+            };
+            record.diagnosis = analyzeRun(record, { hints: session.levelData?.hints });
+            runs.push(record);
             perRunDurations.push(`${levelId}/seed${seed}=${(durationMs / 1000).toFixed(1)}s`);
             session.dispose();
         }
@@ -293,4 +295,128 @@ export async function runProtocol(config) {
 /** Echo the provider base URL without secrets (there are none in a URL, but keep the shape stable). @private */
 function configuredBaseUrlEcho(baseUrl) {
     return baseUrl ?? '(sdk default - OpenAI; requires OPENAI_API_KEY)';
+}
+
+/** JSON with sorted keys - the stable representation for repetition keys and diagnosis echo. @private */
+function stableJson(value) {
+    if (Array.isArray(value)) return `[${value.map((v) => stableJson(v)).join(',')}]`;
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value)
+            .filter((k) => value[k] !== undefined)
+            .sort()
+            .map((k) => `${JSON.stringify(k)}:${stableJson(value[k])}`)
+            .join(',')}}`;
+    }
+    return String(JSON.stringify(value) ?? 'null');
+}
+
+/** Keep echoed argument blobs bounded. @private */
+function bounded(text, max = 160) {
+    return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+}
+
+/**
+ * Stuck-point analysis of ONE run record (the diagnosis obligation for
+ * unsolved runs, useful context for solved ones). Pure: derives ONLY from
+ * the recorded data (turn log, budgets, placements) plus the level hints -
+ * the observation/action gaps the acceptance criterion asks to be named:
+ *   - observation gap: the shipped hint the observation never shows
+ *   - rejected actions with their structured failure reasons
+ *   - repetition/dead-end loops in the model's tool-call stream
+ *   - silent trials (no causal feedback) + closest approach + unused budget
+ * Deterministic: same record -> same lines.
+ *
+ * @param {{ outcome: string, turns: number, turnLog: object[], endBudget: object,
+ *           placements: object[] }} record one runProtocol run record
+ * @param {{ hints?: string[], description?: string }} [levelData] the level document
+ * @returns {string[]} diagnosis lines
+ */
+export function analyzeRun(record, levelData = {}) {
+    if (record.outcome === 'goal-reached') {
+        return [`not stuck (solved after ${record.turns} turns)`];
+    }
+    const lines = [];
+    const calls = [];
+    const outputs = [];
+    for (const entry of record.turnLog ?? []) {
+        if (entry.note) lines.push(`turn ${entry.turn} note: ${entry.note}`);
+        for (const c of entry.calls ?? []) calls.push(c);
+        for (const o of entry.outputs ?? []) outputs.push(o);
+    }
+
+    // closest approach: the best any trial brought the target to the zone
+    const distances = outputs
+        .map((o) => o?.result?.distance)
+        .filter((d) => typeof d === 'number' && Number.isFinite(d));
+    const trialCount = calls.filter((c) => c.name === 'trial').length;
+    if (trialCount > 0) {
+        lines.push(
+            distances.length === 0
+                ? 'closest approach to the goal zone: none recorded (the target was never in any trial world)'
+                : `closest approach to the goal zone: ${Math.min(...distances).toFixed(1)} game units`,
+        );
+    }
+
+    // rejected actions: structured never-throw failures the model received back
+    const rejected = outputs.filter((o) => o?.result?.ok === false);
+    if (rejected.length > 0) {
+        lines.push(`rejected actions (${rejected.length}):`);
+        for (const r of rejected.slice(0, 8)) {
+            lines.push(`  - ${r.action ?? '(unknown action)'} -> ${bounded(String(r.result?.error ?? 'unknown error'))}`);
+        }
+        if (rejected.length > 8) lines.push(`  (+ ${rejected.length - 8} more rejections - see the transcript)`);
+    }
+
+    // the goal-failed reason, when the trial engine said why
+    const failureReasons = outputs.map((o) => o?.result?.failureReason).filter((v) => typeof v === 'string' && v);
+    if (failureReasons.length > 0) lines.push(`goal-failure reason (from the trial engine): ${failureReasons[0]}`);
+
+    // repetition: identical calls (same verb, same stabilized arguments) coming back >= 3 times
+    const counts = new Map();
+    for (const c of calls) {
+        const key = `${c.name} ${stableJson(c.args ?? {})}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const repeats = [...counts.entries()].filter(([, n]) => n >= 3);
+    if (repeats.length > 0) {
+        const shown = repeats.slice(0, 3).map(([key, n]) => `${bounded(key)} x${n}`);
+        lines.push(`repetition: ${shown.join('; ')}${repeats.length > 3 ? ` (+ ${repeats.length - 3} more repeated patterns)` : ''}`);
+    }
+
+    // trial-only streak: simulations without any placement change between them
+    const MUTATING = new Set(['place', 'remove', 'rotate', 'nudge', 'reset']);
+    let streak = 0;
+    let maxStreak = 0;
+    for (const c of calls) {
+        if (MUTATING.has(c.name)) streak = 0;
+        else if (c.name === 'trial') maxStreak = Math.max(maxStreak, ++streak);
+    }
+    if (maxStreak >= 3) lines.push(`longest trial-only streak: ${maxStreak} trials without a placement change`);
+
+    // silent trials: simulations that recorded ZERO events - no causal feedback at all
+    const trialOutputs = outputs.filter((o) => o?.action === 'trial' && o?.result?.outcome !== undefined);
+    const silent = trialOutputs.filter((o) => !Array.isArray(o.result.events) || o.result.events.length === 0).length;
+    if (trialCount > 0 && silent > 0) {
+        lines.push(`silent trials: ${silent} of ${trialCount} trials produced zero events (no causal feedback between placements)`);
+    }
+
+    // unused budget: what was never even attempted
+    const unused = Object.entries(record.endBudget ?? {}).filter(([, n]) => n > 0);
+    if (unused.length > 0) {
+        lines.push(`budget left unused: ${unused.map(([type, n]) => `${type} ${n}`).join(', ')}`);
+    }
+
+    // observation gap: the level ships a hint (and a description) the observation never shows
+    const hints = Array.isArray(levelData?.hints) ? levelData.hints : [];
+    if (hints.length > 0) {
+        lines.push(
+            `observation gap: the level ships a hint the observation never shows (describeWorld renders no hint ` +
+            `section) - ${JSON.stringify(hints[0])}`,
+        );
+    }
+
+    if (lines.length === 0) {
+        lines.push(`no observable stuck pattern (run ended as ${record.outcome} after ${record.turns} turns)`);
+    }
+    return lines;
 }

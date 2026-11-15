@@ -194,3 +194,58 @@ describe('runProtocol - the measurement over the stub provider', () => {
         },
     );
 });
+
+describe('runProtocol - the gate and the stuck-point diagnosis', () => {
+    it(
+        'gates on level-01: a model that jams EVERYWHERE fails the verdict, unsolved gate runs get diagnosed',
+        { timeout: 60000 },
+        async () => {
+            const { config } = await evalConfig(makeLevelSelectivePolicy([]), { seeds: '5' });
+
+            const result = await runProtocol(config);
+
+            expect(result.gate.passed).toBe(false);
+            expect(result.verdict).toBe('gate failed');
+            expect(result.gate.solvedOf).toBe(0);
+            expect(result.gate.runs).toBe(1);
+            // even the gate level carries a diagnosis when unsolved (repetition: observe-only)
+            const joined = result.levels[0].runs[0].diagnosis.join('\n');
+            expect(joined).toMatch(/repetition:/i);
+            expect(result.levels[0].solved).toBe(0);
+        },
+    );
+
+    it(
+        'level-01 solved but level-02/03 stuck: gate passes, every unsolved run is diagnosed with gaps named',
+        { timeout: 60000 },
+        async () => {
+            const { config } = await evalConfig(makeLevelSelectivePolicy(['level-01']), { seeds: '2,9' });
+
+            const result = await runProtocol(config);
+
+            expect(result.gate.passed).toBe(true);
+            expect(result.verdict).toBe('gate passed');
+            const l02 = result.levels.find((l) => l.level === 'level-02');
+            const l03 = result.levels.find((l) => l.level === 'level-03');
+            expect(l02.solved).toBe(0);
+            expect(l03.solved).toBe(0);
+            expect(l02.runs).toHaveLength(2);
+            for (const run of l02.runs) {
+                expect(run.outcome).toBe('turn-cap');
+                expect(run.diagnosis).toBeTruthy();
+                const joined = run.diagnosis.join('\n');
+                // the OBSERVATION gap: the shipped hint the model never sees...
+                expect(joined).toMatch(/observation gap: the level ships a hint the observation never shows/);
+                expect(joined).toContain('Place the trampoline');
+                // ...and the ACTION gap: observe-forever repetition (never building)
+                expect(joined).toMatch(/repetition: observe \{\} x/i);
+                // unused budget: what was never even attempted
+                expect(joined).toMatch(/budget left unused: ball 1, ramp 2, trampoline 1/);
+            }
+            // level-03's diagnosis names its own hint
+            expect(l03.runs[0].diagnosis.join('\n')).toContain('Line up the dominoes on the ramp');
+            // solved gate runs diagnose nothing stuck
+            expect(result.levels[0].runs[0].diagnosis[0]).toMatch(/not stuck \(solved after \d+ turns\)/);
+        },
+    );
+});
