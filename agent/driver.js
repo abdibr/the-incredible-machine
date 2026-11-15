@@ -8,9 +8,12 @@
  *   teach the observation contract (grid / legend / state table / relations
  *   / trial events) and tools map ONE-TO-ONE onto the phase-1 actions
  *   (place / remove / rotate / nudge / reset / trial) PLUS the observation
- *   entry point (observe). Every tool internally calls runTurn(actionJson,
- *   session) - the model never touches engine internals, driver.js never
- *   imports js/ modules (pinned by tests/agent/driver.test.js).
+ *   entry point (observe). Every tool reaches the game ONLY through the
+ *   turn-boundary transport: in-process runTurn(actionJson, session), or -
+ *   when TIM_AGENT_TURN_BASE_URL is configured - one POST /turn per tool
+ *   call to the turn service (ticket #49). The model never touches engine
+ *   internals, driver.js never imports js/ modules (pinned by
+ *   tests/agent/driver.test.js).
  *
  * THE LOOP (hard cap, deterministic):
  *   Each driver turn is one SDK run with maxTurns: 1 - exactly one model
@@ -43,17 +46,36 @@
  *                       .agent-transcripts/<level>-<timestamp>.txt, a
  *                       gitignored directory (see .gitignore) - transcripts
  *                       are session artifacts and are never committed.
- *   TIM_AGENT_SEED      flows through to AgentSession (ticket #46) untouched.
+ *   TIM_AGENT_SEED      flows through to AgentSession (ticket #46) untouched
+ *                       in host mode; in container mode the game lives in
+ *                       the container, so the seed rides the CONTAINER env
+ *                       (docker run -e TIM_AGENT_SEED=<seed>).
+ *   TIM_AGENT_TURN_BASE_URL  optional. THE host<->container switch (ticket
+ *                       #49) - distinct from TIM_AGENT_BASE_URL, which
+ *                       points at the MODEL provider; this one points at
+ *                       the GAME. Set = container mode: every tool turn
+ *                       POSTs { action, ..., level } to <base>/turn (the
+ *                       service scopes its session per request, which is
+ *                       how the level is selected against the service by
+ *                       config) and the driver needs no host session.
+ *                       Unset = host mode, byte-for-byte today's
+ *                       in-process runTurn. Never throws: network errors
+ *                       come back as structured turn results.
  *
  * TRANSCRIPT (printed in full to stdout AND written to the file): header
- * (level/model/base-URL/key-presence/cap/outcome/turns), then per turn the
+ * (level/model/provider base URL/key presence/turn service mode/cap/outcome/turns), then per turn the
  * observation excerpt the model decided on -> the exact tool call (JSON)
  * -> the structured result it got back, including the trial verdict row.
  *
- * USAGE:
+ * USAGE - HOST MODE (the world lives in this process; the default):
  *   node agent/driver.js --level level-01 --model <model> [--base-url <u>]
  *                        [--max-turns 20] [--transcript <path>]
- * All of the above also via the TIM_AGENT_* env vars (CLI wins).
+ * USAGE - CONTAINER MODE (the world lives behind the turn service; the
+ *         clean-state orchestration is scripts/e2e-demo.mjs):
+ *   node agent/driver.js --turn-base-url http://127.0.0.1:8787 \
+ *        --level level-01 --model <model> [--base-url <u>]
+ * All of the above also via the TIM_AGENT_* env vars (CLI wins). The two
+ * modes are one code path: TIM_AGENT_TURN_BASE_URL is the only switch.
  *
  * No markdown docs (the branch is markdown-free): THIS header is the doc,
  * and the stub-based integration tests are the executable spec.
@@ -94,6 +116,10 @@ const DEFAULT_MAX_TURNS = 20;
 const DEFAULT_LEVEL = 'level-01';
 const EXCERPT_HEAD_LINES = 12;
 const EXCERPT_EVENT_LINES = 8;
+/** Container-mode POST /turn cap per request (the service trial guard is 120 s; a
+ *  turn request may not out-wait it) - past it the turn answers with structured
+ *  unreachable data, never a hang. */
+const TURN_HTTP_TIMEOUT_MS = 120_000;
 
 const STALL_NUDGE =
     'No tool call happened. Respond with exactly ONE tool call (observe, place, rotate, nudge, remove, reset, ' +
@@ -274,15 +300,90 @@ function trialGuardError(args) {
 }
 
 /**
+ * Container-mode turn transport (ticket #49): every tool turn POSTs the
+ * action JSON to the turn service's /turn endpoint - the exact service the
+ * Docker image runs. The service answers the SAME { observation, result }
+ * envelope runTurn() answers in host mode, so the model sees one contract
+ * in both modes. config.level stamps EVERY payload (the service scopes its
+ * session per request) - that is how the level is selected against the
+ * service purely by configuration.
+ *
+ * NEVER THROWS: a refused connection, a timeout, a non-JSON envelope all
+ * come back as the structured { observation, result } data the model is
+ * taught to read (parent design rule: HTTP error cases follow the same
+ * shape as the never-throw actions).
+ * @param {string} turnBaseUrl from TIM_AGENT_TURN_BASE_URL / --turn-base-url
+ * @param {string} level the driver's configured level id
+ */
+function createHttpTurnTransport(turnBaseUrl, level) {
+    const endpoint = `${turnBaseUrl.replace(/\/+$/, '')}/turn`;
+    return {
+        async turn(actionJson) {
+            const payload = { ...actionJson, level };
+            try {
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal: AbortSignal.timeout(TURN_HTTP_TIMEOUT_MS),
+                });
+                let body = null;
+                try { body = await res.json(); } catch { /* non-JSON -> structured data below */ }
+                if (!body || typeof body !== 'object' || body.result === undefined) {
+                    return {
+                        observation: '(no observation: the turn service answered outside the turn envelope)',
+                        result: {
+                            ok: false,
+                            error: `turn service envelope unreadable (HTTP ${res.status}) at ${endpoint}`,
+                        },
+                    };
+                }
+                return {
+                    observation: String(body.observation ?? '(no observation in the turn service response)'),
+                    result: body.result,
+                };
+            } catch (err) {
+                const timedOut = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+                const detail = err?.cause?.code ?? err?.cause?.message ?? err?.message ?? String(err);
+                return {
+                    observation: '(no observation: the turn service is unreachable)',
+                    result: {
+                        ok: false,
+                        error: `turn service unreachable at ${endpoint}: ` +
+                            (timedOut ? `no answer within ${TURN_HTTP_TIMEOUT_MS} ms (${detail})` : detail),
+                    },
+                };
+            }
+        },
+    };
+}
+
+/**
+ * The transport seam behind TIM_AGENT_TURN_BASE_URL: unset -> in-process
+ * runTurn (host mode, byte-for-byte today's behavior); set -> HTTP turns
+ * against the service (container mode). The tools never know which one
+ * they are on.
+ * @param {{ turnBaseUrl?: string }} config
+ * @param {import('./session.js').AgentSession|null} session host-mode world owner (ignored in container mode)
+ * @returns {{ turn(actionJson: object): Promise<{ observation: string, result: object }> }}
+ */
+function createTurnTransport(config, session) {
+    if (config.turnBaseUrl) return createHttpTurnTransport(config.turnBaseUrl, config.level);
+    return {
+        turn: (actionJson) => runTurn(actionJson, session),
+    };
+}
+
+/**
  * The seven tools: one per phase-1 action + the observation entry point,
  * each calling runTurn() - THE only path from the model into the game.
  * Plain JSON-schema parameters (strict:false): arguments are parsed but
  * NOT pre-validated here - agent/actions.js owns validation and answers
  * with its structured never-throw results, which is the contract the model
  * is taught (and the tests pin).
- * @param {import('./session.js').AgentSession} session
+ * @param {{ turn(actionJson: object): Promise<{ observation: string, result: object }> }} transport
  */
-function createDriverTools(session) {
+function createDriverTools(transport) {
     const observe = { action: 'observe' };
     return [
         tool({
@@ -295,9 +396,9 @@ function createDriverTools(session) {
                 additionalProperties: true,
             },
             strict: false,
-            execute: (input) => {
+            execute: async (input) => {
                 const args = asArgs(input);
-                return toolOutput(observe, runTurn({ ...observe, cell: args.cell }, session));
+                return toolOutput(observe, await transport.turn({ ...observe, cell: args.cell }));
             },
         }),
         tool({
@@ -315,10 +416,10 @@ function createDriverTools(session) {
                 additionalProperties: true,
             },
             strict: false,
-            execute: (input) => {
+            execute: async (input) => {
                 const args = asArgs(input);
                 const actionJson = { action: 'place', type: args.type, x: args.x, y: args.y, angle: args.angle };
-                return toolOutput(actionJson, runTurn(actionJson, session));
+                return toolOutput(actionJson, await transport.turn(actionJson));
             },
         }),
         tool({
@@ -334,10 +435,10 @@ function createDriverTools(session) {
                 additionalProperties: true,
             },
             strict: false,
-            execute: (input) => {
+            execute: async (input) => {
                 const args = asArgs(input);
                 const actionJson = { action: 'remove', type: args.type, slot: args.slot };
-                return toolOutput(actionJson, runTurn(actionJson, session));
+                return toolOutput(actionJson, await transport.turn(actionJson));
             },
         }),
         tool({
@@ -354,10 +455,10 @@ function createDriverTools(session) {
                 additionalProperties: true,
             },
             strict: false,
-            execute: (input) => {
+            execute: async (input) => {
                 const args = asArgs(input);
                 const actionJson = { action: 'rotate', type: args.type, radians: args.radians, slot: args.slot };
-                return toolOutput(actionJson, runTurn(actionJson, session));
+                return toolOutput(actionJson, await transport.turn(actionJson));
             },
         }),
         tool({
@@ -375,10 +476,10 @@ function createDriverTools(session) {
                 additionalProperties: true,
             },
             strict: false,
-            execute: (input) => {
+            execute: async (input) => {
                 const args = asArgs(input);
                 const actionJson = { action: 'nudge', type: args.type, dx: args.dx, dy: args.dy, slot: args.slot };
-                return toolOutput(actionJson, runTurn(actionJson, session));
+                return toolOutput(actionJson, await transport.turn(actionJson));
             },
         }),
         tool({
@@ -386,7 +487,7 @@ function createDriverTools(session) {
             description: 'Wipe all YOUR placements back to the bare level (fixed objects stay).',
             parameters: { type: 'object', properties: {}, required: [], additionalProperties: true },
             strict: false,
-            execute: () => toolOutput({ action: 'reset' }, runTurn({ action: 'reset' }, session)),
+            execute: async () => toolOutput({ action: 'reset' }, await transport.turn({ action: 'reset' })),
         }),
         tool({
             name: 'trial',
@@ -401,15 +502,15 @@ function createDriverTools(session) {
                 additionalProperties: true,
             },
             strict: false,
-            execute: (input) => {
+            execute: async (input) => {
                 const args = asArgs(input);
                 const guard = trialGuardError(args);
                 if (guard) {
-                    const readBack = runTurn({ ...observe }, session);
+                    const readBack = await transport.turn({ ...observe });
                     return JSON.stringify({ action: 'trial', result: { ok: false, error: guard }, observation: readBack.observation });
                 }
                 const actionJson = { action: 'trial', seconds: args.seconds, dt: args.dt };
-                return toolOutput(actionJson, runTurn(actionJson, session));
+                return toolOutput(actionJson, await transport.turn(actionJson));
             },
         }),
     ];
@@ -488,22 +589,26 @@ export async function runDriver(config, session) {
     if (!config?.model) {
         throw new TypeError('runDriver(config, session): config needs a model - use resolveDriverConfig() first');
     }
-    if (!session?.levelData) {
-        throw new TypeError('runDriver(config, session): an AgentSession with a loaded level is required');
+    if (!config.turnBaseUrl && !session?.levelData) {
+        throw new TypeError(
+            'runDriver(config, session): an AgentSession with a loaded level is required ' +
+            `(in host mode, i.e. ${DRIVER_ENV.TURN_BASE_URL} unset - set it to drive a turn service instead)`,
+        );
     }
 
     setTracingDisabled(true);
+    const transport = createTurnTransport(config, session);
     const provider = buildModelProvider(config);
     const runner = new Runner({ modelProvider: provider });
     const agent = new Agent({
         name: 'tim-driver',
         instructions: INSTRUCTIONS,
-        tools: createDriverTools(session),
+        tools: createDriverTools(transport),
         model: config.model,
     });
 
     // Observation #0 also goes through the turn boundary - same as the tools.
-    const opening = runTurn({ action: 'observe' }, session);
+    const opening = await transport.turn({ action: 'observe' });
     const goalLine = String(opening.observation ?? '').split('\n')[0];
     let currentObservation = opening.observation;
     let history = [
@@ -561,6 +666,7 @@ export async function runDriver(config, session) {
         `level: ${config.level}`,
         `model: ${config.model}`,
         `provider base URL: ${config.baseUrl ?? '(SDK default - OpenAI; requires OPENAI_API_KEY)'}`,
+        `turn service: ${config.turnBaseUrl ?? '(host mode - in-process runTurn)'}`,
         `api key: ${config.apiKey ? 'set (value withheld)' : 'unset - fine for local/alternative providers'}`,
         `turn cap: ${config.maxTurns}`,
         `outcome: ${outcome}`,
@@ -590,14 +696,16 @@ export async function main(argv = process.argv.slice(2)) {
         process.exitCode = 2;
         return;
     }
-    const session = new AgentSession();
+    // Container mode (TIM_AGENT_TURN_BASE_URL set) needs no host world: the
+    // turn service owns the level - selected by config on every turn POST.
+    const session = config.turnBaseUrl ? null : new AgentSession();
     try {
-        await session.loadLevel(config.level);
+        if (session) await session.loadLevel(config.level);
         const res = await runDriver(config, session);
         console.log(res.transcript);
         process.exitCode = res.outcome === 'goal-reached' ? 0 : 1;
     } finally {
-        session.dispose();
+        session?.dispose();
     }
 }
 
