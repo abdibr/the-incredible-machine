@@ -240,4 +240,49 @@ describe('driver turn transport - TIM_AGENT_TURN_BASE_URL routes every tool turn
         expect(config.turnBaseUrl).toBeUndefined();
         await expect(runDriver(config, null)).rejects.toThrow(/loaded level/);
     });
+
+    it(
+        'every phase-1 verb travels /turn as the EXACT action JSON, one POST per driver turn (ticket #94)',
+        { timeout: 90000 },
+        async () => {
+            const service = await startCountingTurnService();
+            // A model persona exercising ALL SIX action verbs in order, one tool call per
+            // driver turn - the shapes the per-verb definitions build, including the
+            // defaults the model may omit (angle, dt) and the slot it may pass.
+            const moves = [
+                { name: 'place', args: { type: 'ball', x: 260, y: 40 } },
+                { name: 'rotate', args: { type: 'ball', radians: 0.25, slot: 0 } },
+                { name: 'nudge', args: { type: 'ball', dx: 1, dy: 2, slot: 0 } },
+                { name: 'remove', args: { type: 'ball', slot: 0 } },
+                { name: 'reset', args: {} },
+                { name: 'trial', args: { seconds: 5 } },
+            ];
+            let step = 0;
+            const { errors, config } = await containerFixture(
+                () => {
+                    // one tool call per driver turn, in the six-verb order above; when the run
+                    // ends cleanly the loop is already at the cap, so the fallback text is dead code.
+                    const move = step < moves.length ? moves[step++] : null;
+                    return move ? { calls: [move] } : { text: 'done.' };
+                },
+                service.url,
+                { argv: ['--max-turns', String(moves.length)] },
+            );
+            expect(errors).toEqual([]);
+
+            await runDriver(config, null); // no session: the world lives behind HTTP only
+
+            // post[0] is the opening observe; then ONE POST per verb carrying the
+            // exact phase-1 action JSON each verb definition builds, config.level stamped on.
+            expect(service.posts.map((p) => p.actionJson)).toEqual([
+                { action: 'observe', level: 'level-01' },
+                { action: 'place', type: 'ball', x: 260, y: 40, level: 'level-01' },
+                { action: 'rotate', type: 'ball', radians: 0.25, slot: 0, level: 'level-01' },
+                { action: 'nudge', type: 'ball', dx: 1, dy: 2, slot: 0, level: 'level-01' },
+                { action: 'remove', type: 'ball', slot: 0, level: 'level-01' },
+                { action: 'reset', level: 'level-01' },
+                { action: 'trial', seconds: 5, level: 'level-01' },
+            ]);
+        },
+    );
 });
