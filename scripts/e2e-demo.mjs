@@ -64,13 +64,11 @@
  *   node scripts/e2e-demo.mjs --keep     leave the container up for manual curl
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
-
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+import { REPO_ROOT, demoFail, docker, dockerQuiet, waitForHealth } from './lib/docker-demo-common.mjs';
 const IMAGE = process.env.TIM_E2E_IMAGE ?? 'tim-turn-service';
 const CONTAINER = process.env.TIM_E2E_CONTAINER ?? 'tim-e2e-llm';
 const CONTAINER_PORT = 8787;
@@ -84,48 +82,15 @@ const TRANSCRIPT =
     process.env.TIM_AGENT_TRANSCRIPT ??
     join(REPO_ROOT, '.agent-transcripts', `e2e-${LEVEL}-${stamp}.txt`);
 
-function docker(args, { capture = false } = {}) {
-    if (capture) {
-        const r = execFileSync('docker', args, { encoding: 'utf8' });
-        return r.replace(/\r?\n+$/, '');
-    }
-    const r = spawnSync('docker', args, { stdio: 'inherit' });
-    if (r.error) throw r.error;
-    if (r.status !== 0) throw new Error(`docker ${args.join(' ')} exited ${r.status}`);
-    return null;
-}
-
-function dockerQuiet(args) {
-    try {
-        execFileSync('docker', args, { stdio: 'ignore' });
-    } catch {
-        // best-effort cleanup - a missing container/image is not an error
-    }
-}
 
 /** Stop hard with a reason; the demo leaves the machine cleaner than it found it. */
 function fail(reason) {
-    console.error(`[e2e] FAIL: ${reason}`);
-    if (!KEEP) dockerQuiet(['rm', '-f', CONTAINER]);
-    process.exit(1);
+    demoFail({ prefix: '[e2e]', container: CONTAINER, keep: KEEP }, reason);
 }
 
-/** Wait until GET /health answers {"ok":true} (published port serving), ~60s budget. */
-async function health() {
-    const deadline = Date.now() + 60_000;
-    for (;;) {
-        try {
-            const res = await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(2000) });
-            if (res.ok) {
-                const body = await res.json();
-                if (body.ok === true) return body;
-            }
-        } catch {
-            // connection refused - container still booting; keep polling
-        }
-        if (Date.now() > deadline) fail('service never became healthy on the published port within 60s');
-        await new Promise((r) => setTimeout(r, 300));
-    }
+/** Wait until GET /health answers {"ok":true} (published port serving) - the shared poll. */
+function health() {
+    return waitForHealth(BASE_URL, fail);
 }
 
 async function main() {

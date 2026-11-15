@@ -65,12 +65,8 @@
  * Overrides: TIM_DEMO_PORT (host port in step 3, default 8787).
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+import { REPO_ROOT, demoFail, docker, dockerQuiet, waitForHealth } from './lib/docker-demo-common.mjs';
 const IMAGE = 'tim-turn-service';
 const CONTAINER = 'tim-turn-demo';
 const CONTAINER_PORT = 8787;
@@ -101,24 +97,6 @@ const AUDIT_JS = [
     "console.log('AUDIT OK: /app='+top+'; zero *.md anywhere; node_modules=matter-js only (one runtime dep, no browser/graphics)')",
 ].join(';');
 
-function docker(args, { capture = false } = {}) {
-    if (capture) {
-        const r = execFileSync('docker', args, { encoding: 'utf8' });
-        return r.replace(/\r?\n+$/, '');
-    }
-    const r = spawnSync('docker', args, { stdio: 'inherit' });
-    if (r.error) throw r.error;
-    if (r.status !== 0) throw new Error(`docker ${args.join(' ')} exited ${r.status}`);
-    return null;
-}
-
-function dockerQuiet(args) {
-    try {
-        execFileSync('docker', args, { stdio: 'ignore' });
-    } catch {
-        // best-effort cleanup - a missing container/image is not an error
-    }
-}
 
 async function main() {
     console.log(`[demo] 1. build: docker build -t ${IMAGE} <repo root>`);
@@ -171,22 +149,9 @@ async function main() {
     console.log(`[demo] PASS: built ${IMAGE}, audited it production-only, published the port, and beat level-01 through the container with place + trial only.`);
 }
 
-/** Wait until /health answers {ok:true} (published port serving), ~60s budget. */
-async function health() {
-    const deadline = Date.now() + 60_000;
-    for (;;) {
-        try {
-            const res = await fetch(`${BASE_URL}/health`, { signal: AbortSignal.timeout(2000) });
-            if (res.ok) {
-                const body = await res.json();
-                if (body.ok === true) return true;
-            }
-        } catch {
-            // connection refused - container still booting; keep polling
-        }
-        if (Date.now() > deadline) fail('service never became healthy on the published port within 60s');
-        await new Promise((r) => setTimeout(r, 300));
-    }
+/** Wait until /health answers {ok:true} (published port serving) - the shared poll. */
+function health() {
+    return waitForHealth(BASE_URL, fail);
 }
 
 /** POST /turn one action JSON; returns { status, body }. */
@@ -209,9 +174,7 @@ function excerpt(text, lines, tail = false) {
 
 /** Stop hard with a reason and a clean container state. */
 function fail(reason) {
-    console.error(`[demo] FAIL: ${reason}`);
-    if (!KEEP) dockerQuiet(['rm', '-f', CONTAINER]);
-    process.exit(1);
+    demoFail({ prefix: '[demo]', container: CONTAINER, keep: KEEP }, reason);
 }
 
 main().catch((e) => {
