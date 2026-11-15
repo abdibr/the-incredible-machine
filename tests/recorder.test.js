@@ -357,3 +357,78 @@ describe('Balloon bobPhase serialization (ADR 0006 decision 5)', () => {
         expect(Number.isFinite(b.serialize().options.bobPhase)).toBe(true);
     });
 });
+// ─────────────────────────────────────────────────────────────────────
+// part 5 — rope-family knot narration (C1, issue #75)
+//
+// The bug-file narrator gates on capability (offers attachment refs), not
+// a type roster: every rope-family part narrates by the same rule — knots
+// for tied ropes, a well-formed empty list for knotless ropes and free
+// bundles. The first two tests pin the incident this fixed (the free
+// rope's knots were absent from bug-file build rows, bug-20261024T134016Z-96df);
+// the rest pin the laid rope's unchanged narration and the exported run's
+// annotator tokens.
+
+/**
+ * Real-tie idiom (the connect-flow tests'): build the parts, tie through
+ * the public attachment API against a real balloon, then observe what the
+ * recorder exports — no engine, knots are live rope-side refs and
+ * narration is serialization-only.
+ */
+describe('SessionRecorder rope-family knot narration (C1, issue #75)', () => {
+    it('a tied free rope narrates its knot into the bug-file build rows', () => {
+        const balloon = new Balloon(220, 140);
+        const rope = objectRegistry.create('free-rope', 220, 200, { length: 60 });
+        rope.attachEndpoint('anchor', balloon, 'knot'); // first tie spawns the chain
+        const recorder = makeRecorder({ board: [balloon, rope] });
+        recorder.startSession();
+        eventBus.emit('object:placed', { type: 'free-rope', id: rope.id, object: rope });
+        const row = recorder.toJSON().build.find((r) => r.topic === 'object:placed');
+        expect(row.data.snapshot.attachments).toEqual([
+            { seat: 'anchor', target: `balloon#${balloon.id}`, pointId: 'knot' },
+        ]);
+        recorder.dispose();
+    });
+
+    it('an untied free bundle narrates with a well-formed empty knot list', () => {
+        const rope = objectRegistry.create('free-rope', 220, 200, { length: 60 });
+        const recorder = makeRecorder({ board: [rope] });
+        recorder.startSession();
+        eventBus.emit('object:placed', { type: 'free-rope', id: rope.id, object: rope });
+        const snapshot = recorder.toJSON().build.find((r) => r.topic === 'object:placed').data.snapshot;
+        expect(snapshot.attachments).toEqual([]);
+        recorder.dispose();
+    });
+
+    it('the laid rope narrates unchanged: tied knot in, knotless as an empty list', () => {
+        const balloon = new Balloon(220, 140);
+        const tied = objectRegistry.create('rope', 220, 200, { length: 60 });
+        tied.attachEndpoint('end', balloon, 'knot');
+        const knotless = objectRegistry.create('rope', 320, 200, { length: 60 });
+        const recorder = makeRecorder({ board: [balloon, tied, knotless] });
+        recorder.startSession();
+        eventBus.emit('object:placed', { type: 'rope', id: tied.id, object: tied });
+        eventBus.emit('object:placed', { type: 'rope', id: knotless.id, object: knotless });
+        const placed = recorder.toJSON().build.filter((r) => r.topic === 'object:placed');
+        expect(placed).toHaveLength(2);
+        expect(placed[0].data.snapshot.attachments).toEqual([
+            { seat: 'end', target: `balloon#${balloon.id}`, pointId: 'knot' },
+        ]);
+        expect(placed[1].data.snapshot.attachments).toEqual([]);
+        recorder.dispose();
+    });
+
+    it('the exported run annotates the tied free rope with full ordinal tokens', () => {
+        const balloon = new Balloon(220, 140);
+        const rope = objectRegistry.create('free-rope', 220, 200, { length: 60 });
+        rope.attachEndpoint('anchor', balloon, 'knot');
+        const recorder = makeRecorder({ board: [balloon, rope] });
+        recorder.startSession();
+        eventBus.emit('loop:play', { elapsed: 0 });
+        eventBus.emit('loop:frame', { dt: 16.667, elapsed: 16.667 });
+        const ropeRow = recorder.openRun.boardSnapshot.find((r) => r.type === 'free-rope');
+        expect(ropeRow.attachments).toEqual([
+            { seat: 'anchor', targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' },
+        ]);
+        recorder.dispose();
+    });
+});

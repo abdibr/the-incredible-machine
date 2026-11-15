@@ -22,6 +22,7 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { registerAllObjects } from '../objects/registerAllObjects.js';
 import { PhysicsEngine } from '../engine/PhysicsEngine.js';
 import { GoalChecker } from '../goals/GoalChecker.js';
+import { bindPlacedTokens } from '../reset/levelReset.js';
 import { SessionRecorder } from './SessionRecorder.js';
 import { REPLAYABLE_TOPICS } from './schema.js';
 
@@ -88,9 +89,11 @@ export function replayRun(file, runIndex, { untilTick = Infinity } = {}) {
     if (!aligned) {
         console.warn(`[Replay] board/row mismatch (${board.length} vs ${run.boardSnapshot?.length ?? 0}) — unbinding attachment tokens`);
     }
-    for (const obj of board) {
-        if (typeof obj.bindAttachment === 'function') obj.bindAttachment(aligned ? board : null);
-    }
+    // The same two-phase bind restorePlacedFromSnapshot runs — retry
+    // passes included (issue #57): a rope-to-rope token earlier in the
+    // board order than its spawned free-rope target defers until that
+    // target's own bind pass spawns its chain.
+    bindPlacedTokens(board, aligned ? board : null);
     for (const obj of board) engine.addObject(obj);
 
     // A recorded goal needs a checker on the bus (the AgentSession pattern).

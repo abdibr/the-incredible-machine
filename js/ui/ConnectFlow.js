@@ -6,20 +6,33 @@
  * when relevant. DragDropManager delegates pointer events here; the renderer
  * draws whatever this flow reports (squares, seek preview, glow).
  *
- * Flow: clicking a free rope endpoint square enters a seek — the preview
- * line follows the cursor and target squares within the rope's reach glow.
- * A seek at the FREE end reels the rope to the cursor (Rope.relayFreeEnd —
+ * Flow: clicking a free rope tie square enters a seek — the preview
+ * line follows the cursor and target squares within the seeking seat's
+ * reach glow (reach follows the seat, issue #86: the end seat's reach is
+ * the chain capacity, the anchor seat keeps it too, a mid seat's is its
+ * own covering circle). A seek at the FREE end reels the rope to the
+ * cursor (Rope.relayFreeEnd —
  * the hand sets the length while the rope is untied; the tie square rides
  * the cursor, so a further tie click lands inside the seeking square's own
  * hit radius and wins the seat over the re-click cancel). The anchored
- * start is pinned: an endpoint-0 seek only aims. Clicking an in-reach
- * target creates the knot (engine link realized lazily on the next physics
+ * seat is pinned: an anchor seek (role 'anchor', issue #90 — the seat is
+ * a role and nothing else) only aims. Clicking an
+ * in-reach target creates the knot (engine link realized lazily on the
+ * next physics
  * step, the issue 04 seam) and freezes the length; a tie click beyond the
- * rope's reach is REFUSED (ADR 0007 decision 4, issue #54): no knot, the
+ * seeking seat's reach is REFUSED (ADR 0007 decision 4, issue #54, per
+ * seat since #86): no knot, the
  * seek survives, and the refusal paints for REFUSAL_FLASH_MS — the handle
- * flashes red, a "rope too short" badge marks the refused aim. Esc or
- * re-clicking the seeking square cancels; clicking an already-tied square
- * unties one knot (the target stays, the rope side frees).
+ * flashes red, a reason badge marks the refused aim ("rope too short";
+ * "seat already tied" since #85). The slack band past a seat's circle
+ * (the aim tolerance) still reaches — the tie it allows grows the span
+ * just enough to cover the knot. Esc or re-clicking the seeking square
+ * cancels; clicking an already-tied square unties one knot (the target
+ * stays, the rope side frees). One knot per seat (issue #85): the squares
+ * are the rope's three named tie seats (issue #84) — anchor, mid, end —
+ * plus a bodyless bundle's single coil square, and a tie aim into a seat
+ * that already holds its knot refuses before any pull, so a click-tied
+ * rope holds at most three knots, one per seat.
  *
  * Edit-only (ADR 0007 decision 9): squares, preview and seek exist only in
  * EDITING/SANDBOX. Any stage change cancels an in-flight seek cleanly — a
@@ -32,6 +45,7 @@
 
 import { eventBus } from '../EventBus.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
+import { isRopeFamily, isSeveredRope } from '../objects/Rope.js';
 
 /**
  * How close (px) a click must land to a square for the flow to consume it,
@@ -61,15 +75,20 @@ export const REACH_AIM_TOLERANCE = 14;
  */
 export const REFUSAL_FLASH_MS = 600;
 
-/** The refused-tie badge text (ADR 0007 decision 4, issue #54). */
+/** The refused-tie badge texts (ADR 0007 decision 4, issue #54; the seat
+ * reason is #85's one-knot-per-seat refusal). */
 export const ROPE_TOO_SHORT = 'rope too short';
+export const SEAT_TIED = 'seat already tied';
+/** A rope-side seat-gate refusal (issue #93): the tie throw that must not
+ * vanish silently — the flow paints this badge at the refused aim. */
+export const TIE_REFUSED = 'tie refused';
 
 class ConnectFlow {
     constructor() {
         /** Current application mode — updated via init()'s mode:changed bus. */
         this._mode = 'MENU';
 
-        /** @type {{rope: import('../objects/Rope.js').default, endpoint: number}|null} */
+        /** @type {{rope: import('../objects/Rope.js').default, role: string}|null} */
         this._seek = null;
 
         /** @type {{x: number, y: number}|null} cursor canvas position while seeking */
@@ -116,7 +135,7 @@ class ConnectFlow {
         return this._mode === 'EDITING' || this._mode === 'SANDBOX';
     }
 
-    /** @returns {{rope: import('../objects/Rope.js').default, endpoint: number}|null} */
+    /** @returns {{rope: import('../objects/Rope.js').default, role: string}|null} */
     get seek() {
         return this._seek;
     }
@@ -160,15 +179,39 @@ class ConnectFlow {
             // click wins the seat over the re-click cancel.
             const target = this._tieTargetAt(x, y, objects);
             if (target) {
+                // One knot per seat (issue #85): a tie aim into a seat that
+                // already holds a knot refuses before reach or any pull —
+                // no knot is created, the seek stays alive, and the
+                // "seat already tied" flash marks the refused aim. This is
+                // the armed free-rope seek's second-tie click (the free
+                // family's seek stays armed after a tie, ADR 0007
+                // amendment 3): the rope's own seat gate would refuse it
+                // with a throw (Rope.attachEndpoint), the flow adds the
+                // feedback so the refusal explains itself.
+                if (this._seek.rope.getAttachmentRefs().some((ref) => ref.seat === this._seek.role)) {
+                    this._refuse(x, y, 'occupied');
+                    return true;
+                }
                 const world = target.target.getAttachmentWorldPoint(target.pointId);
-                // Fixed-length reach (ADR 0007 decision 4, issue #54): a
-                // tie beyond the rope's reach is REFUSED — no knot, the
-                // seek stays alive, and the refusal feedback paints (red
-                // handle flash + "rope too short" badge) until it expires.
-                // Free bundle (issue #55): a bodyless coil has no reach
-                // circle — its first tie is unconditional; the chain spawns
-                // hanging from exactly the point that was clicked.
-                if (world && (this._seek.rope.isFreeBundle || this._seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE))) {
+                // Fixed-length reach (ADR 0007 decision 4, issue #54), now
+                // following the seat (issue #86): a tie beyond the seeking
+                // seat's own reach is REFUSED — no knot, the seek stays
+                // alive, and the refusal feedback paints (red handle flash
+                // + "rope too short" badge) until it expires. A chain seat
+                // measures its own covering circle (the end seat's is the
+                // chain capacity, so its number answers exactly as before;
+                // the anchor seat keeps the whole-rope capacity circle — its
+                // knot consumes no chain and realizes at the anchor itself);
+                // the slack band past a seat's circle (the aim tolerance)
+                // still reaches, and the tie it allows grows the span just
+                // enough to cover the knot (Rope.attachEndpoint's per-seat
+                // covering grow). Free rope (issue #55 spawn, #56 span):
+                // isPointWithinReach answers true for the whole free family
+                // — a bodyless coil has no reach circle, and a spawned free
+                // rope keeps it that way: no length property of its own, so
+                // every tie (first or later, any distance) ties and re-lays
+                // the chain to span the demand instead of refusing.
+                if (world && this._seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE, this._seek.role)) {
                     // A fixed-end tie realizes as a length-0 pin between
                     // the rope's anchor and the tied attachment point (the
                     // zero-length engine link of ADR 0007 decision 6,
@@ -186,7 +229,16 @@ class ConnectFlow {
                     // evaluated on the pre-pull aim, unchanged.
                     // Free bundle (issue #55): no anchor body exists yet —
                     // skip the pull; the spawn hangs the chain from the aim.
-                    if (this._seek.endpoint === 0 && !target.target.isFixed && !this._seek.rope.isFreeBundle) {
+                    // Rope targets are exempt too (issue #57): a rope's
+                    // endpoint bodies are structure, not payloads — the
+                    // pull would relocate a pinned rope's nail or drag a
+                    // whole chain onto the pin. Rope-to-rope ties land in
+                    // place and settle the residual gap at play, the same
+                    // policy as immovable targets.
+                    if (this._seek.role === 'anchor'
+                        && !target.target.isFixed
+                        && !isRopeFamily(target.target)
+                        && !this._seek.rope.isFreeBundle) {
                         const anchor = this._seek.rope.bodies[0].position;
                         const dx = anchor.x - world.x;
                         const dy = anchor.y - world.y;
@@ -205,23 +257,38 @@ class ConnectFlow {
                         }
                         pulled.setPosition(px, py);
                     }
+                    // Capture the seek BEFORE the tie: a free rope's tie
+                    // keeps the flow armed on this same rope (issue #56).
+                    const rope = this._seek.rope;
                     try {
-                        this._seek.rope.attachEndpoint(this._seek.endpoint, target.target, target.pointId);
+                        this._seek.rope.attachEndpoint(this._seek.role, target.target, target.pointId);
                     } catch (e) {
-                        // The reach was just verified and the target is
-                        // enumerated from the live board — a throw here is a
-                        // safety net only, but it must not crash the app
-                        // mid-seek: keep the seek alive.
+                        // No tie click may vanish silently (issue #93, the
+                        // bugfile's tie repro): whatever refused at the
+                        // rope's own seam — a seat gate the aim checks could
+                        // not see — paints its refusal at the aim, the same
+                        // feedback path as the reach and occupied refusals;
+                        // the seek stays alive.
                         console.warn(`[ConnectFlow] Tie refused: ${e.message}`);
+                        this._refuse(x, y, 'refused');
                         return true;
                     }
-                    this.cancel(); // the tie ends the seek at a settled state
+                    // Tie exit per family (issue #56): a pinned rope's first
+                    // knot closes the seek at a settled state; a free rope's
+                    // tie keeps the seek — its span is the aim's property,
+                    // every later target ties as far as anything on the
+                    // board, so the flow stays armed for the next tie. The
+                    // seek's seat is a ROLE (issue #90): it needs no
+                    // re-resolution when a tie-grow re-counts the chain
+                    // — the role names the seat wherever the live count
+                    // puts it (issue #87's keeps, kept by the roles).
+                    if (!rope.isFree) this.cancel(); // the tie ends the seek at a settled state
                     return true;
                 }
                 this._refuse(x, y);
                 return true;
             }
-            const spot = this._endpointBody(this._seek.rope, this._seek.endpoint);
+            const spot = this._seekBody(this._seek.rope, this._seek.role);
             if (spot && Math.hypot(x - spot.position.x, y - spot.position.y) <= CONNECT_HIT_RADIUS) {
                 this.cancel(); // re-clicking the seeking square cancels
                 return true;
@@ -230,14 +297,14 @@ class ConnectFlow {
             return true;
         }
 
-        const square = this._endpointSquareAt(x, y, objects);
+        const square = this._ropeSquareAt(x, y, objects);
         if (!square) return false;
         if (square.knots.length > 0) {
             this._untie(square, x, y);
             return true;
         }
         this._refusal = null; // a fresh seek sweeps any stale flash
-        this._seek = { rope: square.rope, endpoint: square.endpoint };
+        this._seek = { rope: square.rope, role: square.role };
         this._preview = { x, y };
         return true;
     }
@@ -247,18 +314,22 @@ class ConnectFlow {
      * target). ADR 0007 decision 4 (issue #54): a seek at the FREE end
      * reels the rope to the cursor — the hand sets the length while the
      * rope is untied, and rope.relayFreeEnd clamps the demand (minimum
-     * span; the frozen reach circle once a tie exists). Endpoint-1 seeks
-     * exist only on knot-free ends (a tied square click unties instead of
-     * seeking); the anchored start is pinned — endpoint-0 seeks aim
-     * without re-laying.
+     * span; the frozen reach circle once a tie exists). The END seat's
+     * seek is the only one that reels (a tied square click unties instead
+     * of seeking); the anchor and the mid seat (issue #56) aim without
+     * re-laying.
      */
     setPreview(x, y) {
         if (!this._seek) return;
         this._preview = { x, y };
         const rope = this._seek.rope;
-        if (this._seek.endpoint === 1
-            && rope.getAttachmentRefs().every((ref) => ref.endpoint !== 1)) {
+        if (this._seek.role === 'end'
+            && rope.getAttachmentRefs().every((ref) => ref.seat !== 'end')) {
             rope.relayFreeEnd(x, y);
+            // The reel re-derives the chain's count from the grown span
+            // (segmentsForSpan — ADR 0007 decision 3, issue #56): with the
+            // seat a ROLE (issue #90) the seek needs no re-resolve — 'end'
+            // IS the rebuilt chain's tail, whatever index it now has.
         }
     }
 
@@ -270,23 +341,28 @@ class ConnectFlow {
     }
 
     /**
-     * Record a refused tie: the click aimed beyond the rope's reach, so no
-     * knot is created and the seek survives; the handle flashes red and
-     * the "rope too short" badge paints at the refused aim until the flash
-     * expires (ADR 0007 decision 4, issue #54).
+     * Record a refused tie: the click aimed somewhere the rope cannot tie —
+     * beyond its reach (ADR 0007 decision 4, issue #54), into a seat that
+     * already holds a knot (issue #85), or a refusal the rope's own seat
+     * gates raised at the tie call (issue #93 — a throw the flow must paint,
+     * never swallow) — so no knot is created and the seek survives; the
+     * handle flashes red and a reason badge paints at the refused aim until
+     * the flash expires ("rope too short", "seat already tied", or
+     * "tie refused" for the rope-side gate).
      * @param {number} x - refused aim x
      * @param {number} y - refused aim y
+     * @param {'short'|'occupied'|'refused'} [reason='short'] - why the tie refused
      * @private
      */
-    _refuse(x, y) {
-        this._refusal = { x, y, until: performance.now() + REFUSAL_FLASH_MS };
+    _refuse(x, y, reason = 'short') {
+        this._refusal = { x, y, until: performance.now() + REFUSAL_FLASH_MS, reason };
     }
 
-    /** The Matter body a rope endpoint ties through (0 = anchor, 1 = free end). */
-    _endpointBody(rope, endpoint) {
-        const bodies = rope?.bodies;
-        if (!bodies || !bodies[0]) return null;
-        return endpoint === 0 ? bodies[0] : bodies[bodies.length - 1];
+    /** The Matter body a rope tie seat ties through — the seat role's own
+     * body, from the rope's own seat answer (a bodyless bundle's coil seat
+     * answers no body, so its seek never mis-aims at a world body). */
+    _seekBody(rope, role) {
+        return rope?.getTieSeats().find((s) => s.role === role)?.body ?? null;
     }
 
     /**
@@ -304,22 +380,23 @@ class ConnectFlow {
     }
 
     /**
-     * The nearest rope endpoint square within the hit radius, or null —
+     * The nearest rope tie square within the hit radius, or null —
      * what a click hit-tests against (severed and disposed ropes expose
-     * nothing; a square carries the knots sharing its endpoint so the click
-     * router can tell a seek entry (free) from an untie (tied)).
+     * nothing; a square carries the knots holding its seat's ROLE (issue
+     * #90) so the click router can tell a seek entry (free) from an untie
+     * (tied)).
      * @private
      */
-    _endpointSquareAt(x, y, objects) {
-        const best = this._nearestSquare(this.getEndpointSquares(objects, null), x, y);
+    _ropeSquareAt(x, y, objects) {
+        const best = this._nearestSquare(this.getRopeSquares(objects, null), x, y);
         return best
-            ? { rope: best.square.rope, endpoint: best.square.endpoint, dist: best.dist, knots: best.square.knots }
+            ? { rope: best.square.rope, role: best.square.role, dist: best.dist, knots: best.square.knots }
             : null;
     }
 
     /**
      * The nearest square of a flow square list within the hit radius, or
-     * null — the one shared scan behind the endpoint-square and tie-target
+     * null — the one shared scan behind the rope-square and tie-target
      * click hit tests (clicks and pixels draw from the same square lists).
      * @param {Array<{x: number, y: number}>} squares
      * @param {number} x - click canvas x
@@ -338,64 +415,51 @@ class ConnectFlow {
     }
 
     /**
-     * Every rope endpoint square, with the visibility flags the renderer
-     * draws from: a tied square is persistent machine structure, a seeking
-     * square holds its seat (and flashes red while its last tie click was
-     * refused, issue #54), a free square is hover-revealed.
+     * Every rope tie square — the rope's TIE SEATS rendered (issue #85),
+     * with the visibility flags the renderer draws from: a tied square is
+     * persistent machine structure, a seeking square holds its seat (and
+     * flashes red while its last tie click was refused, issue #54), a free
+     * square is hover-revealed. The squares answer exactly the seats the
+     * rope names through getTieSeats() (issue #84) — anchor, mid and end on
+     * a laid rope, however long the span (never one per chain body); the
+     * single coil square of a bodyless free bundle — its one tie seat, the
+     * anchor tie that births the chain (issue #55); nothing for a disposed
+     * rope. A square carries the knots holding its seat (a seat ROLE is the
+     * knot's own address, issue #90) so the click router can tell a seek
+     * entry (free) from an untie (tied). Severed ropes expose nothing.
+     * Geometry source for clicks AND pixels (render/Renderer.js), one
+     * source of truth.
      * @param {import('../objects/BaseObject.js').default[]} objects — the live board
      * @param {{x: number, y: number}|null} hover — cursor canvas position or null
-     * @returns {Array<{rope: import('../objects/Rope.js').default, endpoint: number, x: number, y: number, knots: object[], tied: boolean, seeking: boolean, hovered: boolean, visible: boolean}>}
+     * @returns {Array<{rope: import('../objects/Rope.js').default, role: string, bodyIndex: number, x: number, y: number, knots: object[], tied: boolean, seeking: boolean, hovered: boolean, visible: boolean}>}
      */
-    getEndpointSquares(objects, hover) {
+    getRopeSquares(objects, hover) {
         const squares = [];
         const refusal = this.refusal; // the most recent refused tie, while it paints
         for (const rope of objects ?? []) {
-            if ((rope.type !== 'rope' && rope.type !== 'free-rope') || rope.isSevered) continue;
+            // Family membership is the rope module's fact (C1, issue #75).
+            if (!isRopeFamily(rope) || rope.isSevered) continue;
 
-            // Bodyless free bundle (issue #55): both endpoints sit at the
-            // coil — one square each, tied=false, so the seek/tie UX matches
-            // a fresh laid rope's free squares exactly (a free square is
-            // hover-revealed). There is no body to hang these squares on:
-            // _endpointBody would return null for a bundle.
-            if (rope.type === 'free-rope' && rope.isFreeBundle) {
-                for (const endpoint of [0, 1]) {
-                    const knots = rope.getAttachmentRefs()
-                        .filter((ref) => ref.endpoint === endpoint);
-                    const seeking = !!this._seek
-                        && this._seek.rope === rope && this._seek.endpoint === endpoint;
-                    const hovered = hover
-                        ? Math.hypot(hover.x - rope.x, hover.y - rope.y) <= CONNECT_HIT_RADIUS
-                        : false;
-                    squares.push({
-                        rope, endpoint,
-                        x: rope.x, y: rope.y,
-                        knots,
-                        tied: false,
-                        seeking,
-                        hovered,
-                        refused: !!refusal && seeking,
-                        visible: seeking || hovered,
-                    });
-                }
-                continue;
-            }
-
-            const bodies = rope.bodies;
-            if (!bodies || !bodies[0]) continue; // disposed rope
-            for (const endpoint of [0, 1]) {
-                const body = endpoint === 0 ? bodies[0] : bodies[bodies.length - 1];
-                const x = body.position.x;
-                const y = body.position.y;
+            // One square per tie seat (issue #85): the seats follow the live
+            // structure — a bundle answers its coil seat (no body: the
+            // bodies-list index reads −1), a laid rope its anchor/mid/end,
+            // a disposed rope nothing (parity with `bodies`).
+            const bodies = rope.bodies; // null-safe: a disposed rope reads empty
+            for (const seat of rope.getTieSeats()) {
+                const x = seat.worldPoint.x;
+                const y = seat.worldPoint.y;
                 const knots = rope.getAttachmentRefs()
-                    .filter((ref) => ref.endpoint === endpoint);
+                    .filter((ref) => ref.seat === seat.role);
                 const tied = knots.length > 0;
                 const seeking = !!this._seek
-                    && this._seek.rope === rope && this._seek.endpoint === endpoint;
+                    && this._seek.rope === rope && this._seek.role === seat.role;
                 const hovered = hover
                     ? Math.hypot(hover.x - x, hover.y - y) <= CONNECT_HIT_RADIUS
                     : false;
                 squares.push({
-                    rope, endpoint, x, y, knots, tied, seeking, hovered,
+                    rope, role: seat.role,
+                    bodyIndex: bodies.indexOf(seat.body),
+                    x, y, knots, tied, seeking, hovered,
                     refused: !!refusal && seeking, // the refused handle flashes red
                     visible: tied || seeking || hovered,
                 });
@@ -406,13 +470,14 @@ class ConnectFlow {
 
     /**
      * Every attachment-point square on the board: during a seek the ones
-     * within the seeking rope's reach glow (glow = tieable, ADR 0007
-     * decision 4, issue #54 — the same isPointWithinReach predicate the tie
-     * click accepts, with the click's aim tolerance); outside a seek, hover
-     * shows the faint square. Out-of-reach targets stay visible while
-     * seeking but faint — clicking them is refused with feedback. Dead
-     * targets (popped, disposed) resolve no world point and drop out; the
-     * seeking rope never offers itself a target.
+     * within the seeking seat's reach glow (glow = tieable, ADR 0007
+     * decision 4, issue #54, per seat since #86 — the same predicate the
+     * tie click accepts, passed the seek's seat, with the click's aim
+     * tolerance); outside a seek, hover shows the faint square.
+     * Out-of-reach targets stay visible while seeking but faint — clicking
+     * them is refused with feedback. Dead targets (popped, disposed)
+     * resolve no world point and drop out; the seeking rope never offers
+     * itself a target.
      * @param {import('../objects/BaseObject.js').default[]} objects — the live board
      * @param {{x: number, y: number}|null} hover — cursor canvas position or null
      * @returns {Array<{target: import('../objects/BaseObject.js').default, pointId: string, x: number, y: number, glows: boolean, hovered: boolean, visible: boolean}>}
@@ -422,6 +487,12 @@ class ConnectFlow {
         const squares = [];
         for (const obj of objects ?? []) {
             if (seek && obj === seek.rope) continue;
+            // A severed rope is not a tie target (issue #57, the
+            // "a severed rope holds no knots" family truth): its endpoint
+            // bodies still answer attachment points, but its pieces are
+            // falling apart and it accepts no new ties from either side
+            // (attachEndpoint refuses, and the reconcile prunes).
+            if (isSeveredRope(obj)) continue;
             for (const point of obj.attachmentPoints ?? []) {
                 const world = obj.getAttachmentWorldPoint(point.id);
                 if (!world) continue;
@@ -431,8 +502,7 @@ class ConnectFlow {
                 squares.push({
                     target: obj, pointId: point.id, x: world.x, y: world.y,
                     glows: !!seek
-                        && (seek.rope.isFreeBundle
-                            || seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE)),
+                        && seek.rope.isPointWithinReach(world.x, world.y, REACH_AIM_TOLERANCE, seek.role),
                     hovered,
                     visible: !!seek || hovered,
                 });
@@ -442,10 +512,14 @@ class ConnectFlow {
     }
 
     /**
-     * Untie one knot of a tied square: the knot whose target sits nearest the
-     * click wins (ties broken by knot order — the oldest first); dead targets
-     * (no world point) untie first, priming them for reconcile-pruning. The
-     * remaining knots — and the target's attachment point — stay.
+     * Untie the knot of a tied square — exactly that seat's knot (issue
+     * #85: one knot per seat, so the square's knot list holds one). The
+     * nearest-victim tiebreak below only ever fires on the degenerate square
+     * an older multi-knot seat could still report: the knot whose target
+     * sits nearest the click wins (ties broken by knot order — the oldest
+     * first); dead targets (no world point) untie first, priming them for
+     * reconcile-pruning. The remaining knots — and the target's attachment
+     * point — stay.
      * @private
      */
     _untie(square, x, y) {
@@ -455,7 +529,7 @@ class ConnectFlow {
             const dist = world ? Math.hypot(x - world.x, y - world.y) : -1;
             if (!victim || dist < victim.dist) victim = { knot, dist };
         }
-        square.rope.detachEndpoint(square.endpoint, victim.knot.target, victim.knot.pointId);
+        square.rope.detachEndpoint(square.role, victim.knot.target, victim.knot.pointId);
     }
 }
 

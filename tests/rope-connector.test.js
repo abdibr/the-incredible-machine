@@ -61,7 +61,7 @@ describe('Rope as connector (issue 04)', () => {
         const data = {
             type: 'rope', x: 200, y: 100, angle: 0, isFixed: false,
             options: { length: 100, severed: true },
-            attachments: [{ endpoint: 1, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' }],
+            attachments: [{ segment: 5, targetType: 'balloon', targetOrdinal: 0, pointId: 'knot' }],
         };
         const rope = Rope.deserialize(data);
         const balloon = new Balloon(400, 300);
@@ -77,7 +77,7 @@ describe('Rope as connector (issue 04)', () => {
         const balloon = new Balloon(400, 220);
         physics.addObject(rope);
         physics.addObject(balloon);
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint('end', balloon, 'knot');
         for (let i = 0; i < 10; i++) physics.step(16.67); // realize the link, let it strain
         expect(physics.getAttachedConstraints()).toHaveLength(1);
 
@@ -99,8 +99,9 @@ describe('Rope as connector (issue 04)', () => {
     it('validates attachEndpoint calls', () => {
         const rope = new Rope(200, 100);
         const balloon = new Balloon(400, 300);
-        expect(() => rope.attachEndpoint(2, balloon, 'knot')).toThrow();
-        expect(() => rope.attachEndpoint(0, balloon, 'no-such-point')).toThrow();
+        expect(() => rope.attachEndpoint(6, balloon, 'knot')).toThrow(); // a number is no seat role
+        expect(() => rope.attachEndpoint('x', balloon, 'knot')).toThrow();
+        expect(() => rope.attachEndpoint('anchor', balloon, 'no-such-point')).toThrow();
         expect(rope.getAttachmentRefs()).toEqual([]);
     });
 
@@ -111,7 +112,7 @@ describe('Rope as connector (issue 04)', () => {
         physics.addObject(rope);
         physics.addObject(balloon);
 
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint('end', balloon, 'knot');
         physics.step(16.67);
 
         const link = physics.getAttachedConstraints()[0];
@@ -133,13 +134,13 @@ describe('Rope as connector (issue 04)', () => {
         const balloon = new Balloon(300, 300);
         physics.addObject(rope);
         physics.addObject(balloon);
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint('end', balloon, 'knot');
         for (let i = 0; i < 10; i++) physics.step(16.67);
         expect(physics.getAttachedConstraints()).toHaveLength(1);
         physics.dispose();
     });
 
-    it('ties several knots to one endpoint and one point to several ropes', () => {
+    it('refuses a second knot on an occupied seat, while one point still serves several ropes', () => {
         const physics = new PhysicsEngine(800, 600);
         const rope = new Rope(200, 100);
         const rope2 = new Rope(260, 100);
@@ -150,16 +151,22 @@ describe('Rope as connector (issue 04)', () => {
         physics.addObject(balloon);
         physics.addObject(fixedBucket);
 
-        rope.attachEndpoint(1, balloon, 'knot');
-        rope.attachEndpoint(1, fixedBucket, 'rim'); // two knots on one endpoint
-        rope2.attachEndpoint(1, fixedBucket, 'rim'); // same point, another rope
+        // The end-seat tie sits past its cover (246.8px vs 91.7): the
+        // covering grow re-counts 6 → 7 and the knot rides onto the new
+        // tail (seat 6, issue #87 — one covering rule, issue #89).
+        rope.attachEndpoint('end', balloon, 'knot');
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['end']);
+        expect(() => rope.attachEndpoint('end', fixedBucket, 'rim')).toThrow(); // one knot per seat (issue #85)
+        rope2.attachEndpoint('end', fixedBucket, 'rim'); // same point, another rope
         for (let i = 0; i < 10; i++) physics.step(16.67);
 
-        // 3 links: rope-last↔balloon, rope-last↔bucket-floor, rope2-last↔bucket-floor
+        // 2 links: rope-last↔balloon, rope2-last↔bucket-floor — a rope seat
+        // holds one knot, but an attachment point still serves every rope
+        // that ties it.
         const links = physics.getAttachedConstraints();
-        expect(links).toHaveLength(3);
+        expect(links).toHaveLength(2);
         const floorLinks = links.filter((l) => l.bodyB === fixedBucket.bodies[2]);
-        expect(floorLinks).toHaveLength(2);
+        expect(floorLinks).toHaveLength(1);
         physics.dispose();
     });
 
@@ -169,7 +176,7 @@ describe('Rope as connector (issue 04)', () => {
         const balloon = new Balloon(300, 300);
         physics.addObject(rope);
         physics.addObject(balloon);
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint('end', balloon, 'knot');
         physics.step(16.67);
         expect(physics.getAttachedConstraints()).toHaveLength(1);
 
@@ -187,7 +194,7 @@ describe('Rope as connector (issue 04)', () => {
         const balloon = new Balloon(300, 300);
         physics.addObject(rope);
         physics.addObject(balloon);
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint('end', balloon, 'knot');
         physics.step(16.67);
         expect(physics.getAttachedConstraints()).toHaveLength(1);
 
@@ -210,7 +217,7 @@ describe('Rope as connector (issue 04)', () => {
         const convergeSpy = vi.fn();
         eventBus.on('rope:chain-converge', convergeSpy);
 
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint('end', balloon, 'knot');
         physics.step(16.67); // realize + capture the link
         physics.takeSnapshot(); // intact rope, payload link attached
         rope.sever();

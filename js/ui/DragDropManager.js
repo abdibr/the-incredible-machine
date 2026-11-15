@@ -32,6 +32,7 @@ import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { renderer } from '../render/Renderer.js';
 import { toolbox } from './Toolbox.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
+import { isRopeFamily } from '../objects/Rope.js';
 import { selectionHandleSet, isAnchorCapable } from './selectionHandles.js';
 import ConnectFlow from './ConnectFlow.js';
 
@@ -134,41 +135,7 @@ class DragDropManager {
         });
 
         // ── Global mouseup ──
-        document.addEventListener('mouseup', (e) => {
-            if (!this._dragging) return;
-
-            if (this._dragType === 'toolbox') {
-                // Place the object at the drop position
-                const pos = renderer.pageToCanvas(e.pageX, e.pageY);
-                this._placeObject(this._dragObjType, pos.x, pos.y);
-                eventBus.emit('drag:ghost-clear');
-            } else if (this._dragType === 'move' && this._dragObject) {
-                // A moved rope drags its knots off their points (issue 04):
-                // untie at release — the drop-scan reconcile releases the
-                // physical links on the next play.
-                if (this._dragObject.type === 'rope' || this._dragObject.type === 'free-rope') {
-                    this._dragObject.clearAttachments();
-                }
-                eventBus.emit('object:moved', {
-                    id: this._dragObject.id,
-                    x: this._dragObject.x,
-                    y: this._dragObject.y,
-                });
-            } else if (this._dragType === 'rotate' && this._dragObject) {
-                // Rotate drops previously emitted nothing — a build-trace gap
-                // (ADR 0006): announce the final angle like move announces
-                // its pose, so the recorded trace can reconstruct pose history.
-                eventBus.emit('object:rotated', {
-                    id: this._dragObject.id,
-                    angle: this._dragObject.angle,
-                });
-            }
-
-            this._dragging = false;
-            this._dragType = null;
-            this._dragObjType = null;
-            this._dragObject = null;
-        });
+        document.addEventListener('mouseup', (e) => this._endDrag(e.pageX, e.pageY));
 
         // ── Right-click to delete ──
         canvas.addEventListener('contextmenu', (e) => {
@@ -194,7 +161,7 @@ class DragDropManager {
 
             if (!this._enabled) {
                 this._selectObject(null);
-                this._dragging = false;
+                this._clearDragState(); // a drag cannot outlive the stage that started it
                 this._connectFlow.cancel(); // leaving the edit stage ends any seek
                 renderer.hoverPoint = null;
                 eventBus.emit('drag:ghost-clear');
@@ -390,6 +357,71 @@ class DragDropManager {
         this._dragType = 'rotate';
         this._dragObject = this._selectedObject;
         this._dragStartAngle = this._selectedObject.angle;
+    }
+
+    /**
+     * Release the drag in flight at the hand's release point — the drop half
+     * of every drag the manager starts (the `mouseup` listener delegates
+     * here, so a test can drive the drop without a DOM). A toolbox drag
+     * places, a move drag settles the pose (untieing a rope-family part's
+     * knots), a rotate drag announces its final angle.
+     *
+     * Drag state clears in a `finally`: the reset is the whole contract of a
+     * release. A throw on the way (a missing import once did exactly that)
+     * used to leave `_dragging` set, gluing the part to the cursor with no
+     * drop left to let go of it — recoverable only by deleting the part.
+     * @param {number} pageX - release point, page coordinates
+     * @param {number} pageY
+     * @private
+     */
+    _endDrag(pageX, pageY) {
+        if (!this._dragging) return;
+
+        try {
+            if (this._dragType === 'toolbox') {
+                // Place the object at the drop position
+                const pos = renderer.pageToCanvas(pageX, pageY);
+                this._placeObject(this._dragObjType, pos.x, pos.y);
+                eventBus.emit('drag:ghost-clear');
+            } else if (this._dragType === 'move' && this._dragObject) {
+                // A moved rope-family part drags its knots off their points
+                // (issue 04; the family fact is the rope module's, issue
+                // #75): untie at release — the drop-scan reconcile releases
+                // the physical links on the next play.
+                if (isRopeFamily(this._dragObject)) {
+                    this._dragObject.clearAttachments();
+                }
+                eventBus.emit('object:moved', {
+                    id: this._dragObject.id,
+                    x: this._dragObject.x,
+                    y: this._dragObject.y,
+                });
+            } else if (this._dragType === 'rotate' && this._dragObject) {
+                // Rotate drops previously emitted nothing — a build-trace gap
+                // (ADR 0006): announce the final angle like move announces
+                // its pose, so the recorded trace can reconstruct pose history.
+                eventBus.emit('object:rotated', {
+                    id: this._dragObject.id,
+                    angle: this._dragObject.angle,
+                });
+            }
+        } finally {
+            this._clearDragState();
+        }
+    }
+
+    /**
+     * Drop the drag in flight back to "nothing held". The one place that
+     * knows what a clean hand looks like: release (`_endDrag`) and the stage
+     * change that voids a drag both come here, so no path can leave a stale
+     * `_dragType`/`_dragObject` behind for the next press to inherit.
+     * @private
+     */
+    _clearDragState() {
+        this._dragging = false;
+        this._dragType = null;
+        this._dragObjType = null;
+        this._dragObject = null;
     }
 
     /**

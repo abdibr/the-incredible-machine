@@ -45,11 +45,15 @@ export function resetReturnPosture(runOriginPosture, levelData) {
  *
  * Each row is the object's own serialize() — ropes intentionally emit no
  * attachment data of their own — and the annotator then writes live knot
- * refs onto each rope's row as ordinal tokens:
- * `{ endpoint, targetType, targetOrdinal, pointId }`. The ordinal indexes
- * THIS array; board order is stable across play/reset cycles (fixed
- * objects rebuilt from level JSON first, placed parts restored in snapshot
- * order), which is what makes an ordinal restorable.
+ * refs onto each rope's row as ordinal tokens. The token IS the ref with
+ * the target mapped to its board ordinal: every knot ref carries its seat
+ * ROLE (issue #90 — the only seat address), so the token names the seat
+ * directly — `{ seat: 'anchor'|'mid'|'end', targetType, targetOrdinal,
+ * pointId }` — and restoring re-binds each knot to the same seat of the
+ * restored chain whatever that chain's count. The ordinal indexes THIS
+ * array; board order is stable across play/reset cycles (fixed objects
+ * rebuilt from level JSON first, placed parts restored in snapshot order),
+ * which is what makes an ordinal restorable.
  *
  * @param {import('../objects/BaseObject.js').default[]} board — shared live board (fixed + placed, board order)
  * @returns {object[]} serialized rows (rope rows may carry `attachments`)
@@ -59,14 +63,21 @@ export function serializePlacedBoard(board) {
     const ordinalByObject = new Map(board.map((obj, index) => [obj, index]));
     for (let index = 0; index < board.length; index++) {
         const obj = board[index];
-        if ((obj.type !== 'rope' && obj.type !== 'free-rope') || typeof obj.getAttachmentRefs !== 'function') continue;
+        // Capability-first knot walk (C1, issue #75): annotate whatever
+        // offers attachment refs — the same contract the SessionRecorder
+        // narrator and the Renderer knot overlay gate on. The old roster
+        // gate (`type !== 'rope' && type !== 'free-rope'`) was the
+        // redundant membership copy that could drift; the rope module owns
+        // the family fact (Rope.ROPE_FAMILY_TYPES) for the sites that ask
+        // the roster, while knot tokens stay the only decision here.
+        if (typeof obj.getAttachmentRefs !== 'function') continue;
         const tokens = [];
         for (const ref of obj.getAttachmentRefs()) {
             // Target no longer on the board → the knot dies with it
             const ordinal = ordinalByObject.get(ref.target);
             if (ordinal === undefined) continue;
             tokens.push({
-                endpoint: ref.endpoint,
+                seat: ref.seat,
                 targetType: ref.target.type,
                 targetOrdinal: ordinal,
                 pointId: ref.pointId,
@@ -140,24 +151,60 @@ export function restorePlacedFromSnapshot(
     }
     placedObjects.push(...restored);
 
-    // Two-phase bind (issue 04): rope attachment tokens only resolve once
-    // every row has come back — they index the full snapshot order, and the
-    // rebuilt board (fixed from level JSON first, restored placed in
-    // snapshot order) mirrors it one-to-one. On any count disagreement the
-    // ordinals cannot be trusted: bind with no board so every token drops
-    // with a warning, instead of tying across a shifted layout.
+    // Two-phase bind (issue 04; the rope-to-rope retry passes since #57 —
+    // see bindPlacedTokens): rope attachment tokens resolve against the
+    // rebuilt board; on any count disagreement the ordinals cannot be
+    // trusted: bind with no board so every token drops with a warning,
+    // instead of tying across a shifted layout.
     const aligned = rows.length > 0 && placedObjects.length === rows.length;
     if (!aligned) {
         console.warn(
             `[App] Placed snapshot/board size mismatch (${rows.length} rows vs ${placedObjects.length} objects) — dropping attachment tokens.`
         );
     }
-    for (const obj of restored) {
-        if (typeof obj.bindAttachment === 'function') {
-            obj.bindAttachment(aligned ? placedObjects : null);
-        }
-    }
+    bindPlacedTokens(
+        restored,
+        aligned ? placedObjects : null,
+    );
     return restored;
+}
+
+/**
+ * Two-phase bind (issue 04): every token-bearing object resolves its
+ * pending tokens against `board`. Multi-pass since #57: a rope-to-rope
+ * token whose target rope has laid no chain yet is DEFERRED (Rope.bindAttachment)
+ * and retried — the target free rope births its chain during ITS own bind
+ * pass (the spawned bundle's anchor token, issue #55), so a token earlier
+ * in the board order binds on a retry rather than dropping. Each pass must
+ * land at least one token or the retries stop (a dependency chain of k
+ * spawned bundles takes at most k passes, k ≤ the binder count), and a
+ * final strict pass drops whatever still cannot resolve — warned, the
+ * same unresolvable-token honesty as any other token, with nothing left
+ * pending. A null board binds strictly exactly once (the unaligned-board
+ * path: nothing can resolve, so nothing defers).
+ *
+ * @param {import('../objects/BaseObject.js').default[]} bindable — the freshly
+ *   deserialized objects (bindAttachment's duck-checked owners ride it)
+ * @param {import('../objects/BaseObject.js').default[]|null} board — the
+ *   rebuilt board the ordinals index (null binds strictly, no board)
+ */
+export function bindPlacedTokens(bindable, board = null) {
+    const binders = (bindable ?? []).filter(
+        (obj) => typeof obj?.bindAttachment === 'function'
+    );
+    if (!board) {
+        for (const obj of binders) obj.bindAttachment(null);
+        return;
+    }
+    let bound = true;
+    for (let pass = 0; bound && pass < binders.length; pass++) {
+        bound = binders.some(
+            (obj) => obj.bindAttachment(board, { deferUnlaidRopeTargets: true })
+        );
+    }
+    // The strict close-out: everything still pending binds or drops with
+    // its warning — no token is left pending, deferral or not.
+    for (const obj of binders) obj.bindAttachment(board);
 }
 
 /**

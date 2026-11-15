@@ -15,6 +15,9 @@ dist-ssr
 # Scratch artifacts (agent workspaces; see docs/plans/ §5)
 .scratch/
 .playwright-mcp/
+
+# Generated knowledge-graph output (graphify)
+graphify-out/
 .vitest-*.txt
 .vscode/*
 !.vscode/extensions.json

@@ -10,7 +10,7 @@ import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 import { resolveGoalZoneObject } from '../goals/GoalChecker.js';
-import { ROPE_TOO_SHORT } from '../ui/ConnectFlow.js';
+import { ROPE_TOO_SHORT, SEAT_TIED, TIE_REFUSED } from '../ui/ConnectFlow.js';
 import { selectionHandleSet } from '../ui/selectionHandles.js';
 
 /**
@@ -460,9 +460,9 @@ class Renderer {
     }
 
     /**
-     * Draw a small ring on every attachment point a rope is tied to
-     * (issue 04, edit modes only): knots show as machine structure while
-     * editing and are realized physically by the engine at play.
+     * Draw a small ring on every attachment point a knot-bearing part is
+     * tied to (issue 04, edit modes only): knots show as machine structure
+     * while editing and are realized physically by the engine at play.
      * @param {CanvasRenderingContext2D} ctx
      * @param {BaseObject[]} objs
      * @private
@@ -470,7 +470,14 @@ class Renderer {
     _drawRopeKnots(ctx, objs) {
         ctx.save();
         for (const obj of objs) {
-            if ((obj.type !== 'rope' && obj.type !== 'free-rope') || typeof obj.getAttachmentRefs !== 'function') continue;
+            // Capability-first knot walk (C1, issue #75): paint for whatever
+            // offers attachment refs — the same contract the SessionRecorder
+            // narrator and the levelReset annotator gate on. The old roster
+            // gate (`type !== 'rope' && type !== 'free-rope'`) was the
+            // redundant membership copy that could drift; the rope module
+            // owns the family fact (Rope.ROPE_FAMILY_TYPES) for the sites
+            // that ask the roster.
+            if (typeof obj.getAttachmentRefs !== 'function') continue;
             for (const ref of obj.getAttachmentRefs()) {
                 const world = ref.target.getAttachmentWorldPoint?.(ref.pointId);
                 if (!world) continue;
@@ -492,15 +499,17 @@ class Renderer {
     }
 
     /**
-     * The click-to-connect squares (ADR 0007 decision 2): rope endpoint
+     * The click-to-connect squares (ADR 0007 decision 2): rope tie
      * handles, attachment-point target squares, and — while a seek is in
      * flight — the preview line to the cursor and the glow on in-reach
      * targets (glow = tieable, issue #54). A refused tie flashes its
-     * seeking handle red plus a "rope too short" badge at the refused aim.
+     * seeking handle red plus a reason badge at the refused aim — "rope
+     * too short" (issue #54), "seat already tied" (issue #85), or "tie
+     * refused" (the rope-side gate, issue #93).
      * Edit modes only (EDITING/SANDBOX): gates itself so PLAY
      * boards draw nothing.
      *
-     * Geometry comes from the flow (getEndpointSquares/getTieSquares — one
+     * Geometry comes from the flow (getRopeSquares/getTieSquares — one
      * source for clicks and pixels); this method only paints it.
      * @param {CanvasRenderingContext2D} ctx
      * @param {BaseObject[]} objs
@@ -509,7 +518,7 @@ class Renderer {
     _drawConnectSquares(ctx, objs) {
         if (this._mode !== 'EDITING' && this._mode !== 'SANDBOX') return;
         if (!this._connectFlow) return;
-        const squares = this._connectFlow.getEndpointSquares(objs, this.hoverPoint);
+        const squares = this._connectFlow.getRopeSquares(objs, this.hoverPoint);
         const targets = this._connectFlow.getTieSquares(objs, this.hoverPoint);
 
         ctx.save();
@@ -571,19 +580,24 @@ class Renderer {
             ctx.strokeRect(square.x - 7, square.y - 7, 14, 14);
         }
 
-        // Refused-tie badge (ADR 0007 decision 4, issue #54): "rope too
-        // short" marks the refused aim while the flash lives.
+        // Refused-tie badge (ADR 0007 decision 4, issue #54; reason added
+        // by issue #85, the rope-side gate by issue #93): "rope too short",
+        // "seat already tied" or "tie refused" marks the refused aim while
+        // the flash lives.
         const refusal = this._connectFlow.refusal;
         if (refusal) {
+            const badge = refusal.reason === 'occupied' ? SEAT_TIED
+                : refusal.reason === 'short' ? ROPE_TOO_SHORT : TIE_REFUSED;
+            const half = refusal.reason === 'occupied' ? 60 : 52; // the seat text runs wider
             ctx.font = 'bold 12px sans-serif';
             ctx.textAlign = 'center';
             ctx.fillStyle = 'rgba(40, 12, 12, 0.9)';
             ctx.strokeStyle = '#e34e4e';
             ctx.lineWidth = 1;
-            ctx.fillRect(refusal.x - 52, refusal.y + 10, 104, 18);
-            ctx.strokeRect(refusal.x - 52, refusal.y + 10, 104, 18);
+            ctx.fillRect(refusal.x - half, refusal.y + 10, half * 2, 18);
+            ctx.strokeRect(refusal.x - half, refusal.y + 10, half * 2, 18);
             ctx.fillStyle = '#ffd9d9';
-            ctx.fillText(ROPE_TOO_SHORT, refusal.x, refusal.y + 23);
+            ctx.fillText(badge, refusal.x, refusal.y + 23);
         }
 
         ctx.restore();

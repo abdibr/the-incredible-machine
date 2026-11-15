@@ -212,7 +212,7 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         engine.addObject(rope);
         engine.addObject(balloon);
         engine.addObject(candle);
-        rope.attachEndpoint(0, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         expect(rope.bodies.length, 'the first tie spawns the hanging chain').toBeGreaterThan(0);
         const severed = trackEvent('rope:severed');
 
@@ -233,7 +233,7 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         engine.addObject(balloon);
         engine.addObject(scissors);
         engine.addObject(ball);
-        rope.attachEndpoint(0, balloon, 'knot');
+        rope.attachEndpoint('anchor', balloon, 'knot');
         expect(rope.constraints.length, 'the spawned chain holds itself by constraints').toBeGreaterThan(0);
 
         stepUntil(engine, () => scissors.isClosed, 90, 'scissors snap');

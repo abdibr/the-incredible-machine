@@ -17,6 +17,9 @@ const WALL_THICKNESS = 5;
 const BUCKET_COLOR = '#8B4513';
 const BUCKET_INNER = '#6B3310';
 const RIM_COLOR = '#a0a0a0';
+// The bucket's declared wall/floor surface material (see the setStatic
+// note below, where it is re-asserted after the bodies' static flip).
+const BUCKET_SURFACE_FRICTION = 0.3;
 
 export default class Bucket extends BaseObject {
     constructor(x, y, options = {}) {
@@ -49,22 +52,42 @@ export default class Bucket extends BaseObject {
 
         this._leftWall = Bodies.rectangle(
             x - hw + wallThickness / 2, y, wallThickness, this._height, {
-            isStatic: this._isFixed, label: 'bucket-wall', friction: 0.3,
+            isStatic: this._isFixed, label: 'bucket-wall', friction: BUCKET_SURFACE_FRICTION,
             collisionFilter: { group: selfGroup },
         }
         );
         this._rightWall = Bodies.rectangle(
             x + hw - wallThickness / 2, y, wallThickness, this._height, {
-            isStatic: this._isFixed, label: 'bucket-wall', friction: 0.3,
+            isStatic: this._isFixed, label: 'bucket-wall', friction: BUCKET_SURFACE_FRICTION,
             collisionFilter: { group: selfGroup },
         }
         );
         this._floor = Bodies.rectangle(
             x, y + hh - wallThickness / 2, this._width - wallThickness * 2, wallThickness, {
-            isStatic: this._isFixed, label: 'bucket-floor', friction: 0.3,
+            isStatic: this._isFixed, label: 'bucket-floor', friction: BUCKET_SURFACE_FRICTION,
             collisionFilter: { group: selfGroup },
         }
         );
+
+        // The parts above are built with the `isStatic: this._isFixed`
+        // option, and Body.create routes that option through Body.setStatic —
+        // which unconditionally parks every newly-static body at friction 1 /
+        // restitution 0. Its `_original` stash (setStatic's own restore path)
+        // is guarded by `if (!part.isStatic)`: the option is merged onto the
+        // body before the flip, so a born-fixed part keeps NO stash and the
+        // declared friction dies with the park (gh issue #72). Pair friction
+        // resolves at min(the two live frictions), so a high-friction visitor
+        // (tennis ball: 0.5) skidded inside the fixed goal bucket while the
+        // bucket pinned later in life kept 0.3 via BaseObject's isFixed seam
+        // (its late-flip stash re-apply) — the two "fixed" flavors played
+        // differently. Re-assert the declared material after the implicit
+        // flip, the same pattern Trampoline.js / Ramp.js apply for the same
+        // reason. No-op for dynamic parts (the declared friction is already
+        // live on them). The sensor below stays untouched: sensors exert no
+        // physical force, so surface material would be dead weight.
+        for (const part of [this._leftWall, this._rightWall, this._floor]) {
+            part.friction = BUCKET_SURFACE_FRICTION;
+        }
 
         // Sensor zone inside the bucket (detects objects landing inside)
         this._sensor = Bodies.rectangle(

@@ -23,7 +23,7 @@ describe('Post-tie knot ring (Renderer._drawRopeKnots)', () => {
     it('draws the strengthened ring + solid core on every tied point', () => {
         const balloon = new Balloon(300, 100);
         const rope = new Rope(300, 100, { length: 40 });
-        rope.attachEndpoint(1, balloon, 'knot');
+        rope.attachEndpoint('end', balloon, 'knot');
         const knot = balloon.getAttachmentWorldPoint('knot');
         const ctx = makeRecordingCtx();
 

@@ -7,7 +7,13 @@
  */
 import { readFileSync } from 'node:fs';
 
-export { replayBugFile, replayRun } from '../../js/recorder/replay.js';
+import { replayBugFile, replayRun } from '../../js/recorder/replay.js';
+
+// Both the harness re-exports and the local bindings the assert uses —
+// a bare `export { x } from` re-export creates no local binding, which
+// silently broke assertBugFileReplaysExactly until the ufzs fixture
+// exercised it (issue #93).
+export { replayBugFile, replayRun };
 
 /**
  * Load a bug file from a path, or pass an in-memory document through.
