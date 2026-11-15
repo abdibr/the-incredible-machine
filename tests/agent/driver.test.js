@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { AgentSession } from '../../agent/session.js';
 import { resolveDriverConfig, runDriver, DRIVER_ENV } from '../../agent/driver.js';
+import { startStubServer, makeWinPolicy, makeFailPolicy, makeJammerPolicy, makeBadThenWinPolicy } from '../helpers/stub-provider.js';
 
 /**
  * LLM driver tests (phase-2 ticket 3/6) - driver-loop integration tests
@@ -14,7 +15,9 @@ import { resolveDriverConfig, runDriver, DRIVER_ENV } from '../../agent/driver.j
  * chat-completions server behind the driver's configurable base URL. It
  * stands in for the LLM ONLY at the provider seam and decides its next
  * action FROM the observation text through the same tools the driver
- * exposes - so the driver runs its real loop. No scripted solver lives
+ * exposes - so the driver runs its real loop (the stub server and the model
+ * personas are shared with the turn-transport tests: tests/helpers/
+ * stub-provider.js). No scripted solver lives
  * here: the win policy simply reads the goal bucket's position out of the
  * observation the way a model would. Pinned: max-turns cap termination,
  * clean termination on goal-reached and on goal-failed, the
@@ -35,128 +38,6 @@ afterEach(async () => {
 });
 
 /**
- * Fake OpenAI chat-completions endpoint. `policy(body)` inspects the exact
- * request the model would see (messages) and decides the response:
- * { text } for a plain final message, or { calls: [{ name, args }] } for
- * tool calls. Every request is captured for wiring assertions.
- */
-function startStubServer(policy) {
-    const requests = [];
-    const server = http.createServer((req, res) => {
-        let raw = '';
-        req.on('data', (c) => { raw += c; });
-        req.on('end', () => {
-            const body = JSON.parse(raw);
-            requests.push({ url: req.url, body });
-            const choice = policy(body);
-            const message = choice.text !== undefined
-                ? { role: 'assistant', content: choice.text }
-                : {
-                    role: 'assistant', content: null,
-                    tool_calls: choice.calls.map((c, i) => ({
-                        id: `call_${i}`, type: 'function',
-                        function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) },
-                    })),
-                };
-            const payload = {
-                id: `resp_${requests.length}`, object: 'chat.completion', created: 0, model: body.model ?? 'stub-model',
-                choices: [{ index: 0, message, finish_reason: choice.text !== undefined ? 'stop' : 'tool_calls' }],
-                usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-            };
-            res.setHeader('content-type', 'application/json');
-            res.end(JSON.stringify(payload));
-        });
-    });
-    const stub = new Promise((resolve) => {
-        server.listen(0, '127.0.0.1', () => resolve({
-            port: server.address().port,
-            requests,
-            close: () => new Promise((r) => server.close(r)),
-        }));
-    });
-    return stub.then((s) => (stubs.push(s), s));
-}
-
-/** The latest observation text the model received (tool read-back or the initial brief). */
-function latestObservation(messages) {
-    for (let i = messages.length - 1; i >= 0; i--) {
-        const m = messages[i];
-        const content = typeof m.content === 'string'
-            ? m.content
-            : Array.isArray(m.content) ? m.content.map((p) => p?.text ?? '').join('') : '';
-        if (m.role === 'tool') {
-            try {
-                const parsed = JSON.parse(content);
-                if (parsed.observation) return parsed.observation;
-            } catch { /* fall through to raw content */ }
-            return content;
-        }
-        if (m.role === 'user') return content;
-    }
-    return '';
-}
-
-/** Whether some tool read-back already reports the trial outcome. */
-function sawOutcome(messages, want) {
-    return messages.some((m) => m.role === 'tool' && String(m.content).includes(`"outcome":"${want}"`));
-}
-
-/** Read the goal bucket's x,y straight out of the observation's state table - the model's way. */
-function bucketZone(obs) {
-    const m = /^bucket-goal\s+bucket\s+(-?[\d.]+),\s?(-?[\d.]+)/m.exec(obs);
-    return { x: Math.round(Number(m?.[1])), y: Math.round(Number(m?.[2])) };
-}
-
-/** Stub policy that WINS level-01 from observations alone: drop the ball just above the zone. */
-function makeWinPolicy() {
-    let placed = false;
-    return (body) => {
-        const obs = latestObservation(body.messages);
-        if (sawOutcome(body.messages, 'reached')) return { text: 'goal reached; done.' };
-        if (!placed) {
-            const zone = bucketZone(obs);
-            placed = true;
-            return { calls: [{ name: 'place', args: { type: 'ball', x: zone.x, y: zone.y - 300 } }] };
-        }
-        return { calls: [{ name: 'trial', args: { seconds: 5 } }] };
-    };
-}
-
-/** Stub policy that MISSES entirely and hits the goal:failed stop (dt=100 tunnels the ball). */
-function makeFailPolicy() {
-    let placed = false;
-    return (body) => {
-        if (sawOutcome(body.messages, 'failed')) return { text: 'goal failed; stopping.' };
-        if (!placed) {
-            placed = true;
-            return { calls: [{ name: 'place', args: { type: 'ball', x: 300, y: 100 } }] };
-        }
-        return { calls: [{ name: 'trial', args: { seconds: 5, dt: 100 } }] };
-    };
-}
-
-/** Stub policy that never advances toward the goal: only observes (forces the cap hit). */
-function makeJammerPolicy() {
-    return () => ({ calls: [{ name: 'observe', args: {} }] });
-}
-
-/** Stub policy whose first move is an impossible placement, then it wins anyway. */
-function makeBadThenWinPolicy() {
-    let step = 0;
-    return (body) => {
-        const obs = latestObservation(body.messages);
-        if (sawOutcome(body.messages, 'reached')) return { text: 'done.' };
-        step += 1;
-        if (step === 1) return { calls: [{ name: 'place', args: { type: 'unicorn', x: 500, y: 100 } }] };
-        if (step === 2) {
-            const zone = bucketZone(obs);
-            return { calls: [{ name: 'place', args: { type: 'ball', x: zone.x, y: zone.y - 300 } }] };
-        }
-        return { calls: [{ name: 'trial', args: { seconds: 5 } }] };
-    };
-}
-
-/**
  * Build the fixture for one driver integration test: temp transcript dir,
  * a REAL level-01 session, a fresh stub endpoint, and a config resolved
  * through TIM_AGENT_* env vars + a transcript argv override.
@@ -167,6 +48,7 @@ async function driverFixture(policy, { argv = [] } = {}) {
     session = new AgentSession();
     await session.loadLevel('level-01');
     const stub = await startStubServer(policy);
+    stubs.push(stub);
     const { errors, config } = resolveDriverConfig({
         argv: [...argv, '--transcript', transcriptPath],
         env: {
