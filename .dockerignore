@@ -1,0 +1,18 @@
+# Production-only build context (ticket #47; layout fixed by
+# docs/plans/agent-play-interface-phase-1.md long-term-layout note and the
+# explorer's layout.md: "copy js/, agent/, and package.json only - not
+# tests/ or .scratch/").
+#
+# Whitelist, not blacklist: everything not re-included below stays out -
+# tests/, docs/, scripts/, resources/, css/, index.html, every *.md,
+# .scratch/, node_modules, dist, .git, scratch artifacts. The Dockerfile
+# COPY lines repeat the same four paths, so the image can never contain a
+# file this file failed to exclude (belt and suspenders; scripts/docker-demo.mjs
+# audits the built image fs to prove it).
+*
+!js
+!js/**
+!agent
+!agent/**
+!package.json
+!package-lock.json
