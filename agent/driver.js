@@ -99,6 +99,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runTurn, MAX_TRIAL_SECONDS, MAX_TRIAL_DT, trialGuardError } from './turn.js';
+import { parseFlags } from './cli-flags.js';
 import { AgentSession } from './session.js';
 
 /** The provider/env configuration contract (resolved by resolveDriverConfig). */
@@ -169,19 +170,6 @@ const INSTRUCTIONS =
         '- Budget is per part type; overspend is rejected with the remaining budget in the error.',
     ].join('\n');
 
-/**
- * Tiny argv parser (no deps, cli.js style): `--key value` pairs only.
- * @param {string[]} argv
- */
-function parseFlags(argv) {
-    const flags = {};
-    for (let i = 0; i < argv.length; i++) {
-        if (argv[i].startsWith('--') && i + 1 < argv.length) {
-            flags[argv[i].slice(2)] = argv[++i];
-        }
-    }
-    return flags;
-}
 
 /** Timestamped default transcript name under the gitignored artifacts dir. @private */
 function defaultTranscriptPath(level) {

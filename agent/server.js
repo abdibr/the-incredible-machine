@@ -20,6 +20,7 @@ import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { AgentSession } from './session.js';
 import { runTurn, KNOWN_ACTIONS, trialGuardError } from './turn.js';
+import { parseFlags } from './cli-flags.js';
 
 export const DEFAULT_LEVEL = 'level-01';
 
@@ -258,18 +259,10 @@ export async function startTurnServer({ port = 0, host = '127.0.0.1', ...rest } 
     };
 }
 
-/** Tiny argv parser (no deps): `--key value` / bare flags. @private */
-function parseArgs(argv) {
-    const args = {};
-    for (let i = 0; i < argv.length; i++) {
-        if (argv[i].startsWith('--') && i + 1 < argv.length) args[argv[i].slice(2)] = argv[++i];
-    }
-    return args;
-}
 
 /* CLI entry: `node agent/server.js --port 8787 --level level-01` */
 async function main() {
-    const args = parseArgs(process.argv.slice(2));
+    const args = parseFlags(process.argv.slice(2));
     const service = await startTurnServer({
         port: Number(args.port) || 8787,
         host: args.host || '127.0.0.1',

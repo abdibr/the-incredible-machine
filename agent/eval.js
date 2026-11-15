@@ -43,6 +43,7 @@
  */
 
 import { DRIVER_ENV, resolveDriverConfig, runDriver } from './driver.js';
+import { parseFlags } from './cli-flags.js';
 import { AgentSession } from './session.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -87,17 +88,6 @@ export const DEFAULT_SEEDS = Object.freeze([1, 2, 3]);
 const MAX_SEEDS = 12;
 const REPORT_PATH_DEFAULT = '.agent-transcripts/eval-report.txt';
 const TRANSCRIPTS_DIR_DEFAULT = '.agent-transcripts/eval';
-
-/** Tiny argv parser - same `--key value` semantics as agent/driver.js. @private */
-function parseFlags(argv) {
-    const flags = {};
-    for (let i = 0; i < argv.length; i++) {
-        if (argv[i].startsWith('--') && i + 1 < argv.length) {
-            flags[argv[i].slice(2)] = argv[++i];
-        }
-    }
-    return flags;
-}
 
 /** Parse the seeds spec (csv of uint32s) or null for unset. @private */
 function parseSeeds(raw, errors) {
