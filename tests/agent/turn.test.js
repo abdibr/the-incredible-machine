@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { AgentSession } from '../../agent/session.js';
-import { runTurn } from '../../agent/turn.js';
+import { runTurn, trialGuardError, MAX_TRIAL_SECONDS, MAX_TRIAL_DT, observationOptions } from '../../agent/turn.js';
 
 /** @type {import('../../agent/session.js').AgentSession|null} */
 let session = null;
@@ -169,12 +169,9 @@ describe('runTurn - observation options', () => {
     });
 });
 describe('trialGuardError - THE one trial clamp (server 400 refusal + driver tool pre-validation share it)', () => {
-    it('agent/turn.js exposes the shared clamp constants and the documented refusal strings', async () => {
-        // dynamic import so the pin is the red: the exports do not exist yet
-        const turnMod = await import('../../agent/turn.js');
-        expect(turnMod.MAX_TRIAL_SECONDS).toBe(120);
-        expect(turnMod.MAX_TRIAL_DT).toBe(1000);
-        const { trialGuardError } = turnMod;
+    it('agent/turn.js exposes the shared clamp constants and the documented refusal strings', () => {
+        expect(MAX_TRIAL_SECONDS).toBe(120);
+        expect(MAX_TRIAL_DT).toBe(1000);
         expect(trialGuardError({ seconds: 1000000 })).toBe('trial seconds must be a number between 0 and 120 (got 1000000)');
         expect(trialGuardError({ seconds: 0 })).toBe('trial seconds must be a number between 0 and 120 (got 0)');
         expect(trialGuardError({ seconds: 120.5 })).toBe('trial seconds must be a number between 0 and 120 (got 120.5)');
@@ -190,14 +187,12 @@ describe('trialGuardError - THE one trial clamp (server 400 refusal + driver too
 });
 
 describe('observationOptions - the ONE option composition both paths share (ticket #95)', () => {
-    // dynamic import so the pin is the red: the export does not exist yet
-    it('is exported and whitelists exactly the five options from the source', async () => {
-        const turnMod = await import('../../agent/turn.js');
-        expect(typeof turnMod.observationOptions).toBe('function');
+    it('is exported and whitelists exactly the five options from the source', () => {
+        expect(typeof observationOptions).toBe('function');
         // A full action turn JSON: option keys ride along; action, level
         // scope and target coords never leak into the options object.
         expect(
-            turnMod.observationOptions({
+            observationOptions({
                 action: 'observe',
                 level: 'level-01',
                 type: 'ball',
@@ -211,7 +206,7 @@ describe('observationOptions - the ONE option composition both paths share (tick
             }),
         ).toStrictEqual({ cell: 'full', grid: false, key: true, state: false, graph: true });
         // a stray sixth property stays out: the whitelist is the exact shape
-        expect(turnMod.observationOptions({ cell: 'auto', sixth: true })).toStrictEqual({
+        expect(observationOptions({ cell: 'auto', sixth: true })).toStrictEqual({
             cell: 'auto',
             grid: undefined,
             key: undefined,
@@ -220,10 +215,9 @@ describe('observationOptions - the ONE option composition both paths share (tick
         });
     });
 
-    it('a missing or empty source yields the describeWorld-defaults shape (all five keys undefined)', async () => {
-        const turnMod = await import('../../agent/turn.js');
+    it('a missing or empty source yields the describeWorld-defaults shape (all five keys undefined)', () => {
         for (const source of [null, undefined, {}, { action: 'observe' }]) {
-            expect(turnMod.observationOptions(source)).toStrictEqual({
+            expect(observationOptions(source)).toStrictEqual({
                 cell: undefined,
                 grid: undefined,
                 key: undefined,
@@ -233,13 +227,12 @@ describe('observationOptions - the ONE option composition both paths share (tick
         }
     });
 
-    it('string flag values are typed once: the OFF spellings read OFF, every other string ON', async () => {
-        const turnMod = await import('../../agent/turn.js');
+    it('string flag values are typed once: the OFF spellings read OFF, every other string ON', () => {
         // a query string has no types: the pinned `?state=&graph=&key=`
         // empty-string trio reads OFF, and so must the other raw falsy
         // spellings '0' and 'false' - a `"grid": false` body and a
         // `?grid=false` query must not disagree
-        expect(turnMod.observationOptions({ grid: '', key: 'false', state: '0' })).toStrictEqual({
+        expect(observationOptions({ grid: '', key: 'false', state: '0' })).toStrictEqual({
             cell: undefined,
             grid: false,
             key: false,
@@ -247,7 +240,7 @@ describe('observationOptions - the ONE option composition both paths share (tick
             graph: undefined,
         });
         // every other non-empty string reads ON, exactly as before
-        expect(turnMod.observationOptions({ grid: '1', key: 'true', state: 'yes', graph: 'any' })).toStrictEqual({
+        expect(observationOptions({ grid: '1', key: 'true', state: 'yes', graph: 'any' })).toStrictEqual({
             cell: undefined,
             grid: true,
             key: true,
@@ -256,7 +249,7 @@ describe('observationOptions - the ONE option composition both paths share (tick
         });
         // non-strings pass through verbatim: real booleans, numbers - and
         // the undefined that keeps the describeWorld default (ON)
-        expect(turnMod.observationOptions({ grid: false, key: true, state: 0, graph: undefined })).toStrictEqual({
+        expect(observationOptions({ grid: false, key: true, state: 0, graph: undefined })).toStrictEqual({
             cell: undefined,
             grid: false,
             key: true,
