@@ -188,3 +188,48 @@ describe('trialGuardError - THE one trial clamp (server 400 refusal + driver too
         expect(trialGuardError({ seconds: 120, dt: 1 })).toBeNull();
     });
 });
+
+describe('observationOptions - the ONE option composition both paths share (ticket #95)', () => {
+    // dynamic import so the pin is the red: the export does not exist yet
+    it('is exported and whitelists exactly the five options from the source', async () => {
+        const turnMod = await import('../../agent/turn.js');
+        expect(typeof turnMod.observationOptions).toBe('function');
+        // A full action turn JSON: option keys ride along; action, level
+        // scope and target coords never leak into the options object.
+        expect(
+            turnMod.observationOptions({
+                action: 'observe',
+                level: 'level-01',
+                type: 'ball',
+                x: 700,
+                y: 100,
+                cell: 'full',
+                grid: false,
+                key: true,
+                state: false,
+                graph: true,
+            }),
+        ).toStrictEqual({ cell: 'full', grid: false, key: true, state: false, graph: true });
+        // a stray sixth property stays out: the whitelist is the exact shape
+        expect(turnMod.observationOptions({ cell: 'auto', sixth: true })).toStrictEqual({
+            cell: 'auto',
+            grid: undefined,
+            key: undefined,
+            state: undefined,
+            graph: undefined,
+        });
+    });
+
+    it('a missing or empty source yields the describeWorld-defaults shape (all five keys undefined)', async () => {
+        const turnMod = await import('../../agent/turn.js');
+        for (const source of [null, undefined, {}, { action: 'observe' }]) {
+            expect(turnMod.observationOptions(source)).toStrictEqual({
+                cell: undefined,
+                grid: undefined,
+                key: undefined,
+                state: undefined,
+                graph: undefined,
+            });
+        }
+    });
+});
