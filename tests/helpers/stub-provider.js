@@ -134,3 +134,30 @@ export function makeBadThenWinPolicy() {
         return { calls: [{ name: 'trial', args: { seconds: 5 } }] };
     };
 }
+
+/**
+ * Policy that WINS the levels named in `winLevels` (win-policy shape,
+ * fresh per protocol run) and observe-jams every other level - the
+ * gated-eval shape: level-01 solved, level-02/03 stuck. One stub server
+ * serves many protocol runs in one test, so state resets whenever a run's
+ * opening brief arrives (messages = [system, user] only).
+ * @param {string[]} winLevels level ids this persona can solve
+ */
+export function makeLevelSelectivePolicy(winLevels) {
+    const state = new Map();
+    return (body) => {
+        const firstLine = String(latestObservation(body.messages) ?? '').split('\n')[0] ?? '';
+        const m = /^(level-\d+)/.exec(firstLine);
+        const level = m ? m[1] : '(unknown)';
+        if (body.messages.length === 2) state.set(level, { placed: false }); // a fresh run begins
+        if (!winLevels.includes(level)) return { calls: [{ name: 'observe', args: {} }] }; // jam
+        if (sawOutcome(body.messages, 'reached')) return { text: 'goal reached; done.' };
+        const levelState = state.get(level) ?? { placed: false };
+        if (!levelState.placed) {
+            const zone = bucketZone(latestObservation(body.messages));
+            levelState.placed = true;
+            return { calls: [{ name: 'place', args: { type: 'ball', x: zone.x, y: zone.y - 300 } }] };
+        }
+        return { calls: [{ name: 'trial', args: { seconds: 5 } }] };
+    };
+}
