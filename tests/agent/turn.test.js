@@ -155,3 +155,16 @@ describe('runTurn - observation composition', () => {
         expect(turn.observation).not.toMatch(/events:/);
     });
 });
+
+describe('runTurn - observation options', () => {
+    it('cell and section toggles ride along on the action JSON', async () => {
+        session = new AgentSession();
+        await session.loadLevel('level-01');
+
+        const turn = runTurn({ action: 'observe', cell: 'full', key: false, graph: false }, session);
+
+        expect(turn.observation).toMatch(/cell 8px/); // full forces the precise 8px map
+        expect(turn.observation).not.toMatch(/legend:/); // key off
+        expect(turn.observation).not.toMatch(/relations/); // graph off
+    });
+});

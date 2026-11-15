@@ -19,7 +19,7 @@ import { place, remove, rotate, nudge, reset, trial } from './actions.js';
 import { describeWorld } from './observe/describe.js';
 
 /** The action verbs runTurn dispatches on - the known set, ever. */
-const KNOWN_ACTIONS = ['place', 'remove', 'rotate', 'nudge', 'reset', 'trial', 'observe'];
+export const KNOWN_ACTIONS = ['place', 'remove', 'rotate', 'nudge', 'reset', 'trial', 'observe'];
 
 /** One stable wording for a turn payload that is not a usable action object. */
 const MALFORMED_ERROR = 'malformed request: an action turn must be a JSON object with an "action" field';
@@ -37,6 +37,18 @@ function isActionJson(actionJson) {
         typeof actionJson.action === 'string' &&
         actionJson.action.trim() !== ''
     );
+}
+
+/** Pull the observation options out of the action JSON (undefined = describeWorld defaults). @private */
+function observationOptions(actionJson) {
+    const o = actionJson ?? {};
+    return {
+        cell: o.cell,
+        grid: o.grid,
+        key: o.key,
+        state: o.state,
+        graph: o.graph,
+    };
 }
 
 /** Format an events narrative for the observation - null when there are no rows. @private */
@@ -62,7 +74,7 @@ export function runTurn(actionJson, session) {
     }
 
     if (!isActionJson(actionJson)) {
-        return { observation: describeWorld(session), result: { ok: false, error: MALFORMED_ERROR } };
+        return { observation: describeWorld(session, observationOptions(actionJson)), result: { ok: false, error: MALFORMED_ERROR } };
     }
 
     let result;
@@ -90,7 +102,7 @@ export function runTurn(actionJson, session) {
             break;
         default:
             return {
-                observation: describeWorld(session),
+                observation: describeWorld(session, observationOptions(actionJson)),
                 result: {
                     ok: false,
                     error: `unknown action: "${actionJson.action}" (expected one of: ${KNOWN_ACTIONS.join(', ')})`,
@@ -100,6 +112,6 @@ export function runTurn(actionJson, session) {
     // Trial turns narrate their fresh event stream; observe replays the last
     // trial's narrative. Mutating turns append nothing - stale events lie.
     const events = actionJson.action === 'trial' ? result?.events : (actionJson.action === 'observe' ? session.lastEventSentences : null);
-    const sections = [describeWorld(session), eventsSection(events)].filter(Boolean);
+    const sections = [describeWorld(session, observationOptions(actionJson)), eventsSection(events)].filter(Boolean);
     return { observation: sections.join('\n\n'), result };
 }
