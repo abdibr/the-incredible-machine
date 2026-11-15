@@ -237,6 +237,7 @@ describe('resolveDriverConfig - provider-agnostic env configuration', () => {
             BASE_URL: 'TIM_AGENT_BASE_URL',
             MAX_TURNS: 'TIM_AGENT_MAX_TURNS',
             TRANSCRIPT: 'TIM_AGENT_TRANSCRIPT',
+            TURN_BASE_URL: 'TIM_AGENT_TURN_BASE_URL',
             API_KEY: 'OPENAI_API_KEY',
         });
     });

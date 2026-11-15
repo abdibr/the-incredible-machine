@@ -83,6 +83,7 @@ export const DRIVER_ENV = Object.freeze({
     BASE_URL: 'TIM_AGENT_BASE_URL',
     MAX_TURNS: 'TIM_AGENT_MAX_TURNS',
     TRANSCRIPT: 'TIM_AGENT_TRANSCRIPT',
+    TURN_BASE_URL: 'TIM_AGENT_TURN_BASE_URL',
     API_KEY: 'OPENAI_API_KEY',
 });
 
@@ -167,7 +168,8 @@ function defaultTranscriptPath(level) {
  *
  * @param {{ argv?: string[], env?: object }} [opts] { argv: process.argv.slice(2), env: process.env }
  * @returns {{ errors: string[], config: null | { level: string, model: string,
- *   baseUrl?: string, apiKey?: string, maxTurns: number, transcriptPath: string }}}
+ *   baseUrl?: string, apiKey?: string, maxTurns: number, transcriptPath: string,
+ *   turnBaseUrl?: string }}}
  */
 export function resolveDriverConfig({ argv = [], env = {} } = {}) {
     const flags = parseFlags(argv);
@@ -186,6 +188,18 @@ export function resolveDriverConfig({ argv = [], env = {} } = {}) {
 
     const level = flags.level ?? DEFAULT_LEVEL;
 
+    // The turn-boundary transport switch (ticket #49): when set, the driver's
+    // tools POST /turn to the turn service (agent/server.js - what the Docker
+    // container runs) instead of calling in-process runTurn. Unset = host
+    // mode, byte-for-byte today's behavior.
+    const turnBaseUrl = flags['turn-base-url'] ?? env[DRIVER_ENV.TURN_BASE_URL];
+    if (turnBaseUrl !== undefined && !/^https?:\/\//i.test(turnBaseUrl)) {
+        errors.push(
+            `invalid turn base URL: "${turnBaseUrl}" - an http(s):// URL is required ` +
+            `(set ${DRIVER_ENV.TURN_BASE_URL} or pass --turn-base-url <url>)`,
+        );
+    }
+
     const maxTurnsRaw = flags['max-turns'] ?? env[DRIVER_ENV.MAX_TURNS];
     let maxTurns = DEFAULT_MAX_TURNS;
     if (maxTurnsRaw !== undefined) {
@@ -199,7 +213,7 @@ export function resolveDriverConfig({ argv = [], env = {} } = {}) {
 
     return {
         errors,
-        config: errors.length ? null : Object.freeze({ level, model, baseUrl, apiKey, maxTurns, transcriptPath }),
+        config: errors.length ? null : Object.freeze({ level, model, baseUrl, apiKey, maxTurns, transcriptPath, turnBaseUrl }),
     };
 }
 
