@@ -11,6 +11,9 @@
 #
 # Build -> run -> win (full host-side sequence, with curl call examples):
 #   scripts/docker-demo.mjs
+# LLM end-to-end - the host-side driver plays level-01 against THIS image,
+# from a clean state, host<->container switch = env config only (ticket #49):
+#   scripts/e2e-demo.mjs
 #
 # Manual quick-start:
 #   docker build -t tim-turn-service .
