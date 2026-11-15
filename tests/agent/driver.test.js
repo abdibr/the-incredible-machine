@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { describeWorld } from '../../agent/observe/describe.js';
 import http from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { AgentSession } from '../../agent/session.js';
 import { resolveDriverConfig, runDriver, DRIVER_ENV } from '../../agent/driver.js';
-import { startStubServer, makeWinPolicy, makeFailPolicy, makeJammerPolicy, makeBadThenWinPolicy } from '../helpers/stub-provider.js';
+import { startStubServer, makeWinPolicy, makeFailPolicy, makeJammerPolicy, makeBadThenWinPolicy, bucketZone, latestObservation } from '../helpers/stub-provider.js';
 
 /**
  * LLM driver tests (phase-2 ticket 3/6) - driver-loop integration tests
@@ -253,5 +254,76 @@ describe('driver static boundary (turn-boundary + browser-bundle discipline)', (
 
 
 
+
+
+
+describe('driver structured turn log - the eval-seam return (ticket #50 feeds on this)', () => {
+    it(
+        'returns turnLog: per-turn calls (parsed args) + outputs (structured results)',
+        { timeout: 90000 },
+        async () => {
+            const { config } = await driverFixture(makeBadThenWinPolicy());
+
+            const res = await runDriver(config, session);
+
+            // bad-then-win: turn 1 impossible place, turn 2 the winning place, turn 3 the trial verdict
+            expect(res.turnLog).toHaveLength(3);
+            const [first, second, third] = res.turnLog;
+            expect(res.outcome).toBe('goal-reached');
+
+            expect(first.turn).toBe(1);
+            expect(first.note).toBeNull();
+            expect(first.calls).toEqual([{ name: 'place', args: { type: 'unicorn', x: 500, y: 100 } }]);
+            expect(first.outputs).toHaveLength(1);
+            expect(first.outputs[0].action).toBe('place');
+            expect(first.outputs[0].result.ok).toBe(false);
+            expect(first.outputs[0].result.error).toContain('unknown type: unicorn');
+
+            // the turnLog mirrors the model's EXACT read: it placed relative to the
+            // bucket's state-table position (the observation's truth), not level-JSON's
+            const zone = bucketZone(describeWorld(session));
+            expect(second.calls).toEqual([{ name: 'place', args: { type: 'ball', x: zone.x, y: zone.y - 300 } }]);
+            expect(second.outputs[0].result.ok).toBe(true);
+
+            expect(third.calls).toEqual([{ name: 'trial', args: { seconds: 5 } }]);
+            expect(third.outputs[0].result.outcome).toBe('reached');
+        },
+    );
+
+    it(
+        'logs stall turns as note-only entries (no calls, no outputs)',
+        { timeout: 90000 },
+        async () => {
+            // a model that answers text only twice, then plays the level-01 win by the book:
+            // turns 1-2 stall, turn 3 observe, turn 4 place, turn 5 the winning trial.
+            let stalled = 0;
+            const { config } = await driverFixture((body) => {
+                stalled += 1;
+                if (stalled <= 2) return { text: 'thinking...' };
+                if (stalled === 3) return { calls: [{ name: 'observe', args: {} }] };
+                if (stalled === 4) {
+                    const zone = bucketZone(latestObservation(body.messages));
+                    return { calls: [{ name: 'place', args: { type: 'ball', x: zone.x, y: zone.y - 300 } }] };
+                }
+                return { calls: [{ name: 'trial', args: { seconds: 5 } }] };
+            }, { argv: ['--max-turns', '5'] });
+
+            const res = await runDriver(config, session);
+
+            expect(res.outcome).toBe('goal-reached');
+            expect(res.turns).toBe(5);
+            expect(res.turnLog).toHaveLength(5);
+            const [stall1, stall2, obsTurn, placeTurn, trialTurn] = res.turnLog;
+            expect(stall1.calls).toEqual([]);
+            expect(stall1.outputs).toEqual([]);
+            expect(stall1.note).toBe('stall: no tool call');
+            expect(stall2.note).toBe('stall: no tool call');
+            expect(obsTurn.note).toBeNull();
+            expect(obsTurn.calls).toEqual([{ name: 'observe', args: {} }]);
+            expect(placeTurn.calls[0].name).toBe('place');
+            expect(trialTurn.outputs[0].result.outcome).toBe('reached');
+        },
+    );
+});
 
 

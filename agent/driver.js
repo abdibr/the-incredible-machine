@@ -583,7 +583,12 @@ function toolOutputsFromItems(items) {
  *           maxTurns: number, transcriptPath: string }} config from resolveDriverConfig()
  * @param {import('./session.js').AgentSession} session with a level loaded
  * @returns {Promise<{ outcome: 'goal-reached'|'goal-failed'|'turn-cap'|'driver-error',
- *           turns: number, transcript: string, transcriptPath: string }>}
+ *           turns: number, transcript: string, transcriptPath: string,
+ *           turnLog: Array<{ turn: number, note: string|null,
+ *             calls: Array<{ name: string, args: object }>,
+ *             outputs: Array<{ action: string, result: object, observation: string }> }>}>
+ *   turnLog mirrors the transcript rows as data: what the model chose
+ *   (calls) and what the turn boundary answered (outputs). Eval seam.
  */
 export async function runDriver(config, session) {
     if (!config?.model) {
@@ -620,6 +625,9 @@ export async function runDriver(config, session) {
     ];
 
     const rows = [];
+    // Structured per-turn log - the machine-readable twin of the transcript rows
+    // (ticket #50 eval feeds on this): the same data the transcript renders, as data.
+    const turnLog = [];
     let outcome = null;
     let turnsUsed = 0;
     try {
@@ -636,6 +644,7 @@ export async function runDriver(config, session) {
             const outputs = toolOutputsFromItems(newItems);
 
             if (calls.length === 0) {
+                turnLog.push({ turn, calls: [], outputs: [], note: 'stall: no tool call' });
                 rows.push(renderRow(turn, currentObservation, [], [], 'stall: no tool call'));
                 history = [...history, { role: 'user', content: STALL_NUDGE }];
                 continue;
@@ -647,6 +656,12 @@ export async function runDriver(config, session) {
                 if (o === 'reached' || o === 'failed') verdict = o;
             }
             rows.push(renderRow(turn, currentObservation, calls, outputs));
+            turnLog.push({
+                turn,
+                calls: calls.map((c) => ({ name: c.name, args: asArgs(c.arguments) })),
+                outputs,
+                note: null,
+            });
 
             const last = outputs[outputs.length - 1];
             if (last?.observation) currentObservation = last.observation;
@@ -658,6 +673,7 @@ export async function runDriver(config, session) {
         if (!outcome) outcome = 'turn-cap';
     } catch (err) {
         outcome = 'driver-error';
+        turnLog.push({ turn: turnsUsed, calls: [], outputs: [], note: `driver error: ${err?.message ?? String(err)}` });
         rows.push(`=== driver error ===\n| ${String(err?.stack ?? err).replace(/\r?\n/g, '\n| ')}`);
     }
 
@@ -678,7 +694,7 @@ export async function runDriver(config, session) {
     const dir = dirname(config.transcriptPath);
     await mkdir(dir, { recursive: true });
     await writeFile(config.transcriptPath, transcript, 'utf8');
-    return { outcome, turns: turnsUsed, transcript, transcriptPath: config.transcriptPath };
+    return { outcome, turns: turnsUsed, transcript, transcriptPath: config.transcriptPath, turnLog };
 }
 
 /**
