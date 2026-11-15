@@ -340,3 +340,71 @@ describe('renderReport + renderSummary - the compact per-level report', () => {
         },
     );
 });
+
+describe('renderReport - the diffability pin (two consecutive seeded invocations)', () => {
+    it(
+        'two consecutive protocol runs with the same seeds render byte-identical reports except the fenced VOLATILE block; the stdout summary diffs byte-identical outright',
+        { timeout: 120000 },
+        async () => {
+            const { config } = await evalConfig(makeLevelSelectivePolicy(['level-01']), { seeds: '1,4' });
+
+            const first = await runProtocol(config);
+            const second = await runProtocol(config);
+
+            const report1 = renderReport(first);
+            const report2 = renderReport(second);
+            // The fence actually carries the volatile bytes: the full renders differ...
+            expect(report2).not.toBe(report1);
+            // ...but everything outside the fence is byte-identical (acceptance: comparable, diffable reports).
+            const stripVolatile = (r) =>
+                r.slice(0, r.indexOf('# BEGIN VOLATILE')) +
+                '# BEGIN VOLATILE\n# END VOLATILE\n' +
+                r.slice(r.indexOf('# END VOLATILE') + '# END VOLATILE\n'.length);
+            expect(stripVolatile(report2)).toBe(stripVolatile(report1));
+            // The stdout summary is volatile-free: byte-identical across invocations with no strip needed.
+            expect(renderSummary(second)).toBe(renderSummary(first));
+            // Both invocations reference the same deterministic transcript paths.
+            expect(first.levels.flatMap((l) => l.runs.map((r) => r.transcriptRef)))
+                .toEqual(second.levels.flatMap((l) => l.runs.map((r) => r.transcriptRef)));
+        },
+    );
+
+    it(
+        'the per-level section shape: header, goal, per-run lines (outcome vocabulary), events, diagnosis ONLY for unsolved runs, blank-line close',
+        { timeout: 120000 },
+        async () => {
+            const { config } = await evalConfig(makeLevelSelectivePolicy(['level-01']), { seeds: '2,9' });
+            const report = renderReport(await runProtocol(config));
+
+            const RUN_LINE = /^run (\d+)\/(\d+): seed (\d+) -> (goal-reached|goal-failed|turn-cap) after (\d+) turns; transcript (\S+)$/;
+            const nextMarker = { 'level-01': '[level-02 - ', 'level-02': '[level-03 - ', 'level-03': 'determinism caveats:' };
+            for (const level of ['level-01', 'level-02', 'level-03']) {
+                const section = report.slice(
+                    report.indexOf(`[${level} - `),
+                    report.indexOf(nextMarker[level]),
+                );
+                const lines = section.split('\n');
+                // header + goal
+                expect(lines[0]).toMatch(new RegExp(`^\\[${level} - .+\\] gate: (must-solve-every-run|attempt-and-diagnose)$`));
+                expect(lines[1]).toMatch(/^goal: \(.+\)$/);
+                // per-run lines carry the full outcome vocabulary; two runs (the two seeds)
+                const runLines = lines.filter((l) => /^run \d+\/\d+: seed \d+ -> /.test(l));
+                expect(runLines).toHaveLength(2);
+                for (const l of runLines) expect(l).toMatch(RUN_LINE);
+                // events: one notable-events line per run, right after its run line
+                expect(lines.filter((l) => /^  events: /.test(l))).toHaveLength(2);
+                // diagnosis blocks appear ONLY for unsolved runs; each carries indented diagnosis lines
+                const unsolvedRuns = runLines.filter((l) => !l.includes('-> goal-reached')).length;
+                expect(unsolvedRuns).toBe(level === 'level-01' ? 0 : 2); // win policy solves level-01, jams 02/03
+                const diagnosisHeaders = lines.filter((l) => /^  run \d+ diagnosis \(unsolved\):$/.test(l));
+                expect(diagnosisHeaders).toHaveLength(unsolvedRuns);
+                for (const header of diagnosisHeaders) {
+                    const after = lines.slice(lines.indexOf(header) + 1);
+                    expect(after.filter((l) => /^    \S/.test(l)).length).toBeGreaterThan(0);
+                }
+                // the section closes on a blank line before the next level's section
+                expect(lines[lines.length - 1]).toBe('');
+            }
+        },
+    );
+});
