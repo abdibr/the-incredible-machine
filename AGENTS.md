@@ -18,8 +18,9 @@ Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 ## Branch policy
 
-- `main` is the playable game, release-only. It carries **no `*.md` files at all** — never
-  plain-merge `develop` into main yourself; the release script strips every markdown file.
+- `main` is the playable game, release-only. It carries **no `*.md` files at all** and no
+  `.scratch/` (dev workspace, any file type) — never plain-merge `develop` into main yourself;
+  the release script strips both.
 - All docs (README, AGENTS, GLOSSARY, ADRs, plans, work-log, scratch) live on `develop` and
   the branches below it. Always work on `develop` or a ticket/feature branch off it — not main.
 - To release develop into main:
