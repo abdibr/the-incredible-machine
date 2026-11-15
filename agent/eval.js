@@ -281,6 +281,7 @@ export async function runProtocol(config) {
             seeds: [...config.seeds],
             levels: [...PROTOCOL_LEVELS],
             excluded: PROTOCOL_EXCLUDED.level,
+            reportPath: config.reportPath ?? REPORT_PATH_DEFAULT,
         }),
         startedAtMs: startedAt,
         endedAtMs: Date.now(),
@@ -419,4 +420,130 @@ export function analyzeRun(record, levelData = {}) {
         lines.push(`no observable stuck pattern (run ended as ${record.outcome} after ${record.turns} turns)`);
     }
     return lines;
+}
+
+/** One run's notable events, capped - landmark sentences carry the story. @private */
+function eventsNote(run) {
+    const rows = [];
+    for (const entry of run.turnLog ?? []) {
+        for (const o of entry.outputs ?? []) {
+            for (const row of o?.result?.events ?? []) rows.push(row);
+        }
+    }
+    if (rows.length === 0) return '(none)';
+    const shown = rows.slice(0, 4).map((row) => `${row.text} @${row.t}s`);
+    return rows.length > 4 ? `${shown.join('; ')} (+ ${rows.length - 4} more)` : shown.join('; ');
+}
+
+/** The gate sentence - the one line the whole measurement turns on. @private */
+function gateLine(result) {
+    const g = result.gate;
+    return g.passed
+        ? `gate: PASS - ${g.level} solved in every run (${g.solvedOf} of ${g.runs})`
+        : `gate: FAIL - ${g.level} solved in ${g.solvedOf} of ${g.runs} runs (must-solve-every-run); ` +
+          'level-02/03 unsolved-with-diagnosis is acceptable by design';
+}
+
+/** The level aggregate - counts plus the diagnosis obligation status. @private */
+function levelAggregate(level) {
+    const runs = level.runs.length;
+    const unsolved = runs - level.solved;
+    return unsolved === 0
+        ? `${level.level} solved ${level.solved}/${runs}`
+        : `${level.level} solved ${level.solved}/${runs} (${unsolved} unsolved runs diagnosed)`;
+}
+
+/**
+ * Render the REPORT: compact, per-level, byte-diffable. Everything outside
+ * the fenced VOLATILE block is deterministic for a given protocol result -
+ * and identical across two invocations with the same seeds and the same
+ * provider behavior (see the caveats section text inside).
+ *
+ * @param {object} result from runProtocol()
+ * @returns {string} the report text (LF line endings, trailing newline)
+ */
+export function renderReport(result) {
+    const e = result.configEcho;
+    const lines = [
+        'TIM agent phase-2 exit eval - protocol report',
+        `protocol: ${result.protocol.id} v${result.protocol.version}`,
+        `model: ${e.model}`,
+        `provider base URL: ${e.baseUrl}`,
+        'turn transport: host mode (in-process runTurn; the game lives in this process)',
+        `turn cap: ${e.maxTurns}`,
+        `seeds (world construction only): ${e.seeds.join(', ')}`,
+        `protocol levels: ${result.levels.map((l) => `${l.level} - ${l.gate}`).join('; ')}`,
+        `excluded by design: ${PROTOCOL_EXCLUDED.level} (${PROTOCOL_EXCLUDED.name}) - ${PROTOCOL_EXCLUDED.reason}`,
+        '',
+        '# BEGIN VOLATILE (wall-clock only - never comparable across invocations)',
+        `started: ${new Date(result.startedAtMs).toISOString()}`,
+        `ended: ${new Date(result.endedAtMs).toISOString()}`,
+        `wall seconds total: ${(result.durationMs / 1000).toFixed(1)}`,
+        `wall seconds per run: ${result.perRunDurations.join('; ')}`,
+        '# END VOLATILE',
+        '',
+        gateLine(result),
+        `aggregate: ${result.levels.map(levelAggregate).join('; ')}`,
+        '',
+    ];
+    for (const level of result.levels) {
+        lines.push(`[${level.level} - ${level.name}] gate: ${level.gate}`);
+        lines.push(`goal: ${level.goalLine}`);
+        const runs = level.runs.length;
+        for (const run of level.runs) {
+            lines.push(`run ${run.index}/${runs}: seed ${run.seed} -> ${run.outcome} after ${run.turns} turns; transcript ${run.transcriptRef}`);
+            lines.push(`  events: ${eventsNote(run)}`);
+            if (run.outcome !== 'goal-reached') {
+                lines.push(`  run ${run.index} diagnosis (unsolved):`);
+                for (const line of run.diagnosis ?? []) lines.push(`    ${line}`);
+            }
+        }
+        lines.push('');
+    }
+    lines.push(
+        'determinism caveats:',
+        '- Seeding (protocol seeds; the TIM_AGENT_SEED seam, ticket #46) pins WORLD construction randomness only:' +
+            ' every Math.random draw at object-build time (balloon bob phase, candle flicker phase).' +
+            ' Same seed + same placements => byte-identical trials.',
+        '- Seeding does NOT pin the MODEL: provider sampling (the driver sets no temperature/top-p;' +
+            ' provider defaults apply), provider-side drift (model updates, routing) and wall-clock are' +
+            " outside the seed's reach.",
+        '- Diffability contract: identical seeds AND identical provider behavior yield byte-identical report' +
+            ' bytes except the VOLATILE block. A stable-section difference between two seeded runs is provider' +
+            ' drift - or a protocol bug (check the transcripts).',
+        `- The provider answers for "${e.model}"; no provider-side version/digest is observable from here.`,
+        '',
+    );
+    return lines.join('\n');
+}
+
+/**
+ * Render the stdout SUMMARY (deterministic on purpose - it is the quick
+ * eyeball line a human diffs across runs; the report file carries the rest).
+ * @param {object} result from runProtocol()
+ * @returns {string}
+ */
+export function renderSummary(result) {
+    const e = result.configEcho;
+    const lines = [
+        `[eval] ${result.protocol.id} v${result.protocol.version}: model=${e.model} seeds=${e.seeds.join(',')} cap=${e.maxTurns}`,
+    ];
+    for (const level of result.levels) {
+        const runs = level.runs.length;
+        const unsolved = runs - level.solved;
+        if (level.gate === 'must-solve-every-run') {
+            const mark = unsolved === 0
+                ? `solved ${level.solved}/${runs} (PASS)`
+                : `solved ${level.solved}/${runs} (FAIL - must solve every run)`;
+            lines.push(`[eval] ${level.level} ${level.name}: gate ${level.gate} -> ${mark}`);
+        } else {
+            lines.push(
+                `[eval] ${level.level} ${level.name}: gate ${level.gate} -> solved ${level.solved}/${runs}, ` +
+                `${unsolved} unsolved runs diagnosed`,
+            );
+        }
+    }
+    lines.push(`[eval] verdict: ${result.verdict}`);
+    lines.push(`[eval] report: ${e.reportPath ?? '(not configured)'}`);
+    return lines.join('\n');
 }

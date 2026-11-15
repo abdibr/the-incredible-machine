@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { resolveDriverConfig, runDriver, DRIVER_ENV } from '../../agent/driver.js';
 import { AgentSession } from '../../agent/session.js';
-import { resolveEvalConfig, EVAL_ENV, PROTOCOL_LEVELS, PROTOCOL_EXCLUDED, runProtocol } from '../../agent/eval.js';
+import { resolveEvalConfig, EVAL_ENV, PROTOCOL_LEVELS, PROTOCOL_EXCLUDED, runProtocol, renderReport, renderSummary } from '../../agent/eval.js';
 import { startStubServer, makeWinPolicy, makeLevelSelectivePolicy } from '../helpers/stub-provider.js';
 
 /**
@@ -246,6 +246,97 @@ describe('runProtocol - the gate and the stuck-point diagnosis', () => {
             expect(l03.runs[0].diagnosis.join('\n')).toContain('Line up the dominoes on the ramp');
             // solved gate runs diagnose nothing stuck
             expect(result.levels[0].runs[0].diagnosis[0]).toMatch(/not stuck \(solved after \d+ turns\)/);
+        },
+    );
+});
+
+describe('renderReport + renderSummary - the compact per-level report', () => {
+    it(
+        'renders the per-level sections, gate/aggregate lines, caveats and the marked VOLATILE block',
+        { timeout: 60000 },
+        async () => {
+            const { stub, config } = await evalConfig(makeLevelSelectivePolicy(['level-01']), { seeds: '1,4' });
+            const result = await runProtocol(config);
+            await stub.close(); stubs.pop(); // this test owns its stub fully; afterEach sees stubs[] empty
+
+            const report = renderReport(result);
+
+            // HEADER: identity + configuration echo
+            expect(report).toContain('TIM agent phase-2 exit eval - protocol report');
+            expect(report).toContain('protocol: p2-exit-eval v1');
+            expect(report).toContain(`model: ${result.configEcho.model}`);
+            expect(report).toContain('turn transport: host mode (in-process runTurn; the game lives in this process)');
+            expect(report).toContain('turn cap: 20');
+            expect(report).toContain('seeds (world construction only): 1, 4');
+            expect(report).toContain(
+                'protocol levels: level-01 - must-solve-every-run; level-02 - attempt-and-diagnose; level-03 - attempt-and-diagnose',
+            );
+            expect(report).toMatch(/excluded by design: level-04 \(Lighter Than Air\) - known-broken rope-attach\/balloon mechanics/);
+
+            // VOLATILE block: wall-clock only, clearly fenced
+            const begin = report.indexOf('# BEGIN VOLATILE');
+            const end = report.indexOf('# END VOLATILE');
+            expect(begin).toBeGreaterThan(-1);
+            expect(end).toBeGreaterThan(begin);
+            const volatileBlock = report.slice(begin, end);
+            expect(volatileBlock).toContain('started: ');
+            expect(volatileBlock).toContain('ended: ');
+            expect(volatileBlock).toContain('wall seconds total: ');
+            expect(volatileBlock).toContain('wall seconds per run: ');
+            // wall-clock does NOT leak into the stable sections
+            expect(report.slice(0, begin)).not.toMatch(/started:|ended:|wall seconds/);
+            expect(report.slice(end)).not.toMatch(/started:|ended:|wall seconds/);
+
+            // GATE + aggregate
+            expect(report).toContain('gate: PASS - level-01 solved in every run (2 of 2)');
+            expect(report).toContain('aggregate: level-01 solved 2/2; level-02 solved 0/2 (2 unsolved runs diagnosed); level-03 solved 0/2 (2 unsolved runs diagnosed)');
+
+            // PER-LEVEL sections
+            expect(report).toContain('[level-01 - First Steps] gate: must-solve-every-run');
+            expect(report).toContain('[level-02 - Across the Gap] gate: attempt-and-diagnose');
+            expect(report).toContain('[level-03 - Chain Reaction] gate: attempt-and-diagnose');
+            expect(report).toContain('goal: (object_in_zone, target ball, zone bucket-goal)');
+            expect(report).toMatch(/run 1\/2: seed 1 -> goal-reached after \d+ turns; transcript .*\/level-01-seed1\.txt/);
+            expect(report).toMatch(/run 2\/2: seed 4 -> goal-reached after \d+ turns; transcript .*\/level-01-seed4\.txt/);
+            // notable events ride with solved runs; no diagnosis block for them
+            expect(report).toMatch(/events: .*caught by bucket-goal/);
+            const l01Section = report.slice(report.indexOf('[level-01 - '), report.indexOf('[level-02 - '));
+            expect(l01Section).not.toContain('diagnosis');
+            // unsolved runs: outcomes + diagnosis blocks
+            expect(report).toMatch(/run 1\/2: seed 1 -> turn-cap after \d+ turns; transcript .*\/level-02-seed1\.txt/);
+            expect(report).toContain('run 1 diagnosis (unsolved):');
+            expect(report).toContain('observation gap: the level ships a hint the observation never shows');
+
+            // DETERMINISM CAVEATS: what seeding covers, what it cannot, the diffability contract
+            expect(report).toContain('determinism caveats:');
+            expect(report).toMatch(/pins WORLD construction randomness only/);
+            expect(report).toMatch(/provider sampling \(the driver sets no temperature/);
+            expect(report).toMatch(/provider-side drift/);
+            expect(report).toMatch(/identical seeds AND identical provider behavior yield byte-identical report/);
+
+            const summary = renderSummary(result);
+            expect(summary).toMatch(/^\[eval\] p2-exit-eval v1: model=stub-model seeds=1,4 cap=20$/m);
+            expect(summary).toMatch(/^\[eval\] level-01 First Steps: gate must-solve-every-run -> solved 2\/2 \(PASS\)$/m);
+            expect(summary).toMatch(/^\[eval\] level-02 Across the Gap: gate attempt-and-diagnose -> solved 0\/2, 2 unsolved runs diagnosed$/m);
+            expect(summary).toMatch(/^\[eval\] verdict: gate passed$/m);
+            expect(summary).toMatch(/^\[eval\] report: /m);
+        },
+    );
+
+    it(
+        'renders the gate failing honestly when level-01 is unsolved',
+        { timeout: 60000 },
+        async () => {
+            const { stub, config } = await evalConfig(makeLevelSelectivePolicy([]), { seeds: '5' });
+            const failResult = await runProtocol(config);
+            await stub.close(); stubs.pop();
+
+            const report = renderReport(failResult);
+
+            expect(report).toContain('gate: FAIL - level-01 solved in 0 of 1 runs (must-solve-every-run)');
+            expect(report).toContain('level-02/03 unsolved-with-diagnosis is acceptable by design');
+            expect(renderSummary(failResult)).toMatch(/^\[eval\] verdict: gate failed$/m);
+            expect(renderSummary(failResult)).toMatch(/^\[eval\] level-01 First Steps: gate must-solve-every-run -> solved 0\/1 \(FAIL - must solve every run\)$/m);
         },
     );
 });
