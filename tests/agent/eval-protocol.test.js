@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtemp, readFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { join, dirname } from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { resolveDriverConfig, runDriver, DRIVER_ENV } from '../../agent/driver.js';
 import { AgentSession } from '../../agent/session.js';
 import { resolveEvalConfig, EVAL_ENV, PROTOCOL_LEVELS, PROTOCOL_EXCLUDED, runProtocol, renderReport, renderSummary } from '../../agent/eval.js';
@@ -405,6 +406,106 @@ describe('renderReport - the diffability pin (two consecutive seeded invocations
                 // the section closes on a blank line before the next level's section
                 expect(lines[lines.length - 1]).toBe('');
             }
+        },
+    );
+});
+describe('scripts/eval-protocol.mjs - the ONE COMMAND (executable doc; acceptance: one command runs the protocol)', () => {
+    const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+    /**
+     * Spawn the script against a stub provider with this test's own env
+     * overrides (flags/env contract tested above). ASYNC spawn on purpose:
+     * the stub server lives in this worker's event loop - a blocking
+     * spawnSync here would deadlock it against the child's provider requests.
+     * @private
+     */
+    function runScript(envOverrides, timeoutMs = 110000) {
+        return new Promise((resolve, reject) => {
+            const child = spawn('node', ['scripts/eval-protocol.mjs'], {
+                cwd: REPO_ROOT,
+                env: { ...process.env, ...envOverrides },
+                stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            child.stdout.setEncoding('utf8');
+            child.stderr.setEncoding('utf8');
+            let out = '';
+            let err = '';
+            child.stdout.on('data', (d) => { out += d; });
+            child.stderr.on('data', (d) => { err += d; });
+            const timer = setTimeout(() => {
+                child.kill();
+                reject(new Error(`eval-protocol.mjs did not finish within ${timeoutMs}ms`));
+            }, timeoutMs);
+            child.on('error', (e) => { clearTimeout(timer); reject(e); });
+            child.on('close', (status) => { clearTimeout(timer); resolve({ status, stdout: out, stderr: err }); });
+        });
+    }
+
+    it(
+        'writes the per-level report at the configured path, prints the summary to stdout, exits 0 on gate pass',
+        { timeout: 120000 },
+        async () => {
+            dir = await mkdtemp(join(tmpdir(), 'tim-eval-cli-'));
+            const stub = await startStubServer(makeLevelSelectivePolicy(['level-01']));
+            stubs.push(stub);
+            const report = join(dir, 'out', 'report.txt');
+            const transcripts = join(dir, 'out', 't');
+
+            const r = await runScript({
+                [EVAL_ENV.MODEL]: 'stub-model',
+                [EVAL_ENV.BASE_URL]: `http://127.0.0.1:${stub.port}/v1`,
+                [EVAL_ENV.SEEDS]: '1,4',
+                [EVAL_ENV.REPORT]: report,
+                [EVAL_ENV.TRANSCRIPTS]: transcripts,
+            });
+
+            expect(r.error).toBeUndefined();
+            expect(r.status).toBe(0);
+            // stdout = the volatile-free summary, and it names the report it wrote
+            expect(r.stdout).toContain('[eval] p2-exit-eval v1: model=stub-model seeds=1,4 cap=20');
+            expect(r.stdout).toContain(`[eval] report: ${report}`);
+            // the report exists on disk with the full report shape
+            const reportText = await readFile(report, 'utf8');
+            expect(reportText).toContain('TIM agent phase-2 exit eval - protocol report');
+            expect(reportText).toContain('gate: PASS - level-01 solved in every run (2 of 2)');
+            expect(reportText).toContain('# BEGIN VOLATILE');
+            expect(reportText).toContain('determinism caveats:');
+            expect(reportText).toContain('excluded by design: level-04 (Lighter Than Air)');
+            // every transcript the report references actually landed in the configured dir
+            const refs = reportText
+                .split('\n')
+                .filter((l) => l.startsWith('run ') && l.includes('transcript '))
+                .map((l) => /transcript (\S+)$/.exec(l)[1]);
+            expect(refs).toHaveLength(6);
+            for (const ref of refs) expect(await readFile(ref, 'utf8')).toContain('outcome:');
+        },
+    );
+
+    it(
+        'exits 2 on config error before any run (stderr names the missing model); exits 1 on gate failure with the report written anyway',
+        { timeout: 120000 },
+        async () => {
+            const noModel = await runScript({ [EVAL_ENV.MODEL]: '' });
+            expect(noModel.status).toBe(2);
+            expect(noModel.stderr).toContain(EVAL_ENV.MODEL);
+
+            dir = await mkdtemp(join(tmpdir(), 'tim-eval-cli-fail-'));
+            const stub = await startStubServer(makeLevelSelectivePolicy([]));
+            stubs.push(stub);
+            const report = join(dir, 'r.txt');
+
+            const r = await runScript({
+                [EVAL_ENV.MODEL]: 'stub-model',
+                [EVAL_ENV.BASE_URL]: `http://127.0.0.1:${stub.port}/v1`,
+                [EVAL_ENV.SEEDS]: '7',
+                [EVAL_ENV.REPORT]: report,
+            });
+
+            expect(r.status).toBe(1);
+            expect(r.stdout).toContain('[eval] verdict: gate failed');
+            expect(r.stdout).toContain('[eval] report:');
+            // the report is written anyway - the measurement, not the verdict, is the product
+            expect(await readFile(report, 'utf8')).toContain('gate: FAIL - level-01 solved in 0 of 1 runs (must-solve-every-run)');
         },
     );
 });
