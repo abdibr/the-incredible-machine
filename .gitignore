@@ -16,6 +16,9 @@ dist-ssr
 .scratch/
 .playwright-mcp/
 
+# Driver transcript artifacts (agent/driver.js default output; never committed)
+.agent-transcripts/
+
 # Generated knowledge-graph output (graphify)
 graphify-out/
 .vitest-*.txt
