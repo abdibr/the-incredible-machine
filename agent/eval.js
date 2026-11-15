@@ -236,7 +236,6 @@ export async function runProtocol(config) {
                 turnLog: run.turnLog ?? [],
                 endBudget: session.budget(),
                 placements: withSlots(session.placements),
-                note: null,
             };
             record.diagnosis = analyzeRun(record, { hints: session.levelData?.hints });
             runs.push(record);
