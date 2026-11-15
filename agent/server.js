@@ -189,17 +189,12 @@ async function handleObservation(req, res, scope, params) {
         body = {}; // query params still apply on a malformed body
     }
     const session = await scope.ensure(params.get('level') ?? body.level ?? scope.level);
-    const turn = runTurn(
-        {
-            action: 'observe',
-            cell: params.get('cell') ?? body.cell,
-            grid: body.grid,
-            key: body.key,
-            state: body.state,
-            graph: body.graph,
-        },
-        session,
-    );
+    // THE raw-params map (ticket #95): query params overlay the JSON body
+    // into ONE source object - the option keys themselves are whitelisted in
+    // exactly one place, the observationOptions builder inside runTurn
+    // (agent/turn.js). The HTTP composition and the /turn composition are
+    // the same composition; a sixth option is one edit in turn.js.
+    const turn = runTurn({ action: 'observe', ...body, ...Object.fromEntries(params) }, session);
     respond(res, 200, { level: scope.level, observation: turn.observation });
 }
 

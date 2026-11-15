@@ -230,3 +230,36 @@ describe('turn service - concurrency and request hardening', () => {
         }
     });
 });
+describe('turn service - /observation rides the same option builder as the turn path (ticket #95)', () => {
+    it('a POST /observation body carries the same five options as a /turn action JSON', async () => {
+        // the JSON body maps into the builder exactly like an action turn:
+        // real booleans, real cell values, describeWorld defaults when absent
+        const res = await post('/observation', { cell: 'full', key: false, graph: false, state: false });
+
+        expect(res.status).toBe(200);
+        expect(res.body.observation).toMatch(/cell 8px/);
+        expect(res.body.observation).not.toMatch(/legend:/);
+        expect(res.body.observation).not.toMatch(/relations/);
+        expect(res.body.observation).not.toMatch(/state:/);
+    });
+
+    it('query params ride the same composition: key/state/graph are honored from the query too', async () => {
+        // `?state=&graph=&key=` reads the empty string - falsy like a JSON
+        // `false`, so the whole trio turns off from the query string alone.
+        const res = await fetch(`${service.url}/observation?state=&graph=&key=`);
+        const body = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(body.observation).toContain('level-01'); // still a complete observation
+        expect(body.observation).not.toMatch(/state:/);
+        expect(body.observation).not.toMatch(/relations/);
+        expect(body.observation).not.toMatch(/legend:/);
+    });
+
+    it('a query cell still wins over the body cell - the raw-params merge order is pinned', async () => {
+        const res = await post('/observation?cell=full', { cell: 'auto' });
+
+        expect(res.status).toBe(200);
+        expect(res.body.observation).toMatch(/cell 8px/);
+    });
+});

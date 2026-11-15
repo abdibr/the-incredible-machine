@@ -71,9 +71,20 @@ function isActionJson(actionJson) {
     );
 }
 
-/** Pull the observation options out of the action JSON (undefined = describeWorld defaults). @private */
-function observationOptions(actionJson) {
-    const o = actionJson ?? {};
+/**
+ * THE observation options builder - the one composition of the
+ * observation options { cell, grid, key, state, graph }: every path into
+ * runTurn (the full action turn JSON on the turn path, the merged raw
+ * params object the HTTP layer reduces a request to) is whitelisted HERE,
+ * once. A sixth option lands in this list and both paths pick it up -
+ * hand-written compositions elsewhere cannot silently disagree.
+ * @param {object|null} [source] raw source object; the option keys ride as
+ *   top-level properties (undefined = describeWorld default)
+ * @returns {{ cell: *, grid: *, key: *, state: *, graph: * }} the exact
+ *   describeWorld option shape - those five keys, nothing more.
+ */
+export function observationOptions(source) {
+    const o = source ?? {};
     return {
         cell: o.cell,
         grid: o.grid,
