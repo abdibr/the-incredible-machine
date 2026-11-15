@@ -192,9 +192,14 @@ async function handleObservation(req, res, scope, params) {
     // THE raw-params map (ticket #95): query params overlay the JSON body
     // into ONE source object - the option keys themselves are whitelisted in
     // exactly one place, the observationOptions builder inside runTurn
-    // (agent/turn.js). The HTTP composition and the /turn composition are
-    // the same composition; a sixth option is one edit in turn.js.
-    const turn = runTurn({ action: 'observe', ...body, ...Object.fromEntries(params) }, session);
+    // (agent/turn.js), which also settles the string->boolean reading of
+    // the raw query values. The HTTP composition and the /turn composition
+    // are the same composition; a sixth option is one edit in turn.js.
+    // The observe verb is PINNED LAST, after the body and query spreads:
+    // this endpoint is the observation entry point, never an action path -
+    // a client action key (body or query) cannot reach trial/reset here
+    // (?action=trial&dt= would otherwise wedge the session chain forever).
+    const turn = runTurn({ ...body, ...Object.fromEntries(params), action: 'observe' }, session);
     respond(res, 200, { level: scope.level, observation: turn.observation });
 }
 
