@@ -15,3 +15,16 @@ The five default canonical triage labels, used as-is: `needs-triage`, `needs-inf
 ### Domain docs
 
 Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
+
+## Branch policy
+
+- `main` is the playable game, release-only. It carries **no `*.md` files at all** — never
+  plain-merge `develop` into main yourself; the release script strips every markdown file.
+- All docs (README, AGENTS, GLOSSARY, ADRs, plans, work-log, scratch) live on `develop` and
+  the branches below it. Always work on `develop` or a ticket/feature branch off it — not main.
+- To release develop into main:
+
+  ```
+  git fetch origin
+  bash <(git show develop:scripts/merge-to-main.sh)
+  ```
