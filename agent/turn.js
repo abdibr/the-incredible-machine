@@ -72,12 +72,39 @@ function isActionJson(actionJson) {
 }
 
 /**
+ * The raw-string spellings that read OFF for a boolean flag. A query
+ * string carries no types: the pinned `?state=&graph=&key=` empty-string
+ * trio already read OFF (falsy like a JSON `false`), and so do the other
+ * raw falsy spellings '0' and 'false' - a `?key=false` query and a
+ * "key": false body must not disagree. Every other non-empty string reads
+ * ON exactly as before; non-string values (real JSON booleans, numbers,
+ * null on the /turn body) pass through verbatim and undefined keeps the
+ * describeWorld default (ON).
+ * @private
+ */
+const OFF_STRINGS = new Set(['', '0', 'false']);
+
+/**
+ * One raw-string -> boolean reading for the flag options, used only here -
+ * the builder is where raw params become typed options.
+ * @private
+ * @param {*} value
+ * @returns {*} false for the OFF spellings, otherwise the value verbatim
+ */
+function boolFlag(value) {
+    return typeof value === 'string' ? !OFF_STRINGS.has(value) : value;
+}
+
+/**
  * THE observation options builder - the one composition of the
  * observation options { cell, grid, key, state, graph }: every path into
  * runTurn (the full action turn JSON on the turn path, the merged raw
  * params object the HTTP layer reduces a request to) is whitelisted HERE,
  * once. A sixth option lands in this list and both paths pick it up -
- * hand-written compositions elsewhere cannot silently disagree.
+ * hand-written compositions elsewhere cannot silently disagree. The four
+ * boolean flags (grid, key, state, graph) are typed here as well: raw
+ * strings read '', '0' and 'false' as OFF (boolFlag above), non-strings
+ * verbatim; cell is free-form ('auto' | 'full' | size) and rides as-is.
  * @param {object|null} [source] raw source object; the option keys ride as
  *   top-level properties (undefined = describeWorld default)
  * @returns {{ cell: *, grid: *, key: *, state: *, graph: * }} the exact
@@ -87,10 +114,10 @@ export function observationOptions(source) {
     const o = source ?? {};
     return {
         cell: o.cell,
-        grid: o.grid,
-        key: o.key,
-        state: o.state,
-        graph: o.graph,
+        grid: boolFlag(o.grid),
+        key: boolFlag(o.key),
+        state: boolFlag(o.state),
+        graph: boolFlag(o.graph),
     };
 }
 
