@@ -64,7 +64,9 @@
  *
  * TRANSCRIPT (printed in full to stdout AND written to the file): header
  * (level/model/provider base URL/key presence/turn service mode/cap/outcome/turns), then per turn the
- * observation excerpt the model decided on -> the exact tool call (JSON)
+ * observation excerpt the model decided on (goal header + state table +
+ * relations IN FULL; only grid/legend rows elided behind named markers) ->
+ * the exact tool call (JSON)
  * -> the structured result it got back, including the trial verdict row.
  *
  * USAGE - HOST MODE (the world lives in this process; the default):
@@ -114,8 +116,10 @@ const MAX_TRIAL_SECONDS = 120;
 const MAX_TRIAL_DT = 1000;
 const DEFAULT_MAX_TURNS = 20;
 const DEFAULT_LEVEL = 'level-01';
-const EXCERPT_HEAD_LINES = 12;
+const EXCERPT_GRID_LINES = 4;
 const EXCERPT_EVENT_LINES = 8;
+const EXCERPT_FULL_LINES = 40; // at/below this an observation is small: render it in full
+
 /** Container-mode POST /turn cap per request (the service trial guard is 120 s; a
  *  turn request may not out-wait it) - past it the turn answers with structured
  *  unreachable data, never a hang. */
@@ -519,15 +523,53 @@ function createDriverTools(transport) {
 /**
  * One transcript row: what the model saw (excerpt) -> what it chose (exact
  * tool call + arguments) -> what it got back (the structured result).
+ *
+ * The excerpt keeps the DECISION-RELEVANT observation content in EVERY row
+ * (ticket #48: the transcript must show the observation the model decided
+ * from): the goal header, the state table and the relations graph render
+ * IN FULL, trial events stay bounded-visible (8 lines, the cut is named);
+ * only the bulky grid/legend block is elided behind honest
+ * "( ... elided: N lines ... )" markers - the label stays truthful.
+ * Small observations (placeholders, error text) render in full.
  * @private
  */
 function excerptObservation(observation) {
-    const lines = String(observation ?? '').split('\n');
-    if (lines.length === 0 || String(observation ?? '').trim() === '') return '| (empty observation)';
-    const eventsIdx = lines.findIndex((l) => l.startsWith('events:'));
-    const head = lines.slice(0, Math.min(EXCERPT_HEAD_LINES, lines.length));
-    const tail = eventsIdx >= EXCERPT_HEAD_LINES ? lines.slice(eventsIdx, eventsIdx + EXCERPT_EVENT_LINES) : [];
-    return [...head, ...tail].map((l) => `| ${l}`).join('\n');
+    const text = String(observation ?? '');
+    if (text.trim() === '') return '| (empty observation)';
+    const lines = text.split('\n');
+    const full = () => lines.map((l) => `|` + ' ' + l).join('\n');
+    if (lines.length <= EXCERPT_FULL_LINES) return full();
+    const find = (label) => lines.findIndex((l) => l.startsWith(label));
+    const worldIdx = find('world ');
+    if (worldIdx < 0) return full();
+    const legendIdx = find('legend:');
+    const stateIdx = find('state:');
+    const eventsIdx = find('events:');
+    const out = [];
+    // The grid block runs from the "world WxH, cell ..." dims line to the next
+    // labelled section (legend, or the state table): keep its first rows here,
+    // name the elided rest - the frame bottom + ruler + rows below them.
+    const nextIdx = legendIdx > worldIdx ? legendIdx : (stateIdx > worldIdx ? stateIdx : lines.length);
+    const gridKeep = Math.min(worldIdx + 1 + EXCERPT_GRID_LINES, nextIdx);
+    out.push(...lines.slice(0, gridKeep));
+    const gridElided = nextIdx - gridKeep;
+    if (gridElided > 0) out.push(`( ... grid + ruler elided: ${gridElided} lines ... )`);
+    if (legendIdx >= 0 && stateIdx > legendIdx) {
+        out.push(`( ... legend elided: ${stateIdx - legendIdx} lines ... )`);
+    }
+    // The state table + relations render IN FULL - the decision-relevant core.
+    if (stateIdx >= 0) {
+        const relationsEnd = eventsIdx > stateIdx ? eventsIdx : lines.length;
+        out.push(...lines.slice(stateIdx, relationsEnd));
+    } else {
+        out.push('( ... this observation carries no state table ... )');
+    }
+    if (eventsIdx >= 0) {
+        out.push(...lines.slice(eventsIdx, eventsIdx + EXCERPT_EVENT_LINES));
+        const eventsElided = lines.length - (eventsIdx + EXCERPT_EVENT_LINES);
+        if (eventsElided > 0) out.push(`( ... events elided: ${eventsElided} more lines ... )`);
+    }
+    return out.map((l) => `|` + ' ' + l).join('\n');
 }
 
 function renderRow(turn, observation, calls, outputs, note = null) {

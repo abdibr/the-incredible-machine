@@ -157,6 +157,29 @@ describe('llm driver - driver loop over a stubbed provider', () => {
             expect(onDisk).toContain('"ok":true');
         },
     );
+    it(
+        'every transcript row shows the decision-relevant observation: goal header, state table, relations (ticket #48 AC-3)',
+        { timeout: 90000 },
+        async () => {
+            const { config } = await driverFixture(makeWinPolicy());
+
+            const res = await runDriver(config, session);
+
+            const rows = res.transcript.split(/(?==== turn \d+ ===)/).filter((r) => r.startsWith('=== turn'));
+            expect(rows.length).toBe(res.turns);
+            for (const row of rows) {
+                // the observation the model DECIDED from: the goal header + state table + relations
+                expect(row).toContain('observation (excerpt):');
+                expect(row).toContain('First Steps');
+                expect(row).toContain('state:');
+                expect(row).toMatch(/bucket-goal\s+bucket/);
+                expect(row).toContain('relations');
+                // the excerpt stays honest and compact: the cut is NAMED, the row bounded
+                expect(row).toContain('elided');
+                expect(row.split('\n').length).toBeLessThanOrEqual(30);
+            }
+        },
+    );
 });
 
 describe('resolveDriverConfig - provider-agnostic env configuration', () => {
