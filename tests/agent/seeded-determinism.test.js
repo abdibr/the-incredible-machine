@@ -1,5 +1,6 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { AgentSession } from '../../agent/session.js';
+import { resolveSeed, createSeedRng, SEED_ENV_VAR } from '../../agent/rng.js';
 import { place } from '../../agent/actions.js';
 import { stateRows } from '../../agent/observe/state.js';
 import { renderGrid } from '../../agent/observe/grid.js';
@@ -21,9 +22,14 @@ const SEED_B = 424242;
 /** @type {import('../../agent/session.js').AgentSession|null} */
 let session = null;
 
+beforeEach(() => {
+    delete process.env[SEED_ENV_VAR]; // no ambient seed leaks between tests
+});
+
 afterEach(() => {
     session?.dispose();
     session = null;
+    vi.unstubAllEnvs();
 });
 
 // Fixture worlds (ad-hoc level data - loadLevel accepts full documents).
@@ -34,6 +40,17 @@ const BALLOON_LEVEL = {
     goal: { type: 'object_in_zone', targetType: 'ball', zoneId: 'bucket-goal' },
     fixedObjects: [{ type: 'bucket', x: 700, y: 480, id: 'bucket-goal' }],
     availableParts: { balloon: 2, ball: 1 },
+};
+
+// Candle-bearing world: the fixed candle is the only construction-random
+// object beyond the placed balloon (Candle ctor draws its flicker phase).
+// The balloon rises into the flame, so the trial carries a real event.
+const CANDLE_LEVEL = {
+    id: 'seeded-candle-fixture',
+    name: 'seeded determinism fixture - candle',
+    goal: { type: 'object_in_zone', targetType: 'ball', zoneId: 'bucket-goal' },
+    fixedObjects: [{ type: 'bucket', x: 200, y: 480, id: 'bucket-goal' }, { type: 'candle', x: 500, y: 470 }],
+    availableParts: { balloon: 1 },
 };
 
 // Instance ids (`balloon-3`) are process-lifetime counters (BaseObject
@@ -93,10 +110,174 @@ async function balloonRun(seed) {
     }
 }
 
+/** One full candle-bearing trial (place a balloon under the candle flame). */
+async function candleRun(seed) {
+    const s = new AgentSession({ seed });
+    try {
+        await s.loadLevel(CANDLE_LEVEL);
+        expect(place(s, 'balloon', 500, 560)).toMatchObject({ ok: true });
+        const record = stableRecord(s);
+        // Guard richness: the balloon must actually reach the flame, so the
+        // record covers the event log, not an accidentally-empty world.
+        expect(record).toContain('balloon popped');
+        return record;
+    } finally {
+        s.dispose();
+    }
+}
+
 describe('seeded determinism - reproducible agent trials through the session seam', () => {
     it('same seed, two fresh sessions: byte-identical trial output (balloon-bearing)', async () => {
         const first = await balloonRun(SEED_A);
         const second = await balloonRun(SEED_A);
         expect(second).toBe(first);
+    });
+
+    it('same session, repeated build of the same level + placements: byte-identical output', async () => {
+        session = new AgentSession({ seed: SEED_A });
+        await session.loadLevel(BALLOON_LEVEL);
+        expect(place(session, 'balloon', 150, 250)).toMatchObject({ ok: true });
+        expect(place(session, 'ball', 700, 500)).toMatchObject({ ok: true });
+
+        const first = stableRecord(session);
+        const second = stableRecord(session); // trial() rebuilds the world every call
+        expect(second).toBe(first);
+    });
+
+    it('different seeds produce different trial records (the pin can discriminate)', async () => {
+        const seeded = await balloonRun(SEED_A);
+        const other = await balloonRun(SEED_B);
+        expect(other).not.toBe(seeded);
+    });
+
+    it('same seed, two fresh sessions: byte-identical trial output (candle-bearing)', async () => {
+        const first = await candleRun(SEED_A);
+        const second = await candleRun(SEED_A);
+        expect(second).toBe(first);
+    });
+});
+describe('seed source - option, or TIM_AGENT_SEED env var (session ctor seam)', () => {
+    it('env var seeds the session when no option is given, and reproduces the option-seeded run', async () => {
+        vi.stubEnv(SEED_ENV_VAR, '4242');
+        session = new AgentSession();
+        expect(session.seed).toBe(4242);
+        await session.loadLevel(BALLOON_LEVEL);
+        expect(place(session, 'balloon', 150, 250)).toMatchObject({ ok: true });
+        expect(place(session, 'ball', 700, 500)).toMatchObject({ ok: true });
+        const envRecord = stableRecord(session);
+        const id = session; session = null; id.dispose();
+
+        // The option-spelled constructor with the same value must produce the
+        // same bytes - the two spellings are one seam.
+        expect(envRecord).toBe(await balloonRun(4242));
+    });
+
+    it('invalid env value: warns loudly, session stays unseeded', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            vi.stubEnv(SEED_ENV_VAR, 'not-a-number');
+            session = new AgentSession();
+            expect(session.seed).toBeNull();
+            expect(warnSpy).toHaveBeenCalled();
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
+    it('invalid option seed (even with an env fallback set): warns, stays unseeded', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            vi.stubEnv(SEED_ENV_VAR, '65536');
+            session = new AgentSession({ seed: 'banana' });
+            expect(session.seed).toBeNull();
+            expect(warnSpy).toHaveBeenCalled();
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
+    it('seed 0 is configured (falsy but valid)', () => {
+        vi.stubEnv(SEED_ENV_VAR, '0');
+        session = new AgentSession();
+        expect(session.seed).toBe(0);
+    });
+});
+
+describe('agent/rng - resolveSeed + generator', () => {
+    it('refuses unusable values with a warning, normalizes usable ones', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            expect(resolveSeed(undefined)).toBeNull();
+            expect(resolveSeed(null)).toBeNull();
+            expect(resolveSeed('')).toBeNull();
+            expect(resolveSeed('   ')).toBeNull();
+            expect(resolveSeed(0)).toBe(0);
+            expect(resolveSeed('1337')).toBe(1337);
+            expect(resolveSeed(12.75)).toBe(12);
+            expect(resolveSeed(4294967303)).toBe(7); // wraps like a uint32
+            expect(resolveSeed(-1)).toBeNull();
+            expect(resolveSeed('banana')).toBeNull();
+            expect(resolveSeed(Infinity)).toBeNull();
+            expect(warnSpy).toHaveBeenCalledTimes(3);
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
+    it('same seed -> identical draw sequence; different seeds diverge; draws stay in [0,1)', () => {
+        const draws = (seed, n) => {
+            const rng = createSeedRng(seed);
+            return Array.from({ length: n }, () => rng());
+        };
+        expect(draws(1337, 8)).toEqual(draws(1337, 8));
+        expect(draws(1337, 8)).not.toEqual(draws(1338, 8));
+        for (const v of draws(1337, 8)) {
+            expect(v).toBeGreaterThanOrEqual(0);
+            expect(v).toBeLessThan(1);
+        }
+    });
+});
+
+describe('no seed configured - the byte-identical-by-default constraint', () => {
+    it('unseeded construction still consumes the global Math.random, as today', async () => {
+        const original = Math.random;
+        const probe = vi.fn(() => 0.5); // pin the external generator
+        Math.random = probe;
+        try {
+            session = new AgentSession();
+            await session.loadLevel(BALLOON_LEVEL);
+            expect(place(session, 'balloon', 150, 250)).toMatchObject({ ok: true });
+            expect(place(session, 'ball', 700, 500)).toMatchObject({ ok: true });
+
+            // With the external generator pinned, repeated builds are exact -
+            // proving Math.random is the pipeline's only construction entropy.
+            expect(stableRecord(session)).toBe(stableRecord(session));
+        } finally {
+            Math.random = original;
+        }
+        expect(probe).toHaveBeenCalled(); // the default path really drew from it
+    });
+
+    it('seeded build bypasses the global and restores it after the construction window', async () => {
+        const original = Math.random;
+        const probe = vi.fn(original);
+        Math.random = probe;
+        try {
+            session = new AgentSession({ seed: SEED_A });
+            await session.loadLevel(BALLOON_LEVEL);
+            expect(place(session, 'balloon', 150, 250)).toMatchObject({ ok: true });
+            // place() builds a THROWAWAY clamp probe outside any window (an
+            // ambient draw with zero effect on results - bounds never consult
+            // the random options); clear it so the assertion below audits
+            // exactly the seeded BUILD.
+            probe.mockClear();
+
+            session.trial({ seconds: 1 }); // trial() rebuilds: the seeded window
+
+            expect(probe).not.toHaveBeenCalled(); // build draws came from the session PRNG
+            expect(Math.random).toBe(probe); // the swap-out cannot leak past the window
+        } finally {
+            Math.random = original;
+        }
     });
 });
