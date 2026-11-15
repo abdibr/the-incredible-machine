@@ -2,9 +2,9 @@
 # merge-to-main.sh — release `develop` into `main`.
 #
 # main policy: main is the playable game ONLY. It carries no `*.md` files at all
-# (no README, AGENTS, GLOSSARY, plans, ADRs, work-log...). All docs live on
-# `develop` and its feature branches. This script merges origin/develop into
-# main and strips every tracked markdown file as part of the merge commit.
+# (no README, AGENTS, GLOSSARY, plans, ADRs, work-log...) and no `.scratch/` dev
+# workspace — of any file type. All docs and scratch work live on `develop` and its
+# feature branches. This script merges origin/develop into main and strips both.
 #
 # The script itself lives on develop (it's a doc/tool, so main doesn't have it).
 # Because checking out main removes it from the worktree, run it via process
@@ -42,9 +42,12 @@ if ! git merge --no-commit --no-ff "$DEV"; then
   echo "merge has conflicts — markdown paths are auto-resolved below" >&2
 fi
 
-# main policy: strip every tracked markdown file (-f also resolves md
-# modify/delete conflicts in favor of main's deletion).
+# main policy strips (resolved as deletions on the main side; -f also resolves
+# modify/delete conflicts in favor of the delete):
+#   - every tracked markdown file, anywhere in the tree
+#   - the whole `.scratch/` dev workspace, any file type
 git ls-files -z '*.md' | xargs -0 -r git rm -q -f --ignore-unmatch
+git ls-files -z -- '.scratch' | xargs -0 -r git rm -q -f --ignore-unmatch
 
 # fail loudly if anything non-markdown is still conflicted
 CONFLICTS="$(git diff --name-only --diff-filter=U | grep -v '\.md$' || true)"
@@ -58,10 +61,15 @@ git commit --no-edit
 git push origin main
 
 echo "main updated: $(git rev-parse --short main)"
-echo "verifying main is markdown-free:"
-if [ -n "$(git ls-files '*.md')" ]; then
-  echo "ERROR: markdown files remain tracked on main:" >&2
-  git ls-files '*.md' >&2
-  exit 1
-fi
-echo "  clean — no tracked *.md on main."
+echo "verifying main is dev-doc-free:"
+fail=0
+for pat in '*.md' '.scratch'; do
+  left="$(git ls-files -- "$pat")"
+  if [ -n "$left" ]; then
+    echo "ERROR: paths still tracked under '$pat':" >&2
+    echo "$left" >&2
+    fail=1
+  fi
+done
+if [ "$fail" != 0 ]; then exit 1; fi
+echo "  clean — no tracked *.md or .scratch on main."
