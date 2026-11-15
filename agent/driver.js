@@ -98,7 +98,7 @@ import { OpenAI } from 'openai';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runTurn } from './turn.js';
+import { runTurn, MAX_TRIAL_SECONDS, MAX_TRIAL_DT, trialGuardError } from './turn.js';
 import { AgentSession } from './session.js';
 
 /** The provider/env configuration contract (resolved by resolveDriverConfig). */
@@ -111,9 +111,6 @@ export const DRIVER_ENV = Object.freeze({
     API_KEY: 'OPENAI_API_KEY',
 });
 
-/** Server-parity trial clamps (agent/server.js MAX_TRIAL_SECONDS / MAX_TRIAL_DT). */
-const MAX_TRIAL_SECONDS = 120;
-const MAX_TRIAL_DT = 1000;
 const DEFAULT_MAX_TURNS = 20;
 const DEFAULT_LEVEL = 'level-01';
 const EXCERPT_GRID_LINES = 4;
@@ -286,23 +283,6 @@ function toolOutput(actionJson, turn) {
     return JSON.stringify({ action: actionJson.action, result: turn.result, observation: turn.observation });
 }
 
-/** Server-parity clamp for trial knobs; returns an error string or null. @private */
-function trialGuardError(args) {
-    if (args.seconds !== undefined) {
-        const n = Number(args.seconds);
-        if (!(Number.isFinite(n) && n > 0 && n <= MAX_TRIAL_SECONDS)) {
-            return `trial seconds must be a number between 0 and ${MAX_TRIAL_SECONDS} (got ${JSON.stringify(args.seconds)})`;
-        }
-    }
-    if (args.dt !== undefined) {
-        const n = Number(args.dt);
-        if (!(Number.isFinite(n) && n >= 1 && n <= MAX_TRIAL_DT)) {
-            return `trial dt must be a number between 1 and ${MAX_TRIAL_DT} ms (got ${JSON.stringify(args.dt)})`;
-        }
-    }
-    return null;
-}
-
 /**
  * Container-mode turn transport (ticket #49): every tool turn POSTs the
  * action JSON to the turn service's /turn endpoint - the exact service the
@@ -384,7 +364,10 @@ function createTurnTransport(config, session) {
  * Plain JSON-schema parameters (strict:false): arguments are parsed but
  * NOT pre-validated here - agent/actions.js owns validation and answers
  * with its structured never-throw results, which is the contract the model
- * is taught (and the tests pin).
+ * is taught (and the tests pin). The ONE exception: the trial tool
+ * pre-validates its clamp knobs through the shared trialGuardError -
+ * out-of-range seconds/dt are refused BEFORE they can wedge the phase-1
+ * sync trial loop, byte-identically in both modes.
  * @param {{ turn(actionJson: object): Promise<{ observation: string, result: object }> }} transport
  */
 function createDriverTools(transport) {

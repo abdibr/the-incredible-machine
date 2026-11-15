@@ -136,6 +136,24 @@ describe('llm driver - driver loop over a stubbed provider', () => {
             expect(res.transcript.indexOf('unknown type: unicorn')).toBeLessThan(res.transcript.indexOf('"outcome":"reached"'));
         },
     );
+    it(
+        'the trial tool answers absurd model knobs with THE shared guard wording (agent/turn.js trialGuardError) and keeps playing',
+        { timeout: 90000 },
+        async () => {
+            // a model that always tries a 1e6-second trial: the tool refuses locally,
+            // the loop continues to the cap - server parity is the same STRING now.
+            const { config } = await driverFixture(
+                () => ({ calls: [{ name: 'trial', args: { seconds: 1000000 } }] }),
+                { argv: ['--max-turns', '2'] },
+            );
+
+            const res = await runDriver(config, session);
+
+            expect(res.outcome).toBe('turn-cap');
+            expect(res.transcript).toContain('trial seconds must be a number between 0 and 120 (got 1000000)');
+            expect(res.turnLog.every((t) => t.outputs[0]?.result?.ok === false)).toBe(true);
+        },
+    );
 
     it(
         'writes the transcript to the configured file, byte-identical to the printed transcript',

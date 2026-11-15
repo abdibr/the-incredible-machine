@@ -21,6 +21,38 @@ import { describeWorld } from './observe/describe.js';
 /** The action verbs runTurn dispatches on - the known set, ever. */
 export const KNOWN_ACTIONS = ['place', 'remove', 'rotate', 'nudge', 'reset', 'trial', 'observe'];
 
+/**
+ * THE trial clamps - the single source of truth shared by agent/server.js
+ * (the structured 400 refusal BEFORE runTurn) and agent/driver.js (the
+ * trial tool's pre-validation): phase-1 trial() is a sync loop, so absurd
+ * seconds/dt must be refused at the turn boundary, never reach the loop.
+ */
+export const MAX_TRIAL_SECONDS = 120;
+export const MAX_TRIAL_DT = 1000;
+
+/**
+ * The trial clamp guard: a refusal STRING for out-of-range trial knobs, or
+ * null when the trial request is sane. One wording everywhere - the
+ * "one contract in both modes" rule (server 400 == driver tool result).
+ * @param {{ seconds?: unknown, dt?: unknown }} args
+ * @returns {string|null}
+ */
+export function trialGuardError(args) {
+    if (args?.seconds !== undefined) {
+        const n = Number(args.seconds);
+        if (!(Number.isFinite(n) && n > 0 && n <= MAX_TRIAL_SECONDS)) {
+            return `trial seconds must be a number between 0 and ${MAX_TRIAL_SECONDS} (got ${JSON.stringify(args.seconds)})`;
+        }
+    }
+    if (args?.dt !== undefined) {
+        const n = Number(args.dt);
+        if (!(Number.isFinite(n) && n >= 1 && n <= MAX_TRIAL_DT)) {
+            return `trial dt must be a number between 1 and ${MAX_TRIAL_DT} ms (got ${JSON.stringify(args.dt)})`;
+        }
+    }
+    return null;
+}
+
 /** One stable wording for a turn payload that is not a usable action object. */
 const MALFORMED_ERROR = 'malformed request: an action turn must be a JSON object with an "action" field';
 

@@ -168,3 +168,23 @@ describe('runTurn - observation options', () => {
         expect(turn.observation).not.toMatch(/relations/); // graph off
     });
 });
+describe('trialGuardError - THE one trial clamp (server 400 refusal + driver tool pre-validation share it)', () => {
+    it('agent/turn.js exposes the shared clamp constants and the documented refusal strings', async () => {
+        // dynamic import so the pin is the red: the exports do not exist yet
+        const turnMod = await import('../../agent/turn.js');
+        expect(turnMod.MAX_TRIAL_SECONDS).toBe(120);
+        expect(turnMod.MAX_TRIAL_DT).toBe(1000);
+        const { trialGuardError } = turnMod;
+        expect(trialGuardError({ seconds: 1000000 })).toBe('trial seconds must be a number between 0 and 120 (got 1000000)');
+        expect(trialGuardError({ seconds: 0 })).toBe('trial seconds must be a number between 0 and 120 (got 0)');
+        expect(trialGuardError({ seconds: 120.5 })).toBe('trial seconds must be a number between 0 and 120 (got 120.5)');
+        expect(trialGuardError({ seconds: 'lots' })).toBe('trial seconds must be a number between 0 and 120 (got "lots")');
+        expect(trialGuardError({ dt: 0 })).toBe('trial dt must be a number between 1 and 1000 ms (got 0)');
+        expect(trialGuardError({ dt: -5 })).toBe('trial dt must be a number between 1 and 1000 ms (got -5)');
+        expect(trialGuardError({ dt: 1001 })).toBe('trial dt must be a number between 1 and 1000 ms (got 1001)');
+        expect(trialGuardError({})).toBeNull();
+        expect(trialGuardError({ seconds: 5, dt: 1000 })).toBeNull();
+        expect(trialGuardError({ seconds: undefined, dt: 16.67 })).toBeNull();
+        expect(trialGuardError({ seconds: 120, dt: 1 })).toBeNull();
+    });
+});

@@ -19,7 +19,7 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { AgentSession } from './session.js';
-import { runTurn, KNOWN_ACTIONS } from './turn.js';
+import { runTurn, KNOWN_ACTIONS, trialGuardError } from './turn.js';
 
 export const DEFAULT_LEVEL = 'level-01';
 
@@ -145,27 +145,6 @@ function methodNotAllowed(req, res, scope, path) {
     });
 }
 
-/** Trial guards: phase-1 trial() is a sync loop - absurd inputs would wedge the loop, not throw. */
-const MAX_TRIAL_SECONDS = 120;
-const MAX_TRIAL_DT = 1000;
-
-/** @private @returns {string|null} a refusal reason, or null when the trial request is sane */
-function trialRefusal(body) {
-    if ('seconds' in body) {
-        const n = Number(body.seconds);
-        if (!(Number.isFinite(n) && n > 0 && n <= MAX_TRIAL_SECONDS)) {
-            return `trial seconds must be a number between 0 and ${MAX_TRIAL_SECONDS} (got ${JSON.stringify(body.seconds)})`;
-        }
-    }
-    if ('dt' in body) {
-        const n = Number(body.dt);
-        if (!(Number.isFinite(n) && n >= 1 && n <= MAX_TRIAL_DT)) {
-            return `trial dt must be a number between 1 and ${MAX_TRIAL_DT} ms (got ${JSON.stringify(body.dt)})`;
-        }
-    }
-    return null;
-}
-
 /** @private - POST /turn: one action against the scoped session. */
 async function handleTurn(req, res, scope) {
     const raw = await readBody(req);
@@ -175,7 +154,9 @@ async function handleTurn(req, res, scope) {
     } catch {
         actionJson = null; // malformed body -> runTurn's structured envelope
     }
-    const refusal = actionJson && actionJson.action === 'trial' ? trialRefusal(actionJson) : null;
+    // THE one clamp (agent/turn.js): the same wording the driver tool answers
+// with - out-of-range trial knobs are refused before they wedge the loop.
+const refusal = actionJson && actionJson.action === 'trial' ? trialGuardError(actionJson) : null;
     if (refusal) {
         const session = await scope.ensure(actionJson.level ?? scope.level);
         return respond(res, 400, {
