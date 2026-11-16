@@ -62,7 +62,7 @@
  *   node scripts/docker-demo.mjs --keep       leave the container up for manual curl
  *   node scripts/docker-demo.mjs --audit-only build + image fs audit, no service
  *
- * Overrides: TIM_DEMO_PORT (host port in step 3, default 8787).
+ * Overrides: TIM_TURN_PORT (host port in step 3, default 8787).
  */
 
 import process from 'node:process';
@@ -70,7 +70,7 @@ import { REPO_ROOT, demoFail, docker, dockerQuiet, waitForHealth } from './lib/d
 const IMAGE = 'tim-turn-service';
 const CONTAINER = 'tim-turn-demo';
 const CONTAINER_PORT = 8787;
-const HOST_PORT = Number(process.env.TIM_DEMO_PORT ?? CONTAINER_PORT);
+const HOST_PORT = Number(process.env.TIM_TURN_PORT ?? CONTAINER_PORT);
 const BASE_URL = `http://127.0.0.1:${HOST_PORT}`;
 const AUDIT_ONLY = process.argv.includes('--audit-only');
 const KEEP = process.argv.includes('--keep');

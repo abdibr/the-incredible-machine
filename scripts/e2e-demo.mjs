@@ -49,7 +49,7 @@
  *   TIM_AGENT_SEED        optional; forwarded INTO the container
  *                         (docker run -e TIM_AGENT_SEED=...) where
  *                         AgentSession (ticket #46) seeds the trials.
- *   TIM_E2E_PORT          optional published host port (default 8787).
+ *   TIM_TURN_PORT         optional published host port (default 8787).
  *   TIM_E2E_LEVEL         optional level (default level-01).
  *   TIM_E2E_IMAGE         optional image tag (default tim-turn-service).
  *   TIM_E2E_CONTAINER     optional container name (default tim-e2e-llm).
@@ -72,7 +72,7 @@ import { REPO_ROOT, demoFail, docker, dockerQuiet, waitForHealth } from './lib/d
 const IMAGE = process.env.TIM_E2E_IMAGE ?? 'tim-turn-service';
 const CONTAINER = process.env.TIM_E2E_CONTAINER ?? 'tim-e2e-llm';
 const CONTAINER_PORT = 8787;
-const HOST_PORT = Number(process.env.TIM_E2E_PORT ?? CONTAINER_PORT);
+const HOST_PORT = Number(process.env.TIM_TURN_PORT ?? CONTAINER_PORT);
 const BASE_URL = `http://127.0.0.1:${HOST_PORT}`;
 const LEVEL = process.env.TIM_E2E_LEVEL ?? 'level-01';
 const KEEP = process.argv.includes('--keep');
