@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { AgentSession } from '../../agent/session.js';
-import { runTurn } from '../../agent/turn.js';
+import { runTurn, trialGuardError, MAX_TRIAL_SECONDS, MAX_TRIAL_DT, observationOptions } from '../../agent/turn.js';
 
 /** @type {import('../../agent/session.js').AgentSession|null} */
 let session = null;
@@ -169,12 +169,9 @@ describe('runTurn - observation options', () => {
     });
 });
 describe('trialGuardError - THE one trial clamp (server 400 refusal + driver tool pre-validation share it)', () => {
-    it('agent/turn.js exposes the shared clamp constants and the documented refusal strings', async () => {
-        // dynamic import so the pin is the red: the exports do not exist yet
-        const turnMod = await import('../../agent/turn.js');
-        expect(turnMod.MAX_TRIAL_SECONDS).toBe(120);
-        expect(turnMod.MAX_TRIAL_DT).toBe(1000);
-        const { trialGuardError } = turnMod;
+    it('agent/turn.js exposes the shared clamp constants and the documented refusal strings', () => {
+        expect(MAX_TRIAL_SECONDS).toBe(120);
+        expect(MAX_TRIAL_DT).toBe(1000);
         expect(trialGuardError({ seconds: 1000000 })).toBe('trial seconds must be a number between 0 and 120 (got 1000000)');
         expect(trialGuardError({ seconds: 0 })).toBe('trial seconds must be a number between 0 and 120 (got 0)');
         expect(trialGuardError({ seconds: 120.5 })).toBe('trial seconds must be a number between 0 and 120 (got 120.5)');
@@ -186,5 +183,78 @@ describe('trialGuardError - THE one trial clamp (server 400 refusal + driver too
         expect(trialGuardError({ seconds: 5, dt: 1000 })).toBeNull();
         expect(trialGuardError({ seconds: undefined, dt: 16.67 })).toBeNull();
         expect(trialGuardError({ seconds: 120, dt: 1 })).toBeNull();
+    });
+});
+
+describe('observationOptions - the ONE option composition both paths share (ticket #95)', () => {
+    it('is exported and whitelists exactly the five options from the source', () => {
+        expect(typeof observationOptions).toBe('function');
+        // A full action turn JSON: option keys ride along; action, level
+        // scope and target coords never leak into the options object.
+        expect(
+            observationOptions({
+                action: 'observe',
+                level: 'level-01',
+                type: 'ball',
+                x: 700,
+                y: 100,
+                cell: 'full',
+                grid: false,
+                key: true,
+                state: false,
+                graph: true,
+            }),
+        ).toStrictEqual({ cell: 'full', grid: false, key: true, state: false, graph: true });
+        // a stray sixth property stays out: the whitelist is the exact shape
+        expect(observationOptions({ cell: 'auto', sixth: true })).toStrictEqual({
+            cell: 'auto',
+            grid: undefined,
+            key: undefined,
+            state: undefined,
+            graph: undefined,
+        });
+    });
+
+    it('a missing or empty source yields the describeWorld-defaults shape (all five keys undefined)', () => {
+        for (const source of [null, undefined, {}, { action: 'observe' }]) {
+            expect(observationOptions(source)).toStrictEqual({
+                cell: undefined,
+                grid: undefined,
+                key: undefined,
+                state: undefined,
+                graph: undefined,
+            });
+        }
+    });
+
+    it('string flag values are typed once: the OFF spellings read OFF, every other string ON', () => {
+        // a query string has no types: the pinned `?state=&graph=&key=`
+        // empty-string trio reads OFF, and so must the other raw falsy
+        // spellings '0' and 'false' - a `"grid": false` body and a
+        // `?grid=false` query must not disagree
+        expect(observationOptions({ grid: '', key: 'false', state: '0' })).toStrictEqual({
+            cell: undefined,
+            grid: false,
+            key: false,
+            state: false,
+            graph: undefined,
+        });
+        // every other non-empty string reads ON, exactly as before
+        expect(observationOptions({ grid: '1', key: 'true', state: 'yes', graph: 'any' })).toStrictEqual({
+            cell: undefined,
+            grid: true,
+            key: true,
+            state: true,
+            graph: true,
+        });
+        // non-strings pass through verbatim: real booleans, numbers - and
+        // the undefined that keeps the describeWorld default (ON)
+        expect(observationOptions({ grid: false, key: true, state: 0, graph: undefined })).toStrictEqual({
+            cell: undefined,
+            grid: false,
+            key: true,
+            state: 0,
+            graph: undefined,
+        });
     });
 });

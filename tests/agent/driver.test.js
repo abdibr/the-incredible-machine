@@ -85,6 +85,64 @@ describe('llm driver - driver loop over a stubbed provider', () => {
     );
 
     it(
+        'advertises the seven tool descriptors verbatim on the wire: phase-1 order, exact descriptions and argument schemas (ticket #94)',
+        { timeout: 90000 },
+        async () => {
+            // One observe-jammed turn suffices: request #0 already carries the
+            // full advertised tool list the model would see.
+            const { stub, errors, config } = await driverFixture(makeJammerPolicy(), { argv: ['--max-turns', '1'] });
+            await runDriver(config, session);
+            expect(errors).toEqual([]);
+
+            // chat-completions function descriptors: name + description + JSON schema, strict off.
+            const fn = (name, description, parameters) => ({ name, description, parameters, strict: false });
+            const schema = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: true });
+            expect(stub.requests[0].body.tools.map((t) => t.function)).toEqual([
+                fn('observe',
+                    "Read the world fresh: grid, legend, state table, relations. Cell 'auto' by default, 'full' for the precise 8px map.",
+                    schema({ cell: { type: 'string', description: "'auto' (default) or 'full'" } })),
+                fn('place',
+                    'Place a budgeted part at game coordinates (x left-to-right from 0, y grows downward). Types: the state-table vocabulary (ball, ramp, trampoline, domino, fan, balloon, spring, ...).',
+                    schema({
+                        type: { type: 'string', description: 'part type' },
+                        x: { type: 'number', description: 'game x' },
+                        y: { type: 'number', description: 'game y' },
+                        angle: { type: 'number', description: 'optional initial angle, radians' },
+                    }, ['type', 'x', 'y'])),
+                fn('remove',
+                    'Remove one of YOUR placed parts by type + 0-based slot (level fixed objects are immutable).',
+                    schema({
+                        type: { type: 'string', description: 'part type to remove' },
+                        slot: { type: 'number', description: '0-based slot among your placements of that type (default 0)' },
+                    }, ['type'])),
+                fn('rotate',
+                    'Rotate one of YOUR placed parts to an absolute angle (radians).',
+                    schema({
+                        type: { type: 'string', description: 'part type' },
+                        radians: { type: 'number', description: 'absolute angle in radians' },
+                        slot: { type: 'number', description: '0-based slot (default 0)' },
+                    }, ['type', 'radians'])),
+                fn('nudge',
+                    'Move one of YOUR placed parts by an (dx, dy) offset.',
+                    schema({
+                        type: { type: 'string', description: 'part type' },
+                        dx: { type: 'number', description: 'x offset' },
+                        dy: { type: 'number', description: 'y offset' },
+                        slot: { type: 'number', description: '0-based slot (default 0)' },
+                    }, ['type', 'dx', 'dy'])),
+                fn('reset',
+                    'Wipe all YOUR placements back to the bare level (fixed objects stay).',
+                    schema({})),
+                fn('trial',
+                    'Simulate the current world: rebuild with your placements and step the physics for seconds. The tool result outcome tells "reached" (win), "failed" (target left the playfield) or "timeout".',
+                    schema({
+                        seconds: { type: 'number', description: 'sim seconds, 0 < s <= 120 (default 5)' },
+                        dt: { type: 'number', description: 'physics step dt in ms, 1 <= dt <= 1000 (default ~16.67)' },
+                    })),
+            ]);
+        },
+    );
+    it(
         'terminates cleanly when the goal fails mid-loop',
         { timeout: 90000 },
         async () => {

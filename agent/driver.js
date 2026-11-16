@@ -347,148 +347,160 @@ function createTurnTransport(config, session) {
 }
 
 /**
- * The seven tools: one per phase-1 action + the observation entry point,
- * each calling runTurn() - THE only path from the model into the game.
- * Plain JSON-schema parameters (strict:false): arguments are parsed but
- * NOT pre-validated here - agent/actions.js owns validation and answers
- * with its structured never-throw results, which is the contract the model
- * is taught (and the tests pin). The ONE exception: the trial tool
- * pre-validates its clamp knobs through the shared trialGuardError -
- * out-of-range seconds/dt are refused BEFORE they can wedge the phase-1
- * sync trial loop, byte-identically in both modes.
+ * THE ACTION TOOLS AS ONE SMALL TABLE (ticket #94): verb -> argument schema +
+ * handler. The phase-1 verbs place / remove / rotate / nudge / reset / trial
+ * are six ROWS of data instead of six copied definition/execute chunks - a
+ * new tool is a new row, never a re-copied block. Row order is phase-1 order,
+ * which is also the advertised order on the wire (the tests pin it).
+ *   verb        the tool name: the phase-1 action verb
+ *   description the model-facing description, verbatim as the model sees it
+ *   parameters  the argument schema (plain JSON schema; strict:false below) -
+ *               arguments are parsed but NOT pre-validated here: agent/
+ *               actions.js owns validation and answers with its structured
+ *               never-throw results, which is the contract the model is
+ *               taught (and the tests pin). THE one exception is the trial
+ *               row's guard below.
+ *   build(args) the EXACT action JSON this verb drives the turn boundary with
+ *   guard?      (trial only) pre-validates its clamp knobs through the shared
+ *               trialGuardError - out-of-range seconds/dt are refused BEFORE
+ *               they can wedge the phase-1 sync trial loop, byte-identically
+ *               in both modes (agent/turn.js owns the wording).
+ */
+const ACTION_TOOLS = Object.freeze([
+    {
+        verb: 'place',
+        description: 'Place a budgeted part at game coordinates (x left-to-right from 0, y grows downward). Types: the state-table vocabulary (ball, ramp, trampoline, domino, fan, balloon, spring, ...).',
+        parameters: {
+            type: 'object',
+            properties: {
+                type: { type: 'string', description: 'part type' },
+                x: { type: 'number', description: 'game x' },
+                y: { type: 'number', description: 'game y' },
+                angle: { type: 'number', description: 'optional initial angle, radians' },
+            },
+            required: ['type', 'x', 'y'],
+            additionalProperties: true,
+        },
+        build: (args) => ({ action: 'place', type: args.type, x: args.x, y: args.y, angle: args.angle }),
+    },
+    {
+        verb: 'remove',
+        description: 'Remove one of YOUR placed parts by type + 0-based slot (level fixed objects are immutable).',
+        parameters: {
+            type: 'object',
+            properties: {
+                type: { type: 'string', description: 'part type to remove' },
+                slot: { type: 'number', description: '0-based slot among your placements of that type (default 0)' },
+            },
+            required: ['type'],
+            additionalProperties: true,
+        },
+        build: (args) => ({ action: 'remove', type: args.type, slot: args.slot }),
+    },
+    {
+        verb: 'rotate',
+        description: 'Rotate one of YOUR placed parts to an absolute angle (radians).',
+        parameters: {
+            type: 'object',
+            properties: {
+                type: { type: 'string', description: 'part type' },
+                radians: { type: 'number', description: 'absolute angle in radians' },
+                slot: { type: 'number', description: '0-based slot (default 0)' },
+            },
+            required: ['type', 'radians'],
+            additionalProperties: true,
+        },
+        build: (args) => ({ action: 'rotate', type: args.type, radians: args.radians, slot: args.slot }),
+    },
+    {
+        verb: 'nudge',
+        description: 'Move one of YOUR placed parts by an (dx, dy) offset.',
+        parameters: {
+            type: 'object',
+            properties: {
+                type: { type: 'string', description: 'part type' },
+                dx: { type: 'number', description: 'x offset' },
+                dy: { type: 'number', description: 'y offset' },
+                slot: { type: 'number', description: '0-based slot (default 0)' },
+            },
+            required: ['type', 'dx', 'dy'],
+            additionalProperties: true,
+        },
+        build: (args) => ({ action: 'nudge', type: args.type, dx: args.dx, dy: args.dy, slot: args.slot }),
+    },
+    {
+        verb: 'reset',
+        description: 'Wipe all YOUR placements back to the bare level (fixed objects stay).',
+        parameters: { type: 'object', properties: {}, required: [], additionalProperties: true },
+        build: () => ({ action: 'reset' }),
+    },
+    {
+        verb: 'trial',
+        description: 'Simulate the current world: rebuild with your placements and step the physics for seconds. The tool result outcome tells "reached" (win), "failed" (target left the playfield) or "timeout".',
+        parameters: {
+            type: 'object',
+            properties: {
+                seconds: { type: 'number', description: `sim seconds, 0 < s <= ${MAX_TRIAL_SECONDS} (default 5)` },
+                dt: { type: 'number', description: `physics step dt in ms, 1 <= dt <= ${MAX_TRIAL_DT} (default ~16.67)` },
+            },
+            required: [],
+            additionalProperties: true,
+        },
+        guard: trialGuardError,
+        build: (args) => ({ action: 'trial', seconds: args.seconds, dt: args.dt }),
+    },
+]);
+
+/**
+ * The seven tools: the observation entry point + one tool per ACTION_TOOLS
+ * row, each of them the ONLY path from the model into the game.
+ *
+ * ONE execute path serves every row (ticket #94): parse the model's JSON
+ * arguments (asArgs), let the row's guard speak (only trial has one; the
+ * refusal reads the world back through an observe turn so the observation
+ * still rides along), then build the row's exact action JSON and drive the
+ * transport turn. Uniform output: { action, result, observation } as one
+ * JSON line, never a throw.
  * @param {{ turn(actionJson: object): Promise<{ observation: string, result: object }> }} transport
  */
 function createDriverTools(transport) {
     const observe = { action: 'observe' };
-    return [
-        tool({
-            name: 'observe',
-            description: "Read the world fresh: grid, legend, state table, relations. Cell 'auto' by default, 'full' for the precise 8px map.",
-            parameters: {
-                type: 'object',
-                properties: { cell: { type: 'string', description: "'auto' (default) or 'full'" } },
-                required: [],
-                additionalProperties: true,
-            },
-            strict: false,
-            execute: async (input) => {
-                const args = asArgs(input);
-                return toolOutput(observe, await transport.turn({ ...observe, cell: args.cell }));
-            },
-        }),
-        tool({
-            name: 'place',
-            description: "Place a budgeted part at game coordinates (x left-to-right from 0, y grows downward). Types: the state-table vocabulary (ball, ramp, trampoline, domino, fan, balloon, spring, ...).",
-            parameters: {
-                type: 'object',
-                properties: {
-                    type: { type: 'string', description: 'part type' },
-                    x: { type: 'number', description: 'game x' },
-                    y: { type: 'number', description: 'game y' },
-                    angle: { type: 'number', description: 'optional initial angle, radians' },
-                },
-                required: ['type', 'x', 'y'],
-                additionalProperties: true,
-            },
-            strict: false,
-            execute: async (input) => {
-                const args = asArgs(input);
-                const actionJson = { action: 'place', type: args.type, x: args.x, y: args.y, angle: args.angle };
-                return toolOutput(actionJson, await transport.turn(actionJson));
-            },
-        }),
-        tool({
-            name: 'remove',
-            description: 'Remove one of YOUR placed parts by type + 0-based slot (level fixed objects are immutable).',
-            parameters: {
-                type: 'object',
-                properties: {
-                    type: { type: 'string', description: 'part type to remove' },
-                    slot: { type: 'number', description: '0-based slot among your placements of that type (default 0)' },
-                },
-                required: ['type'],
-                additionalProperties: true,
-            },
-            strict: false,
-            execute: async (input) => {
-                const args = asArgs(input);
-                const actionJson = { action: 'remove', type: args.type, slot: args.slot };
-                return toolOutput(actionJson, await transport.turn(actionJson));
-            },
-        }),
-        tool({
-            name: 'rotate',
-            description: 'Rotate one of YOUR placed parts to an absolute angle (radians).',
-            parameters: {
-                type: 'object',
-                properties: {
-                    type: { type: 'string', description: 'part type' },
-                    radians: { type: 'number', description: 'absolute angle in radians' },
-                    slot: { type: 'number', description: '0-based slot (default 0)' },
-                },
-                required: ['type', 'radians'],
-                additionalProperties: true,
-            },
-            strict: false,
-            execute: async (input) => {
-                const args = asArgs(input);
-                const actionJson = { action: 'rotate', type: args.type, radians: args.radians, slot: args.slot };
-                return toolOutput(actionJson, await transport.turn(actionJson));
-            },
-        }),
-        tool({
-            name: 'nudge',
-            description: 'Move one of YOUR placed parts by an (dx, dy) offset.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    type: { type: 'string', description: 'part type' },
-                    dx: { type: 'number', description: 'x offset' },
-                    dy: { type: 'number', description: 'y offset' },
-                    slot: { type: 'number', description: '0-based slot (default 0)' },
-                },
-                required: ['type', 'dx', 'dy'],
-                additionalProperties: true,
-            },
-            strict: false,
-            execute: async (input) => {
-                const args = asArgs(input);
-                const actionJson = { action: 'nudge', type: args.type, dx: args.dx, dy: args.dy, slot: args.slot };
-                return toolOutput(actionJson, await transport.turn(actionJson));
-            },
-        }),
-        tool({
-            name: 'reset',
-            description: 'Wipe all YOUR placements back to the bare level (fixed objects stay).',
-            parameters: { type: 'object', properties: {}, required: [], additionalProperties: true },
-            strict: false,
-            execute: async () => toolOutput({ action: 'reset' }, await transport.turn({ action: 'reset' })),
-        }),
-        tool({
-            name: 'trial',
-            description: 'Simulate the current world: rebuild with your placements and step the physics for seconds. The tool result outcome tells "reached" (win), "failed" (target left the playfield) or "timeout".',
-            parameters: {
-                type: 'object',
-                properties: {
-                    seconds: { type: 'number', description: `sim seconds, 0 < s <= ${MAX_TRIAL_SECONDS} (default 5)` },
-                    dt: { type: 'number', description: `physics step dt in ms, 1 <= dt <= ${MAX_TRIAL_DT} (default ~16.67)` },
-                },
-                required: [],
-                additionalProperties: true,
-            },
-            strict: false,
-            execute: async (input) => {
-                const args = asArgs(input);
-                const guard = trialGuardError(args);
-                if (guard) {
-                    const readBack = await transport.turn({ ...observe });
-                    return JSON.stringify({ action: 'trial', result: { ok: false, error: guard }, observation: readBack.observation });
-                }
-                const actionJson = { action: 'trial', seconds: args.seconds, dt: args.dt };
-                return toolOutput(actionJson, await transport.turn(actionJson));
-            },
-        }),
-    ];
+    // The observation entry point is NOT a row of the table: every row reads
+    // the world back through it when a turn is refused (see the guard above) -
+    // one tool, the door the rows go through.
+    const observeTool = tool({
+        name: 'observe',
+        description: "Read the world fresh: grid, legend, state table, relations. Cell 'auto' by default, 'full' for the precise 8px map.",
+        parameters: {
+            type: 'object',
+            properties: { cell: { type: 'string', description: "'auto' (default) or 'full'" } },
+            required: [],
+            additionalProperties: true,
+        },
+        strict: false,
+        execute: async (input) => {
+            const args = asArgs(input);
+            return toolOutput(observe, await transport.turn({ ...observe, cell: args.cell }));
+        },
+    });
+    // The one execute path every table row is served by.
+    const actionTool = (row) => tool({
+        name: row.verb,
+        description: row.description,
+        parameters: row.parameters,
+        strict: false,
+        execute: async (input) => {
+            const args = asArgs(input);
+            const guard = row.guard ? row.guard(args) : null;
+            if (guard) {
+                const readBack = await transport.turn({ ...observe });
+                return JSON.stringify({ action: row.verb, result: { ok: false, error: guard }, observation: readBack.observation });
+            }
+            const actionJson = row.build(args);
+            return toolOutput(actionJson, await transport.turn(actionJson));
+        },
+    });
+    return [observeTool, ...ACTION_TOOLS.map((row) => actionTool(row))];
 }
 
 /**
