@@ -18,6 +18,7 @@ import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
 import { GoalChecker } from '../js/goals/GoalChecker.js';
 import { levelObjectOptions } from '../js/ui/selectionHandles.js';
 import { EventRecorder } from './observe/events.js';
+import { createSeedRng, resolveSeed, SEED_ENV_VAR } from './rng.js';
 
 /** Validate a level document — mirrors LevelManager._validate(). @private */
 function validateLevelData(data) {
@@ -30,9 +31,13 @@ function validateLevelData(data) {
 
 export class AgentSession {
     /**
-     * @param {{ width?: number, height?: number }} [options] playfield size
+     * @param {{ width?: number, height?: number, seed?: number|string }} [options]
+     *      playfield size; `seed` opts this session into seeded construction
+     *      randomness (strings accepted, e.g. a raw env value). When omitted
+     *      the TIM_AGENT_SEED env var is consulted; both unset = today's
+     *      unseeded behavior.
      */
-    constructor({ width = 1000, height = 600 } = {}) {
+    constructor({ width = 1000, height = 600, seed } = {}) {
         if (objectRegistry.getAll().length === 0) registerAllObjects();
         this.width = width;
         this.height = height;
@@ -45,6 +50,9 @@ export class AgentSession {
         this._outcome = null;
         this._failureReason = null;
         this._lastResult = null;
+        // Opt-in seeded determinism, agent-side only (null = unseeded = stock
+        // Math.random behavior). Re-applied per build in _rebuild().
+        this._seed = resolveSeed(seed === undefined ? process.env?.[SEED_ENV_VAR] : seed);
         this._unsubs = [
             eventBus.on('goal:reached', () => { this._outcome = 'reached'; }),
             eventBus.on('goal:failed', ({ reason } = {}) => { this._outcome = 'failed'; this._failureReason = reason; }),
@@ -64,6 +72,11 @@ export class AgentSession {
     /** @returns {Array<{t:string,text:string,landmark?:boolean}>} sentences of the last trial */
     get lastEventSentences() {
         return this._lastResult?.events ?? [];
+    }
+
+    /** @returns {number|null} resolved construction seed, or null when unseeded */
+    get seed() {
+        return this._seed;
     }
 
     /**
@@ -116,16 +129,28 @@ export class AgentSession {
         // GoalChecker arms on these two events (same seam as the live app).
         eventBus.emit('level:loaded', this.levelData);
         eventBus.emit('mode:changed', { oldMode: 'EDITING', newMode: 'PLAYING' });
-        for (const d of this.levelData.fixedObjects) {
-            try {
-                const obj = objectRegistry.create(d.type, d.x, d.y, levelObjectOptions(d));
-                this.engine.addObject(obj);
-            } catch (e) {
-                console.warn(`[AgentSession] could not create fixed object: ${d.type}`, e);
+        // Construction window (agent-side seeded determinism): object ctors are
+        // the only Math.random consumers during a build (Balloon color/bob
+        // phase, Candle flicker phase). With a seed configured, swap the global
+        // generator for one re-seeded per rebuild, so every draw in this window
+        // is reproducible run-over-run; restore before any step runs. With no
+        // seed the swap never happens - behavior is exactly the browser's.
+        const prevRandom = Math.random;
+        if (this._seed !== null) Math.random = createSeedRng(this._seed);
+        try {
+            for (const d of this.levelData.fixedObjects) {
+                try {
+                    const obj = objectRegistry.create(d.type, d.x, d.y, levelObjectOptions(d));
+                    this.engine.addObject(obj);
+                } catch (e) {
+                    console.warn(`[AgentSession] could not create fixed object: ${d.type}`, e);
+                }
             }
-        }
-        for (const p of this.placements) {
-            this.engine.addObject(objectRegistry.create(p.type, p.x, p.y, { angle: p.angle }));
+            for (const p of this.placements) {
+                this.engine.addObject(objectRegistry.create(p.type, p.x, p.y, { angle: p.angle }));
+            }
+        } finally {
+            Math.random = prevRandom;
         }
     }
 
