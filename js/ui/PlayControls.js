@@ -20,6 +20,9 @@ class PlayControls {
 
         /** Current mode */
         this._mode = 'MENU';
+
+        /** The rope debug overlay toggle state (issue #59) - the button reflects it. */
+        this._ropeDebug = false;
     }
 
     /**
@@ -40,12 +43,17 @@ class PlayControls {
         this._createButton('pause', '⏸', 'Pause');
         this._createButton('reset', '⏹', 'Reset');
         this._createButton('speed', '1×', 'Speed Toggle');
+        // The rope debug overlay toggle (issue #59): a debugging affordance,
+        // available at every stage but the menu - enabling it during play is
+        // the deliberate decision-9 exception the overlay exists for.
+        this._createButton('rope-debug', 'DBG', 'Rope debug overlay');
 
         // Button click handlers
         this.buttons.play.addEventListener('click', () => this._onPlay());
         this.buttons.pause.addEventListener('click', () => this._onPause());
         this.buttons.reset.addEventListener('click', () => this._onReset());
         this.buttons.speed.addEventListener('click', () => this._onSpeed());
+        this.buttons['rope-debug'].addEventListener('click', () => this._onRopeDebug());
 
         // Keyboard shortcuts
         this._keyHandler = (e) => {
@@ -107,6 +115,19 @@ class PlayControls {
         eventBus.emit('controls:reset');
     }
 
+    _onRopeDebug() {
+        // Issue #59: the toggle flips its own state and announces it; the app
+        // wiring (wireRopeDebugOverlay) carries it to the renderer's overlay
+        // flag - nothing else moves (simulation and gameplay state untouched
+        // by construction: this emits a flag, not a stage change).
+        this._ropeDebug = !this._ropeDebug;
+        // The button mirrors its own state right here: a click is the one
+        // thing this toggle answers for and no stage change rides along,
+        // so _updateButtonStates alone cannot carry its highlight.
+        this.buttons['rope-debug'].classList.toggle('btn-active', this._ropeDebug);
+        eventBus.emit('controls:rope-debug', { enabled: this._ropeDebug });
+    }
+
     _onSpeed() {
         // GameLoop.cycleSpeed() (wired at app level) owns the speed state;
         // this UI mirrors it via the `loop:speed` event.
@@ -134,6 +155,10 @@ class PlayControls {
         if (this._speed !== 1) {
             this.buttons.speed.classList.add('btn-active');
         }
+
+        // The debug toggle's own highlight (issue #59): pressed while the
+        // overlay is explicitly enabled, whatever the stage.
+        this.buttons['rope-debug'].classList.toggle('btn-active', this._ropeDebug);
 
         switch (mode) {
             case 'MENU':

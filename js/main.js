@@ -142,6 +142,20 @@ export function wireSpeedControl(appState) {
     });
 }
 
+/**
+ * Subscribe the rope debug overlay toggle (issue #59): the DBG control
+ * flips the renderer's overlay flag and nothing else - a debugging
+ * affordance must not disturb the simulation or gameplay state.
+ * Exported separately from _wireEvents() so the wiring is unit-testable
+ * without a DOM boot (same way wireSpeedControl is).
+ * @returns {Function} unsubscribe function
+ */
+export function wireRopeDebugOverlay() {
+    return eventBus.on('controls:rope-debug', ({ enabled }) => {
+        renderer.showRopeDebugOverlay = enabled === true;
+    });
+}
+
 // ──────────────────────────────────────────────
 // Initialization
 // ──────────────────────────────────────────────
@@ -222,6 +236,9 @@ function init() {
     // instance the drag-drop handler delegates square clicks to
     // (ADR 0007 decision 2).
     renderer.setConnectFlow(dragDropManager.connectFlow);
+    renderer.setPhysicsEngine(state.physicsEngine);
+    // The rope debug overlay (issue #59) reads the live engine picture from
+    // the same engine the game loop steps - read-only access.
     // Fixed-end tie pulls clamp to the same world as the physics engine's
     // boundary walls (ADR 0007 decision 4): a pulled target must never be
     // parked inside a wall. Same dims the engine was constructed with.
@@ -309,6 +326,9 @@ function _wireEvents() {
 
     // Speed button → cycle motion speed (issue #4 / TODO §2.1)
     wireSpeedControl(state);
+    wireRopeDebugOverlay();
+    // The rope debug overlay toggle (issue #59): the DBG control flips the
+    // renderer's overlay flag only - the one play-safe debugging affordance.
 
     // Level loaded → set up the board
     eventBus.on('level:loaded', (levelData) => {
