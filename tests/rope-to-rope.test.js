@@ -28,8 +28,8 @@
  * - serializePlacedBoard / restorePlacedFromSnapshot — rope-target tokens
  *   round-trip, including a target rope that must birth its chain during
  *   its own bind pass (the spawned free rope's token order);
- * - Rope.sever + the reconcile — severing the target chain clears the
- *   knots attached to it.
+ * - Rope.sever + the reconcile - cutting a tied target releases the ropes
+ *   knotted INTO it while its own pieces keep their knots.
  *
  * Companion suites: rope-ties (seat-role ties to payloads), connect-flow
  * (the click state machine), rope-connector (realization + rewind),
@@ -379,36 +379,60 @@ describe('Rope as a tie target (issue #57) — severing the target chain', () =>
         expect(ropeA.getAttachmentRefs()).toEqual([]);
         ropeA.dispose();
         severedB.dispose();
+
+        // Piece severing (issue #58) does not reopen the refusal: a rope
+        // cut into pieces is still not a tie target.
+        const ropeA2 = new Rope(100, 100, { length: 100 });
+        const splitB = new Rope(160, 100, { length: 100 });
+        splitB.sever(2);
+        expect(() => ropeA2.attachEndpoint('end', splitB, 'end'))
+            .toThrow(/severed|holds no knots/i);
+        expect(ropeA2.getAttachmentRefs()).toEqual([]);
+        ropeA2.dispose();
+        splitB.dispose();
     });
 
-    it('severing the target chain clears the knots attached to it — nothing dangles or re-realizes', () => {
+    it('cutting a tied target releases the ropes knotted into it, while its own pieces keep their knots', () => {
         const physics = new PhysicsEngine(800, 600);
         engines.push(physics);
         const ropeA = new Rope(100, 100, { length: 100 });
         const ropeB = new Rope(160, 100, { length: 100 });
         const ropeC = new Rope(220, 100, { length: 100 });
+        const balloon = new Balloon(160, 135); // knot (160, 160.6), 60.6px under the end cover
         physics.addObject(ropeA);
         physics.addObject(ropeB);
         physics.addObject(ropeC);
-        // A and C both knot INTO B — A into its tail, C into its anchor.
+        physics.addObject(balloon);
+        // A and C knot INTO B (A into its tail, C into its anchor) while B
+        // ties OUT to a payload through its own end seat.
         ropeA.attachEndpoint('end', ropeB, 'end');
         ropeC.attachEndpoint('end', ropeB, 'anchor');
+        ropeB.attachEndpoint('end', balloon, 'knot');
         physics.step(DT);
-        expect(physics.getAttachedConstraints()).toHaveLength(2);
-
-        // Pre-piece-severing policy: the cut disintegrates B's chain, and
-        // the sever consumer co-terminates every engine link touching its
-        // bodies — A's and C's knots included.
-        ropeB.sever();
-        expect(physics.getAttachedConstraints()).toHaveLength(0);
-
-        // The next reconcile step prunes the dead refs, and nothing ever
-        // re-realizes: no orphaned links, no unresolved references.
         physics.step(DT);
-        for (let i = 0; i < 10; i++) physics.step(DT);
-        expect(physics.getAttachedConstraints()).toHaveLength(0);
-        expect(ropeA.getAttachmentRefs()).toEqual([]);
-        expect(ropeC.getAttachmentRefs()).toEqual([]);
+        expect(physics.getAttachedConstraints()).toHaveLength(3);
+
+        // Piece severing (issue #58) keeps the severed-target policy: the
+        // cut kills every knot hanging INTO the cut rope - its engine links
+        // die at the cut (the consumer kills the links no surviving piece
+        // keeps) and the holders prune their dead refs on the next step -
+        // nothing dangles, nothing re-realizes.
+        ropeB.sever(2);
+        const links = physics.getAttachedConstraints();
+        expect(links, 'only the cut rope own piece knot survives').toHaveLength(1);
+        const tailB = ropeB.bodies[ropeB.bodies.length - 1];
+        expect(links[0].bodyA === tailB || links[0].bodyB === tailB).toBe(true);
+        expect(links[0].bodyA === balloon.bodies[0] || links[0].bodyB === balloon.bodies[0])
+            .toBe(true);
+
+        for (let i = 0; i < 12; i++) physics.step(DT);
+        expect(physics.getAttachedConstraints(), 'nothing re-realizes').toHaveLength(1);
+        expect(ropeA.getAttachmentRefs()).toEqual([]); // pruned with the cut
+        expect(ropeC.getAttachmentRefs()).toEqual([]); // pruned with the cut
+        expect(ropeB.getAttachmentRefs()).toEqual([
+            { seat: 'end', target: balloon, pointId: 'knot' },
+        ]); // B kept its own piece knot
+        expect(ropeB.getPieces()).toHaveLength(2);
         ropeA.dispose();
         ropeB.dispose();
     });

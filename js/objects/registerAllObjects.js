@@ -174,6 +174,7 @@ export function registerAllObjects() {
                 authoredSpan: data.options?.spawned !== false,
                 endPoint: data.options?.endPoint,
                 severed: data.options?.severed ?? false,
+                cuts: data.options?.cuts, // issue #58: the pieces ride the row
                 attachments: data.attachments ?? [],
             });
         }

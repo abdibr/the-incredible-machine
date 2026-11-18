@@ -105,6 +105,8 @@ describe('Row rope-candle-flame', () => {
         const fired = matrix.resolve(rope, candle, { bodyA: flame, bodyB: seg });
         expect(fired).toContain('rope-candle-flame');
         expect(rope.isSevered).toBe(true);
+        // The cut splits the chain where it hit: two pieces, not demolition.
+        expect(rope.getPieces()).toHaveLength(2);
 
         // BUG-FIX regression: the solid wax body alone must not sever the
         // rope (the pre-matrix code keyed on other.type === 'candle').
@@ -136,6 +138,8 @@ describe('Row rope-closed-scissors-blade', () => {
         const fired = matrix.resolve(rope, scissors, { bodyA: blade, bodyB: ropeSegOf(rope) });
         expect(fired).toContain('rope-closed-scissors-blade');
         expect(rope.isSevered).toBe(true);
+        // The cut splits the chain where it hit: two pieces, not demolition.
+        expect(rope.getPieces()).toHaveLength(2);
     });
 });
 
@@ -156,6 +160,8 @@ describe('Row free-rope-candle-flame', () => {
         const fired = matrix.resolve(rope, candle, { bodyA: flame, bodyB: seg });
         expect(fired).toContain('free-rope-candle-flame');
         expect(rope.isSevered).toBe(true);
+        // The cut splits the chain where it hit: two pieces, not demolition.
+        expect(rope.getPieces()).toHaveLength(2);
 
         // The bundle itself can never reach a pair at all (no bodies), and
         // the spawned chain's regression mirrors the laid rope's: the solid
@@ -192,6 +198,8 @@ describe('Row free-rope-closed-scissors-blade', () => {
         const fired = matrix.resolve(rope, scissors, { bodyA: blade, bodyB: ropeSegOf(rope) });
         expect(fired).toContain('free-rope-closed-scissors-blade');
         expect(rope.isSevered).toBe(true);
+        // The cut splits the chain where it hit: two pieces, not demolition.
+        expect(rope.getPieces()).toHaveLength(2);
     });
 });
 
@@ -449,6 +457,8 @@ describe('Boundary integration', () => {
             engine.step(1000 / 60);
             // engine maps pair bodies → objects → matrix.resolve → rope-candle-flame → sever
             expect(rope.isSevered).toBe(true);
+        // The cut splits the chain where it hit: two pieces, not demolition.
+        expect(rope.getPieces()).toHaveLength(2);
         } finally {
             engine.dispose();
         }

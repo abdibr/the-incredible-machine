@@ -171,4 +171,27 @@ describe('connector snapshot seam — restorePlacedFromSnapshot (issue 04)', () 
         expect(restoredRope.getAttachmentRefs()).toEqual([]); // severed binds nothing
         warnSpy.mockRestore();
     });
+    it('restores a piece-cut rope severed, with its pieces and the knots they keep', () => {
+        const balloon = new Balloon(220, 420);
+        const rope = new Rope(220, 340, { length: 60 });
+        rope.attachEndpoint('end', balloon, 'knot');
+        rope.sever(2); // the placed rope was cut into two pieces before the snapshot
+
+        const rows = serializePlacedBoard([rope, balloon]);
+        expect(rows[0].options.severed).toBe(true);
+        expect(rows[0].options.cuts).toEqual([3]); // the row carries the pieces
+
+        const freshBoard = [];
+        const restored = restorePlacedFromSnapshot(freshBoard, rows);
+        const restoredRope = restored.find((o) => o.type === 'rope');
+        const restoredBalloon = restored.find((o) => o.type === 'balloon');
+        expect(restoredRope.isSevered).toBe(true);
+        // The pieces reproduce: [anchor, seg0, seg1, seg2] | [seg3, seg4, seg5]
+        expect(restoredRope.getPieces().map((p) => p.length)).toEqual([4, 3]);
+        // ...and the piece keeps the knot attached to its segments
+        expect(restoredRope.getAttachmentRefs()).toEqual([
+            { seat: 'end', target: restoredBalloon, pointId: 'knot' },
+        ]);
+        for (const o of freshBoard) o.dispose();
+    });
 });

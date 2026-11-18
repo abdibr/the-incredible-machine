@@ -79,6 +79,23 @@
  * the clicked knot over the span it already has (`_reRootChain`) instead
  * of birthing a second one. Both births share `_layChainFrom`, so a
  * chain's shape never depends on which way it was born.
+ *
+ * Piece severing (issue #58, ADR 0007 decision 7): a cut severs exactly
+ * where it hit - sever(hit) consumes exactly one chain constraint (the
+ * boundary edge on the fall side of the hit segment) and the chain falls
+ * into its surviving CONNECTED COMPONENTS, the pieces. Each piece keeps
+ * the knots attached to its own segments, realizes them in play, and
+ * falls carrying its payloads; a pinned rope's anchor-side piece stays
+ * hung from the board anchor; repeated cuts yield more pieces. The pieces
+ * are never stored - getPieces() derives them from the chain minus the
+ * cut edges, _cuts being the only state a cut writes (serialized on the
+ * row so the pieces reproduce through restore). sever() with no hit
+ * stays the wholesale fallback for producers with no location (and for
+ * legacy rows): the whole chain dies and everything co-terminates, one
+ * way, as before. The severed-target policy stands: a cut rope still
+ * holds no knots FROM EITHER SIDE - nothing ties into it, and the
+ * into-knots die at the cut - while its own pieces keep theirs. One cut
+ * per beat: same-beat hits from one wide overlap band are one cut event.
  */
 
 import Matter from 'matter-js';
@@ -299,7 +316,9 @@ export default class Rope extends BaseObject {
         // authored answer travels separately from `length`, which serialize
         // always writes. (The chain count that once rode beside it is
         // retired, issue #89 — the count is the span's rule.)
-        const { attachments, authoredSpan, ...behaviorOptions } = options;
+        // `cuts` (issue #58) are relational restore data like the tokens and
+        // the authored-span hint: consumed here, never land in _options.
+        const { attachments, authoredSpan, cuts, ...behaviorOptions } = options;
         super(x, y, behaviorOptions);
         this._length = options.length || 100;
         // Authored span (issue #56, ADR 0007 decision 3): whether the
@@ -313,7 +332,28 @@ export default class Rope extends BaseObject {
         // `authoredSpan` because Rope.serialize always writes `length`.
         this._authoredSpan = options.authoredSpan ?? (options.length !== undefined);
         this._endPoint = options.endPoint || { x, y: y + this._length };
-        this._severed = options.severed ?? false;
+
+        // Piece severing (issue #58, ADR 0007 decision 7): the chain-edge
+        // indices a cut consumed, sorted. Two record shapes:
+        // - an array (restored with the row `cuts` key): piece data - the
+        //   pieces are the surviving connected components over the uncut
+        //   edges, and a severed rope with pieces binds and realizes its parts;
+        // - null: either INTACT, or the LEGACY whole-rope severed shape (a
+        //   severed row without piece data - pre-#58 boards: every chain
+        //   constraint dead, no pieces recorded, nothing bound or realized).
+        const cutEdges = Array.isArray(cuts)
+            ? [...new Set(cuts.filter((e) => Number.isInteger(e) && e >= 0))].sort((a, b) => a - b)
+            : null;
+        // An intact rope carries an empty piece record - the piece machinery
+        // answers derivably over an uncut chain; the null record is reserved
+        // for the legacy wholesale severed shape (a severed row without cuts).
+        this._cuts = cutEdges ?? (options.severed ? null : []);
+        this._severed = cutEdges ? cutEdges.length > 0 : (options.severed ?? false);
+
+        // The per-beat cut coalescing counters (issue #58): one cut per
+        // physics beat; _cutTick records the beat the last cut landed on.
+        this._tick = null;
+        this._cutTick = null;
 
         // Free-rope mode (issue #55): the FreeRope registry variant sets
         // `free: true` and the rope is born an inert, bodyless coiled bundle
@@ -365,12 +405,23 @@ export default class Rope extends BaseObject {
                 collisionFilter: { group: -1 },
             });
 
-            this._constraints = this._severed ? [] : this._buildChainConstraints(this._length);
+            // A sealed rope builds per its record: a LEGACY wholesale severed
+            // rope keeps the pre-#58 shape (no constraints at all - the cut
+            // chain owns nothing), while a piece-cut row builds the FULL
+            // chain (the `constraints` getter serves exactly the survivors).
+            // An intact rope builds its chain as always.
+            this._constraints = (this._severed && !Array.isArray(this._cuts))
+                ? []
+                : this._buildChainConstraints(this._length);
         }
 
-        // Passive restore tokens (issue 04): a severed rope cannot hold a
-        // payload, so it binds nothing.
-        this._pendingAttachments = this._severed ? [] : (attachments ?? []);
+        // Passive restore tokens (issue 04): a LEGACY wholesale severed rope
+        // cannot hold a payload, so it binds nothing; a piece-cut rope binds
+        // its rows - each piece keeps the knots attached to its segments and
+        // realizes them in play (issue #58).
+        this._pendingAttachments = (this._severed && !Array.isArray(this._cuts))
+            ? []
+            : (attachments ?? []);
     }
 
     get type() { return 'rope'; }
@@ -383,6 +434,16 @@ export default class Rope extends BaseObject {
     }
 
     get constraints() {
+        // Piece severing (issue #58): a piece-cut rope serves exactly its
+        // SURVIVING links - the pieces hold themselves; the cut edges stay
+        // listed on _constraints (never spliced) and are filtered here, the
+        // one mapping between chain-edge index and array slot. A legacy
+        // wholesale severed rope serves nothing (its cut chain owns no
+        // constraints - the pre-#58 shape, and the no-resurrection contract).
+        if (this._severed && !Array.isArray(this._cuts)) return [];
+        if (this._severed && this._cuts.length > 0) {
+            return this._constraints.filter((c, k) => !this._cuts.includes(k));
+        }
         return this._constraints;
     }
 
@@ -790,6 +851,40 @@ export default class Rope extends BaseObject {
     }
 
     /**
+     * THE knot-ref resolution, one owner (the #57/#58/#59 knot-ref
+     * spellings retired behind it): the two bodies a knot's engine link
+     * pins - this rope's tie-seat body for the ref's seat ROLE (the
+     * _tieBody answer) and the target's attachment-point body for its
+     * pointId - plus the point's offset, the anchor the length-0 knot link
+     * rests at. Nulls where the seat has no body right now (a bodyless
+     * bundle's coil seat, a disposed anchor, a chain-less mid/end) or the
+     * point does not resolve (dead target, unknown pointId): the
+     * reconcile's prune/continue signals.
+     *
+     * Every knot-ref consumer resolves through this one method - the
+     * reconcile (its OWN knots and the INBOUND pairs other ropes' refs tie
+     * into this rope's points, issue #57), the engine's piece sever
+     * consumer (the links the surviving pieces keep, issue #58) and the
+     * debug tooltip/overlay's realized-link predicate (issue #59, its
+     * former local copy retired here) - one spelling, so none of them can
+     * drift from what the engine actually realizes. The offset aliases the
+     * point's own offset object - copy before storing.
+     * @param {{seat: 'anchor'|'mid'|'end', target: object, pointId: string}} ref
+     *   a live knot ref (the getAttachmentRefs shape)
+     * @returns {{seatBody: Matter.Body|null, targetBody: Matter.Body|null,
+     *   offset: {x: number, y: number}|null}}
+     */
+    knotLinkBodies(ref) {
+        const seatBody = this._tieBody(ref?.seat);
+        const point = ref?.target?.attachmentPoints?.find((p) => p.id === ref?.pointId) ?? null;
+        return {
+            seatBody,
+            targetBody: point?.body ?? null,
+            offset: point?.offset ?? null,
+        };
+    }
+
+    /**
      * Untie every knot of this rope (edit-time: the player moved the rope
      * or a target left the board). The physical links are dropped by the
      * next reconcile step — or earlier by the engine's co-termination on
@@ -834,7 +929,10 @@ export default class Rope extends BaseObject {
         const { deferUnlaidRopeTargets = false } = opts;
         const pendingTokens = this._pendingAttachments;
         this._pendingAttachments = [];
-        if (this._severed) return false;
+        // The severed bind gate: a LEGACY wholesale severed rope binds
+        // nothing (its whole chain died). A piece-cut rope binds its rows
+        // (issue #58) - each piece keeps the knots attached to its segments.
+        if (this._severed && !Array.isArray(this._cuts)) return false;
         let bound = false;
         for (const raw of pendingTokens) {
             const token = this._migrateTieToken(raw);
@@ -863,6 +961,17 @@ export default class Rope extends BaseObject {
             }
         }
         return bound;
+    }
+    /**
+     * The attachment tokens still awaiting bind (issue #59 debug read):
+     * the restore tokens deferred between levelReset's bind passes, as a
+     * read view for the knot tooltip and the debug overlay's reconcile/bind
+     * warnings (render/RopeDebug.js). A copy - the pending list is restore
+     * machinery; debug consumers never mutate it.
+     * @returns {Array<{seat: string, targetType: string, targetOrdinal: number, pointId: string}>}
+     */
+    get pendingAttachmentTokens() {
+        return this._pendingAttachments.map((t) => ({ ...t }));
     }
 
     /**
@@ -917,7 +1026,14 @@ export default class Rope extends BaseObject {
      * @param {import('../engine/PhysicsEngine.js').PhysicsEngine} engine
      */
     onBeforeUpdate(engine) {
-        if (this._severed) return;
+        // One beat = one potential cut: sever()'s per-beat coalescing
+        // counts its beats here (the rope's only per-step hook).
+        this._tick = typeof this._tick === 'number' ? this._tick + 1 : 1;
+        // A LEGACY wholesale-severed rope realizes nothing (its cut recorded
+        // no pieces). A PIECE-CUT rope reconciles like an intact one: each
+        // piece keeps realizing the knots attached to its segments (issue
+        // #58) - the convergence below is piece-blind by construction.
+        if (this._severed && !Array.isArray(this._cuts)) return;
         this._reconcileAttachments(engine);
     }
 
@@ -958,22 +1074,25 @@ export default class Rope extends BaseObject {
             && engine.getObjects().has(knot.target)
             && knot.target.bodies.some(Boolean)
             && knot.target.attachmentPoints.some((p) => p.id === knot.pointId)
-            // The severed-target prune (issue #57, the pre-piece-severing
-            // policy): a cut rope holds no knots from either side — the
-            // sever consumer co-terminates the engine links; this prunes
-            // the live refs that would otherwise re-realize them on the
-            // next step.
+            // The severed-target prune (issue #57; the policy ADR 0007
+            // decision 7 keeps binding): a cut rope holds no knots FROM
+            // EITHER SIDE - the sever consumer kills the inbound links at
+            // the cut; this prunes the live refs that would otherwise
+            // re-realize them on the next step. The cut rope's OWN knots
+            // are untouched here: each piece keeps the knots attached to
+            // its segments (issue #58).
             && !isSeveredRope(knot.target)
         );
         for (const knot of this._attachments) {
-            const linkBody = this._tieBody(knot.seat);
-            const ap = knot.target.attachmentPoints.find((p) => p.id === knot.pointId);
-            const targetBody = ap?.body ?? null;
+            // One knot-ref resolution (Rope.knotLinkBodies - this rope's
+            // owner method, shared with the inbound pairs below, the engine
+            // sever consumer and the debug picture).
+            const { seatBody: linkBody, targetBody, offset } = this.knotLinkBodies(knot);
             if (!targetBody) continue; // the point's body is currently unavailable
             desired.set(`${linkBody.id}|${targetBody.id}`, {
                 linkBody,
                 targetBody,
-                offset: { x: ap.offset.x, y: ap.offset.y },
+                offset: { x: offset.x, y: offset.y },
             });
         }
 
@@ -987,21 +1106,34 @@ export default class Rope extends BaseObject {
         // are already gone. Same unordered pair the out-knots use —
         // whichever rope reconciles first realizes it once (the exists
         // check), and the holder's untie is what drops it.
+        // A cut rope's own desired set names no inbound pairs (issue #58):
+        // a severed rope holds no knots from either side, so the moment it
+        // is cut the pairs other ropes hold INTO it stop being wanted here
+        // (their links died at the cut; the holders' prune drops the refs).
+        if (!this._severed) {
         for (const obj of engine.getObjects()) {
             if (obj === this || typeof obj.getAttachmentRefs !== 'function') continue;
-            if (obj.isSevered) continue;
+            // The holder whose reconcile realizes nothing counts for
+            // nothing. A PIECE-SEVERED holder (issue #58) still realizes
+            // its pieces' knots, so its refs keep counting from the target
+            // side too (this rope's stale-link scan must not kill a link a
+            // surviving piece wants); only a record-less legacy severed
+            // holder skips here.
+            if (obj.isSevered && (!obj.getPieces || obj.getPieces().length === 0)) continue;
             for (const ref of obj.getAttachmentRefs()) {
                 if (ref.target !== this) continue;
-                const seatBody = obj.getTieSeats().find((s) => s.role === ref.seat)?.body ?? null;
-                const ap = this.attachmentPoints.find((p) => p.id === ref.pointId);
-                const bearer = ap?.body ?? null;
+                // The same one knot-ref resolution, from the holder's side:
+                // obj's owner method answers exactly these bodies (this rope
+                // is the ref's target, so its point body comes back bearer).
+                const { seatBody, targetBody: bearer, offset } = obj.knotLinkBodies(ref);
                 if (!seatBody || !bearer || !engine.getObjectForBody(seatBody)) continue;
                 desired.set(`${seatBody.id}|${bearer.id}`, {
                     linkBody: seatBody,
                     targetBody: bearer,
-                    offset: { x: ap.offset.x, y: ap.offset.y },
+                    offset: { x: offset.x, y: offset.y },
                 });
             }
+        }
         }
 
         // Drop engine-attached links at this rope's endpoints that no longer
@@ -1261,6 +1393,12 @@ export default class Rope extends BaseObject {
      */
     _maybeRevertToBundle(force = false) {
         if (!this._isFree || this._segments.length === 0) return;
+        // Severing suspends the bundle lifecycle (issue #58): a cut spawned
+        // chain keeps its segments and falls as pieces - it never coils
+        // back up, however empty its knot list gets. A forced rewind (the
+        // spawned:false snapshot path) stays the authority and may still
+        // collapse it.
+        if (!force && this._severed) return;
         if (!force && this._attachments.length > 0) return;
 
         // Collect the dying refs BEFORE clearing: the packet must carry what
@@ -1277,25 +1415,150 @@ export default class Rope extends BaseObject {
         });
     }
 
-    /** Sever the rope (e.g., by candle flame or closed scissors blades). */
-    sever() {
-        if (this._severed) return;
+    /**
+     * Sever the rope (the candle-flame and closed-scissors cut consumers).
+     *
+     * Two shapes (issue #58, ADR 0007 decision 7):
+     * - `sever(hit)` - THE piece cut: `hit` is the Matter body the cut
+     *   landed on (a chain segment, or the pinned rope's anchor for a cut
+     *   at the nail) or its chain segment index. The cut consumes EXACTLY
+     *   one chain constraint - the boundary edge on the fall side of the
+     *   hit segment (edge i+1, between segment i and segment i+1; a tail
+     *   hit clamps to the tail edge; an anchor hit is edge 0) - so the
+     *   chain splits into its surviving connected components: the hit
+     *   segment stays with the piece its anchor side carries, both sides
+     *   keep every one of their segments, and the links at surviving
+     *   segments stand. One cut per beat: same-beat hits from one wide
+     *   overlap band are ONE cut event (the first hit wins; a rope's step
+     *   counter in onBeforeUpdate is the beat). A hit whose boundary edge
+     *   is already dead is absorbed - repeated cuts at new locations work,
+     *   repeats at the same location change nothing (also what keeps the
+     *   closed-blade row's re-fires harmless).
+     * - `sever()` - no hit information: the WHOLESALE fallback. The whole
+     *   chain dies and every engine link touching the rope co-terminates
+     *   (the pre-issue-#58 shape, kept for producers that cannot locate
+     *   the cut and for legacy rows); it stays one-way - a rope already
+     *   severed never re-severs here, and a piece-severed rope receiving
+     *   no information keeps its pieces.
+     * @param {Matter.Body|number} [hit] - the cut location: a body of this
+     *   rope (the pair's rope side) or a chain segment index
+     */
+    sever(hit) {
         // A bodyless bundle cannot burn or be cut (issue #55): there is no
         // chain in the world to part (and its zero bodies never collide).
         // A spawned chain severs exactly like a laid rope.
         if (this.isFreeBundle) return;
+        if (hit === undefined) {
+            if (this._severed) return; // the fallback stays one-way
+            // Synchronous emit first: the physics engine consumes this with
+            // the full constraint list still answering (`constraints` reads
+            // full until _severed lands; the packet carries it too). Then
+            // the dead references drop so re-adding the rope never
+            // resurrects them (isSevered/draw agree).
+            eventBus.emit('rope:severed', { rope: this, previous: this._constraints });
+            this._severed = true; // no piece data: the legacy wholesale shape
+            this._cuts = null;
+            this._constraints = [];
+            return;
+        }
+        // A rope carrying the LEGACY wholesale shape has no chain
+        // constraint left to consume - every hit is absorbed.
+        if (this._severed && !Array.isArray(this._cuts)) return;
+        const edge = this._cutEdgeFor(hit);
+        if (this._cuts.includes(edge)) return; // absorbed: this location is already cut
+        // One cut per beat (issue #58): several hit pairs inside one
+        // collision dispatch are one cut event - the first hit wins.
+        if (typeof this._tick === 'number') {
+            if (this._cutTick === this._tick) return;
+            this._cutTick = this._tick;
+        }
         this._severed = true;
-        // Synchronous emit: the physics engine consumes this and removes
-        // the constraints from the world. Then drop the dead references so
-        // re-adding the rope never resurrects them (isSevered/draw agree).
-        eventBus.emit('rope:severed', { rope: this });
-        this._constraints = [];
+        this._cuts = Array.isArray(this._cuts) ? this._cuts : [];
+        const at = this._cuts.findIndex((c) => c > edge);
+        if (at === -1) this._cuts.push(edge);
+        else this._cuts.splice(at, 0, edge);
+        // Synchronous emit: the engine consumes the packet and drops
+        // exactly the cut constraint from the world (the links no
+        // surviving piece keeps die with it). The constraint stays LISTED
+        // on _constraints - the `constraints` getter serves exactly the
+        // survivors.
+        eventBus.emit('rope:severed', { rope: this, cut: this._constraints[edge] });
+    }
+
+    /**
+     * The chain edge (a _constraints slot) a cut at `hit` consumes (issue
+     * #58): edge i+1 - the boundary between segment i and segment i+1, so
+     * the hit segment stays with its anchor side - edge 0 for an anchor
+     * hit, clamped to the tail edge (the last one) for a tail hit (there
+     * is no edge past the tail to consume). A hit that is neither an
+     * integer segment index within the chain nor one of this rope's own
+     * bodies is refused with a clear error.
+     * @param {Matter.Body|number} hit
+     * @returns {number} the chain-edge index to consume
+     * @private
+     */
+    _cutEdgeFor(hit) {
+        const count = this._segments.length;
+        if (typeof hit === 'number') {
+            if (!Number.isInteger(hit) || hit < 0 || hit >= count) {
+                throw new Error(
+                    `[Rope] sever: a segment-index hit must lie in 0..${count - 1}, got ${String(hit)}`
+                );
+            }
+            return Math.min(hit + 1, count - 1);
+        }
+        if (hit === this._anchor) {
+            return 0; // a cut at the nail parts the whole strand from it
+        }
+        const index = this._segments.indexOf(hit);
+        if (!hit || index === -1) {
+            throw new Error("[Rope] sever: hit is not one of this rope's bodies (a chain segment or the anchor)");
+        }
+        return Math.min(index + 1, count - 1);
+    }
+
+    /**
+     * The surviving connected components of the chain - the PIECES (issue
+     * #58, ADR 0007 decision 7). An intact rope answers one piece (its
+     * bodies in chain order); a piece-cut rope answers one per cut boundary
+     * (in chain order, the anchor-bearing piece first); and the
+     * record-less answers - a bodyless free bundle, and a legacy wholesale
+     * severed rope whose components were never recorded - answer empty.
+     *
+     * The pieces are DERIVED, never stored: each cut edge (a dead chain
+     * constraint index) bounds a contiguous span of the chain, so the
+     * components are simply the chain's bodies between its cuts, the
+     * anchor joining whichever piece its own side is on. Consumers: the
+     * draw (one polyline per piece), the tests' piece assertions, and any
+     * consumer that must treat a cut rope as several falling chains rather
+     * than one.
+     * @returns {Array<Matter.Body[]>}
+     */
+    getPieces() {
+        if (this._severed && !Array.isArray(this._cuts)) return [];
+        if (this._segments.length === 0) return [];
+        const pieces = [];
+        const bounds = [...this._cuts];
+        // Chain edges cut at index k bind body slots k and k+1 (edge 0 is
+        // the anchor-seg0 link): each piece spans the body slots between
+        // consecutive cut boundaries, anchor included where its side starts.
+        let lower = 0;
+        for (let idx = 0; idx <= bounds.length; idx++) {
+            const k = idx < bounds.length ? bounds[idx] : this._segments.length;
+            const bodies = [];
+            if (lower === 0 && this._anchor) bodies.push(this._anchor);
+            for (let node = Math.max(lower, 1); node <= k; node++) {
+                bodies.push(this._segments[node - 1]);
+            }
+            if (bodies.length > 0) pieces.push(bodies);
+            lower = k + 1;
+        }
+        return pieces;
     }
 
     get isSevered() {
         return this._severed;
     }
-
     /**
      * ADR 0007 decision 4 (issue #54): a rope's first tie freezes its
      * length — the hand can no longer reel the free end out or in, only
@@ -1529,15 +1792,47 @@ export default class Rope extends BaseObject {
     restoreState(data) {
         super.restoreState(data);
         const snapshotSevered = data?.options?.severed ?? false;
-        if (snapshotSevered === this._severed) return;
+        const snapshotCuts = data?.options?.cuts;
+        // Cut-state equality (issue #58): a piece-era snapshot carries its
+        // cut edges; a record-less rope (intact, or legacy wholesale
+        // severed) and a snapshot without cuts match each other.
+        const normCuts = (c) => (Array.isArray(c) && c.length > 0
+            ? [...c].sort((a, b) => a - b).join('|')
+            : '');
+        if (snapshotSevered === this._severed && normCuts(snapshotCuts) === normCuts(this._cuts)) return;
 
-        if (snapshotSevered) {
-            this.sever();
+        if (!snapshotSevered) {
+            // Rewind to an INTACT snapshot: rebuild the whole chain and
+            // announce the swap (the standing converge contract), the piece
+            // data cleared with the severed state.
+            const previous = this._constraints;
+            this._severed = false;
+            this._cuts = [];
+            this._constraints = this._buildChainConstraints(this._length);
+            eventBus.emit('rope:chain-converge', { rope: this, previous });
             return;
         }
 
+        if (!Array.isArray(snapshotCuts)) {
+            // Legacy wholesale severed snapshot (a pre-#58 row): converge to
+            // the whole-rope shape. The emit carries the live chain for the
+            // consumer (it reads full only while _severed is still false,
+            // exactly like a bare sever()); clearing follows.
+            const previous = this._constraints;
+            eventBus.emit('rope:severed', { rope: this, previous });
+            this._severed = true;
+            this._cuts = null;
+            this._constraints = [];
+            return;
+        }
+
+        // Piece-cut snapshot: converge the LIVE rope to the snapshot's cut
+        // set - the chain rebuilds to exactly the surviving edges, and the
+        // converge consumer swaps the world's copy over (the snapshot's
+        // link records re-attach the pieces' knots right after).
         const previous = this._constraints;
-        this._severed = false;
+        this._severed = true;
+        this._cuts = [...snapshotCuts].sort((a, b) => a - b);
         this._constraints = this._buildChainConstraints(this._length);
         eventBus.emit('rope:chain-converge', { rope: this, previous });
     }
@@ -1561,31 +1856,39 @@ export default class Rope extends BaseObject {
             return;
         }
 
-        // Draw the rope as a smooth curve through segment positions.
-        // After severing, no constraint connects the rope to the anchor
-        // (they were removed from the physics world) — so the polyline is
-        // drawn through the free segments only; the anchor stays as a nail.
-        const points = this._severed
-            ? this._segments.map(s => s.position)
-            : [this._anchor.position, ...this._segments.map(s => s.position)];
-
+        // Draw the rope as smooth curves through its PIECES (issue #58):
+        // one polyline per surviving component. An intact rope is one
+        // piece hanging from the anchor; a piece-cut rope draws one gray
+        // polyline per piece, each falling piece starting at its own first
+        // segment and the hung piece still starting at the nail. The
+        // legacy wholesale shape (a severed rope with no recorded pieces)
+        // keeps the pre-#58 polyline - all segments, anchorless.
         ctx.strokeStyle = this._severed ? '#aaa' : ROPE_COLOR;
         ctx.lineWidth = 3;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
 
-        ctx.beginPath();
-        ctx.moveTo(points[0].x, points[0].y);
-        for (let i = 1; i < points.length; i++) {
-            const prev = points[i - 1];
-            const curr = points[i];
-            const midX = (prev.x + curr.x) / 2;
-            const midY = (prev.y + curr.y) / 2;
-            ctx.quadraticCurveTo(prev.x, prev.y, midX, midY);
+        const drawPiece = (points) => {
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                const prev = points[i - 1];
+                const curr = points[i];
+                const midX = (prev.x + curr.x) / 2;
+                const midY = (prev.y + curr.y) / 2;
+                ctx.quadraticCurveTo(prev.x, prev.y, midX, midY);
+            }
+            const last = points[points.length - 1];
+            ctx.lineTo(last.x, last.y);
+            ctx.stroke();
+        };
+        if (this._severed && !Array.isArray(this._cuts)) {
+            drawPiece(this._segments.map((s) => s.position));
+        } else {
+            for (const piece of this.getPieces()) {
+                drawPiece(piece.map((s) => s.position));
+            }
         }
-        const last = points[points.length - 1];
-        ctx.lineTo(last.x, last.y);
-        ctx.stroke();
 
         // Anchor point. Pinned ropes keep the gray nail; a free rope's
         // anchor is a moving knot (issue #55), drawn in rope color while
@@ -1623,7 +1926,7 @@ export default class Rope extends BaseObject {
     }
 
     serialize() {
-        return {
+        const data = {
             ...super.serialize(),
             options: {
                 ...this._options,
@@ -1637,6 +1940,14 @@ export default class Rope extends BaseObject {
                 severed: this._severed,
             },
         };
+        // Piece severing (issue #58): the cut edges ride the row so the
+        // pieces reproduce on restore. A record-less rope (intact, or the
+        // legacy wholesale shape) writes no key - exactly the rows the
+        // pre-#58 boards carried, so legacy sever round-trips unchanged.
+        if (this._severed && Array.isArray(this._cuts)) {
+            data.options.cuts = [...this._cuts];
+        }
+        return data;
     }
 
     static deserialize(data) {
@@ -1647,6 +1958,7 @@ export default class Rope extends BaseObject {
             length: data.options?.length || 100,
             endPoint: data.options?.endPoint,
             severed: data.options?.severed ?? false,
+            cuts: data.options?.cuts,
             attachments: data.attachments ?? [],
         });
     }
