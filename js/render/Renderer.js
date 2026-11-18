@@ -710,12 +710,13 @@ class Renderer {
     }
 
     /**
-     * The knot tooltip (issue #59): one seat's facts at the cursor - the
-     * same square list the connect flow routes clicks through (one source
-     * of truth for seats and pixels); the nearest hovered square is the
-     * one a click would land on, so the tooltip explains that one.
+     * The knot tooltip (issue #59): one seat's facts at the cursor - and
+     * the square it explains is THE flow's own pick (ConnectFlow's
+     * ropeSquareAt, the nearest-square scan the click router runs at the
+     * same hit radius), so what the tooltip explains is exactly the square
+     * a click would land on: one pick, hover and route cannot drift.
      * Edit modes only (ADR 0007 decision 9) - PLAY boards draw nothing,
-     * and the hover plumbing that feeds the squares clears with the stage
+     * and the hover plumbing that feeds the pick clears with the stage
      * anyway.
      * @private
      * @param {CanvasRenderingContext2D} ctx
@@ -724,22 +725,11 @@ class Renderer {
     _drawKnotTooltip(ctx, objs) {
         if (this._mode !== 'EDITING' && this._mode !== 'SANDBOX') return;
         if (!this._connectFlow || !this.hoverPoint) return;
-        const hover = this.hoverPoint;
-        const hovered = this._connectFlow.getRopeSquares(objs, hover)
-            .filter((s) => s.hovered);
-        if (hovered.length === 0) return;
-        let best = hovered[0];
-        let bestDist = Math.hypot(hover.x - best.x, hover.y - best.y);
-        for (const square of hovered) {
-            const dist = Math.hypot(hover.x - square.x, hover.y - square.y);
-            if (dist < bestDist) {
-                best = square;
-                bestDist = dist;
-            }
-        }
-        const data = buildKnotTooltipData(best.rope, best.role, this._physicsEngine, best.bodyIndex);
+        const square = this._connectFlow.ropeSquareAt(this.hoverPoint.x, this.hoverPoint.y, objs);
+        if (!square) return;
+        const data = buildKnotTooltipData(square.rope, square.role, this._physicsEngine, square.bodyIndex);
         if (!data) return;
-        drawKnotTooltip(ctx, data, best.x, best.y);
+        drawKnotTooltip(ctx, data, square.x, square.y);
     }
 
     /**

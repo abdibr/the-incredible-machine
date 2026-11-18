@@ -297,7 +297,7 @@ class ConnectFlow {
             return true;
         }
 
-        const square = this._ropeSquareAt(x, y, objects);
+        const square = this.ropeSquareAt(x, y, objects);
         if (!square) return false;
         if (square.knots.length > 0) {
             this._untie(square, x, y);
@@ -380,18 +380,23 @@ class ConnectFlow {
     }
 
     /**
-     * The nearest rope tie square within the hit radius, or null —
-     * what a click hit-tests against (severed and disposed ropes expose
-     * nothing; a square carries the knots holding its seat's ROLE (issue
-     * #90) so the click router can tell a seek entry (free) from an untie
-     * (tied)).
-     * @private
+     * The rope tie square a pointer address lands on, or null - the flow's
+     * own pick: THE nearest-square scan (_nearestSquare) over the same
+     * getRopeSquares list the clicks route and the pixels draw from, at
+     * the same CONNECT_HIT_RADIUS. Two consumers, one pick: the click
+     * router (a square carries the knots holding its seat's ROLE, issue
+     * #90, which tells a seek entry - free - from an untie - tied; severed
+     * and disposed ropes expose nothing) and the knot tooltip, which
+     * explains the very square this answers - so what the pointer hovers
+     * and what a click would land on cannot drift into two picks.
+     * @param {number} x - pointer canvas x
+     * @param {number} y - pointer canvas y
+     * @param {import('../objects/BaseObject.js').default[]} objects - the live board
+     * @returns {object|null} the picked square (getRopeSquares' shape) or null
      */
-    _ropeSquareAt(x, y, objects) {
+    ropeSquareAt(x, y, objects) {
         const best = this._nearestSquare(this.getRopeSquares(objects, null), x, y);
-        return best
-            ? { rope: best.square.rope, role: best.square.role, dist: best.dist, knots: best.square.knots }
-            : null;
+        return best?.square ?? null;
     }
 
     /**

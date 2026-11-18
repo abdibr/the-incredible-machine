@@ -1199,11 +1199,11 @@ export class PhysicsEngine {
             // The links no surviving piece keeps: the rope's own out-knot
             // pairs are its pieces' kept knots (public refs x seat bodies).
             const keptPairs = new Set();
-            const seats = rope.getTieSeats();
             for (const ref of rope.getAttachmentRefs()) {
-                const seatBody = seats.find((s) => s.role === ref.seat)?.body ?? null;
-                const ap = ref.target?.attachmentPoints?.find((p) => p.id === ref.pointId);
-                const targetBody = ap?.body ?? null;
+                // One knot-ref resolution (Rope.knotLinkBodies - the same
+                // owner the reconcile and the debug picture ask; no private
+                // copy here).
+                const { seatBody, targetBody } = rope.knotLinkBodies(ref);
                 if (!seatBody || !targetBody) continue;
                 keptPairs.add(`${seatBody.id}|${targetBody.id}`);
                 keptPairs.add(`${targetBody.id}|${seatBody.id}`);

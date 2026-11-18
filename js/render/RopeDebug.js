@@ -22,7 +22,11 @@
  *
  * The tooltip facts come from existing state (live refs, the reconcile's
  * own realized-link predicate, the pending-bind token list); the overlay
- * adds nothing to the engine - it only reads it.
+ * adds nothing to the engine - it only reads it. The seat/point body pair
+ * a knot ref resolves through is the rope's own method
+ * (Rope.knotLinkBodies - the one owner the reconcile and the sever
+ * consumer share; the former local copy retired so the tooltip cannot
+ * drift from what the engine realizes).
  */
 
 import { isRopeFamily, isSeveredRope } from '../objects/Rope.js';
@@ -73,7 +77,7 @@ export function buildKnotTooltipData(carrier, role, engine, bodyIndex = null) {
     let knot = null;
     if (seatRefs.length > 0) {
         const ref = seatRefs[0];
-        const realized = linkRealized(engine, knotLinkBodies(carrier, ref));
+        const realized = linkRealized(engine, carrier.knotLinkBodies?.(ref) ?? null);
         knot = {
             targetType: ref.target?.type ?? '?',
             targetId: ref.target?.id ?? '?',
@@ -117,24 +121,10 @@ export function buildKnotTooltipData(carrier, role, engine, bodyIndex = null) {
     };
 }
 
-/**
- * The two bodies a knot's engine link pins - the tie seat's body and the
- * target's attachment-point body - or nulls where the seat's role or the
- * point's body does not resolve right now. The same resolution the
- * reconcile does per step (Rope._reconcileAttachments), shared here so the
- * tooltip cannot drift from what the engine actually realizes.
- * @param {object} carrier - a knot-bearing part
- * @param {{seat: string, target: object, pointId: string}} ref
- * @returns {{seatBody: Matter.Body|null, targetBody: Matter.Body|null}}
- */
-function knotLinkBodies(carrier, ref) {
-    const seatBody = typeof carrier.getTieSeats === 'function'
-        ? carrier.getTieSeats().find((s) => s.role === ref.seat)?.body ?? null
-        : null;
-    const targetBody = ref.target?.attachmentPoints
-        ?.find((p) => p.id === ref.pointId)?.body ?? null;
-    return { seatBody, targetBody };
-}
+// The seat/point body pair a knot ref resolves through is the carrier's
+// own method: Rope.knotLinkBodies (one owner - rope, engine and this
+// picture cannot drift). A carrier without it answers no resolvable
+// bodies and every knot reads pending-bind.
 
 /**
  * Whether the knot's engine link is realized right now - the reconcile's
@@ -142,11 +132,12 @@ function knotLinkBodies(carrier, ref) {
  * No engine (or an unresolvable body) answers false: the knot reads
  * pending-bind until the link is confirmed.
  * @param {import('../engine/PhysicsEngine.js').PhysicsEngine|null} engine
- * @param {{seatBody: Matter.Body|null, targetBody: Matter.Body|null}} bodies
+ * @param {{seatBody: Matter.Body|null, targetBody: Matter.Body|null}|null} bodies -
+ *   Rope.knotLinkBodies' answer (null where the carrier owns no resolution)
  * @returns {boolean}
  */
 function linkRealized(engine, bodies) {
-    if (!engine || !bodies.seatBody || !bodies.targetBody) return false;
+    if (!engine || !bodies?.seatBody || !bodies?.targetBody) return false;
     const links = engine.getAttachedConstraints?.() ?? [];
     return links.some((link) =>
         (link.bodyA === bodies.seatBody || link.bodyB === bodies.seatBody)
@@ -227,7 +218,7 @@ function buildRopePicture(rope, engine) {
         const target = ref.target;
         if (isSeveredRope(target)) {
             warnings.push({ reason: 'severed-target', lines: [`! knot ${ref.seat} → ${target?.type ?? '?'} #${target?.id ?? '?'} target severed`] });
-        } else if (!linkRealized(engine, knotLinkBodies(rope, ref))) {
+        } else if (!linkRealized(engine, rope.knotLinkBodies?.(ref) ?? null)) {
             warnings.push({ reason: 'pending-bind', lines: [`! knot ${ref.seat} → ${target?.type ?? '?'} #${target?.id ?? '?'} pending-bind`] });
         }
     }

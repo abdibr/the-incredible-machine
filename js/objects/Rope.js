@@ -851,6 +851,40 @@ export default class Rope extends BaseObject {
     }
 
     /**
+     * THE knot-ref resolution, one owner (the #57/#58/#59 knot-ref
+     * spellings retired behind it): the two bodies a knot's engine link
+     * pins - this rope's tie-seat body for the ref's seat ROLE (the
+     * _tieBody answer) and the target's attachment-point body for its
+     * pointId - plus the point's offset, the anchor the length-0 knot link
+     * rests at. Nulls where the seat has no body right now (a bodyless
+     * bundle's coil seat, a disposed anchor, a chain-less mid/end) or the
+     * point does not resolve (dead target, unknown pointId): the
+     * reconcile's prune/continue signals.
+     *
+     * Every knot-ref consumer resolves through this one method - the
+     * reconcile (its OWN knots and the INBOUND pairs other ropes' refs tie
+     * into this rope's points, issue #57), the engine's piece sever
+     * consumer (the links the surviving pieces keep, issue #58) and the
+     * debug tooltip/overlay's realized-link predicate (issue #59, its
+     * former local copy retired here) - one spelling, so none of them can
+     * drift from what the engine actually realizes. The offset aliases the
+     * point's own offset object - copy before storing.
+     * @param {{seat: 'anchor'|'mid'|'end', target: object, pointId: string}} ref
+     *   a live knot ref (the getAttachmentRefs shape)
+     * @returns {{seatBody: Matter.Body|null, targetBody: Matter.Body|null,
+     *   offset: {x: number, y: number}|null}}
+     */
+    knotLinkBodies(ref) {
+        const seatBody = this._tieBody(ref?.seat);
+        const point = ref?.target?.attachmentPoints?.find((p) => p.id === ref?.pointId) ?? null;
+        return {
+            seatBody,
+            targetBody: point?.body ?? null,
+            offset: point?.offset ?? null,
+        };
+    }
+
+    /**
      * Untie every knot of this rope (edit-time: the player moved the rope
      * or a target left the board). The physical links are dropped by the
      * next reconcile step — or earlier by the engine's co-termination on
@@ -1050,14 +1084,15 @@ export default class Rope extends BaseObject {
             && !isSeveredRope(knot.target)
         );
         for (const knot of this._attachments) {
-            const linkBody = this._tieBody(knot.seat);
-            const ap = knot.target.attachmentPoints.find((p) => p.id === knot.pointId);
-            const targetBody = ap?.body ?? null;
+            // One knot-ref resolution (Rope.knotLinkBodies - this rope's
+            // owner method, shared with the inbound pairs below, the engine
+            // sever consumer and the debug picture).
+            const { seatBody: linkBody, targetBody, offset } = this.knotLinkBodies(knot);
             if (!targetBody) continue; // the point's body is currently unavailable
             desired.set(`${linkBody.id}|${targetBody.id}`, {
                 linkBody,
                 targetBody,
-                offset: { x: ap.offset.x, y: ap.offset.y },
+                offset: { x: offset.x, y: offset.y },
             });
         }
 
@@ -1087,14 +1122,15 @@ export default class Rope extends BaseObject {
             if (obj.isSevered && (!obj.getPieces || obj.getPieces().length === 0)) continue;
             for (const ref of obj.getAttachmentRefs()) {
                 if (ref.target !== this) continue;
-                const seatBody = obj.getTieSeats().find((s) => s.role === ref.seat)?.body ?? null;
-                const ap = this.attachmentPoints.find((p) => p.id === ref.pointId);
-                const bearer = ap?.body ?? null;
+                // The same one knot-ref resolution, from the holder's side:
+                // obj's owner method answers exactly these bodies (this rope
+                // is the ref's target, so its point body comes back bearer).
+                const { seatBody, targetBody: bearer, offset } = obj.knotLinkBodies(ref);
                 if (!seatBody || !bearer || !engine.getObjectForBody(seatBody)) continue;
                 desired.set(`${seatBody.id}|${bearer.id}`, {
                     linkBody: seatBody,
                     targetBody: bearer,
-                    offset: { x: ap.offset.x, y: ap.offset.y },
+                    offset: { x: offset.x, y: offset.y },
                 });
             }
         }
@@ -1408,10 +1444,10 @@ export default class Rope extends BaseObject {
      *   rope (the pair's rope side) or a chain segment index
      */
     sever(hit) {
-        if (this.isFreeBundle) return;
         // A bodyless bundle cannot burn or be cut (issue #55): there is no
         // chain in the world to part (and its zero bodies never collide).
         // A spawned chain severs exactly like a laid rope.
+        if (this.isFreeBundle) return;
         if (hit === undefined) {
             if (this._severed) return; // the fallback stays one-way
             // Synchronous emit first: the physics engine consumes this with
