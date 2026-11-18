@@ -12,6 +12,12 @@ import { clampObjectToPlayfield } from '../objects/BaseObject.js';
 import { resolveGoalZoneObject } from '../goals/GoalChecker.js';
 import { ROPE_TOO_SHORT, SEAT_TIED, TIE_REFUSED } from '../ui/ConnectFlow.js';
 import { selectionHandleSet } from '../ui/selectionHandles.js';
+import {
+    buildKnotTooltipData,
+    buildRopeOverlayData,
+    drawKnotTooltip,
+    drawRopeDebugOverlay,
+} from './RopeDebug.js';
 
 /**
  * The anchor color (issue #67): the handle dot and the field badge share it —
@@ -55,6 +61,17 @@ class Renderer {
 
         /** Connect-flow board (ADR 0007 decision 2), injected via setConnectFlow */
         this._connectFlow = null;
+
+        /** Physics engine access for the debug picture (issue #59), wired via setPhysicsEngine; read-only use. */
+        this._physicsEngine = null;
+
+        /**
+         * The rope debug overlay toggle (issue #59): renders the live engine
+         * picture whenever explicitly enabled - play included, the one
+         * deliberate decision-9 exception. Defaults off; the DBG toggle in
+         * the play controls flips it, and nothing else.
+         */
+        this.showRopeDebugOverlay = false;
 
         /**
          * Current level goal (level JSON `goal` field), tracked the same seam
@@ -172,6 +189,15 @@ class Renderer {
     }
 
     /**
+     * Wire the physics engine the debug picture reads (issue #59) - the
+     * same engine main.js drives; the overlay only ever reads it.
+     * @param {import('../engine/PhysicsEngine.js').PhysicsEngine|null} engine
+     */
+    setPhysicsEngine(engine) {
+        this._physicsEngine = engine;
+    }
+
+    /**
      * Main render call — draw one frame.
      * @param {BaseObject[]} [objects] - Optional override
      */
@@ -254,6 +280,20 @@ class Renderer {
         // handles, target squares, seek preview and glow — edit modes only
         // (the drawer gates itself, so PLAY boards draw nothing).
         this._drawConnectSquares(ctx, objs);
+
+        // 5.7. Rope debug overlay (issue #59; the decision-9 exception): the
+        // LIVE engine picture - chain segment outlines, realized knot links,
+        // reconcile/bind warnings - whenever explicitly enabled, play
+        // included. A debugging affordance, not an editing one; the drawer
+        // gates itself on the toggle, which defaults off.
+        this._drawRopeDebugOverlay(ctx, objs);
+
+        // 5.8. Knot tooltip (issue #59): hovering a tie square explains that
+        // seat's knots - seat, target, point, realized vs pending-bind,
+        // severed - for endpoint, mid-chain and knot-less seats alike.
+        // Edit-only (decision 9): the drawer gates itself, so PLAY boards
+        // draw nothing.
+        this._drawKnotTooltip(ctx, objs);
     }
 
     /**
@@ -667,6 +707,55 @@ class Renderer {
         ctx.fillStyle = '#2f9e2f';
         ctx.fillText('GOAL', b.x + b.width / 2, b.y - 8);
         ctx.restore();
+    }
+
+    /**
+     * The knot tooltip (issue #59): one seat's facts at the cursor - the
+     * same square list the connect flow routes clicks through (one source
+     * of truth for seats and pixels); the nearest hovered square is the
+     * one a click would land on, so the tooltip explains that one.
+     * Edit modes only (ADR 0007 decision 9) - PLAY boards draw nothing,
+     * and the hover plumbing that feeds the squares clears with the stage
+     * anyway.
+     * @private
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {BaseObject[]} objs
+     */
+    _drawKnotTooltip(ctx, objs) {
+        if (this._mode !== 'EDITING' && this._mode !== 'SANDBOX') return;
+        if (!this._connectFlow || !this.hoverPoint) return;
+        const hover = this.hoverPoint;
+        const hovered = this._connectFlow.getRopeSquares(objs, hover)
+            .filter((s) => s.hovered);
+        if (hovered.length === 0) return;
+        let best = hovered[0];
+        let bestDist = Math.hypot(hover.x - best.x, hover.y - best.y);
+        for (const square of hovered) {
+            const dist = Math.hypot(hover.x - square.x, hover.y - square.y);
+            if (dist < bestDist) {
+                best = square;
+                bestDist = dist;
+            }
+        }
+        const data = buildKnotTooltipData(best.rope, best.role, this._physicsEngine, best.bodyIndex);
+        if (!data) return;
+        drawKnotTooltip(ctx, data, best.x, best.y);
+    }
+
+    /**
+     * The rope debug overlay drawer (issue #59): the LIVE engine picture for
+     * every rope-family member - chain segment outlines, realized knot
+     * links and reconcile/bind warnings (render/RopeDebug.js builds and
+     * paints it). Renders ONLY when explicitly enabled - the one deliberate
+     * decision-9 exception - and in play too: a debugging surface, not an
+     * editing one.
+     * @private
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {BaseObject[]} objs
+     */
+    _drawRopeDebugOverlay(ctx, objs) {
+        if (!this.showRopeDebugOverlay) return;
+        drawRopeDebugOverlay(ctx, buildRopeOverlayData(objs, this._physicsEngine));
     }
 }
 

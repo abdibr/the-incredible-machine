@@ -928,6 +928,17 @@ export default class Rope extends BaseObject {
         }
         return bound;
     }
+    /**
+     * The attachment tokens still awaiting bind (issue #59 debug read):
+     * the restore tokens deferred between levelReset's bind passes, as a
+     * read view for the knot tooltip and the debug overlay's reconcile/bind
+     * warnings (render/RopeDebug.js). A copy - the pending list is restore
+     * machinery; debug consumers never mutate it.
+     * @returns {Array<{seat: string, targetType: string, targetOrdinal: number, pointId: string}>}
+     */
+    get pendingAttachmentTokens() {
+        return this._pendingAttachments.map((t) => ({ ...t }));
+    }
 
     /**
      * Tie-token restore shapes (issue #88; the only form since #90): the
