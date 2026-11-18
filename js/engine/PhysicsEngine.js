@@ -1099,7 +1099,7 @@ export class PhysicsEngine {
 
     /** @private */
     _setupSeveredEvents() {
-        this._onRopeSevered = ({ rope }) => this._detachRopeConstraints(rope);
+        this._onRopeSevered = (packet) => this._detachRopeConstraints(packet);
         eventBus.on('rope:severed', this._onRopeSevered);
 
         // Chain convergence (issue 04): Rope.restoreState rewinding a
@@ -1164,26 +1164,73 @@ export class PhysicsEngine {
     }
 
     /**
-     * Physically detach a severed rope: drop its Matter constraints from the
-     * world (mirroring the severed flag/visual), then wake its bodies so the
-     * freed piece falls in the next step.
-     * @param {import('../objects/Rope.js').default} rope
+     * Physically detach a severed rope from the world - PIECE-AWARE (issue
+     * #58, ADR 0007 decision 7's "the engine sever consumer becomes
+     * piece-aware").
+     *
+     * A packet carrying `cut` is the PIECE cut: exactly THAT object-owned
+     * chain constraint (the boundary edge the rope consumed) leaves the
+     * world, and the surviving pieces keep standing on their own links. The
+     * links that die with the cut are the ones NO surviving piece keeps: the
+     * rope's own out-knot pairs (its refs x its seat bodies) remain - its
+     * pieces realize them - while anything else touching one of its bodies,
+     * an INBOUND pair from another rope's knot tied into it (the
+     * severed-target policy: a severed rope holds no knots from either
+     * side), co-terminates the same beat.
+     *
+     * A packet WITHOUT a cut is the WHOLESALE fallback (sever() called with
+     * no hit information - the packet carries the doomed chain in
+     * `previous`, or the rope's `constraints` answer it before the rope
+     * clears): the whole chain leaves the world and every engine link
+     * touching the rope co-terminates, exactly the pre-#58 demolition (ADR
+     * 0005 decision 4).
      * @private
+     * @param {{rope: import('../objects/Rope.js').default,
+     *     cut?: Matter.Constraint|null, previous?: Matter.Constraint[]}} packet
      */
-    _detachRopeConstraints(rope) {
-        for (const constraint of rope.constraints) {
-            Composite.remove(this.world, constraint);
+    _detachRopeConstraints(packet) {
+        const { rope, cut, previous } = packet ?? {};
+        // Registration guard (the bus is global): a rope living in ANOTHER
+        // engine must never detach anything here.
+        if (!rope || !this._objects.has(rope)) return;
+        if (cut) {
+            // The one boundary edge that died with the cut.
+            Composite.remove(this.world, cut);
+            // The links no surviving piece keeps: the rope's own out-knot
+            // pairs are its pieces' kept knots (public refs x seat bodies).
+            const keptPairs = new Set();
+            const seats = rope.getTieSeats();
+            for (const ref of rope.getAttachmentRefs()) {
+                const seatBody = seats.find((s) => s.role === ref.seat)?.body ?? null;
+                const ap = ref.target?.attachmentPoints?.find((p) => p.id === ref.pointId);
+                const targetBody = ap?.body ?? null;
+                if (!seatBody || !targetBody) continue;
+                keptPairs.add(`${seatBody.id}|${targetBody.id}`);
+                keptPairs.add(`${targetBody.id}|${seatBody.id}`);
+            }
+            const ropeBodyIds = new Set(
+                rope.bodies.filter(Boolean).map((body) => body.id)
+            );
+            for (const link of this.getAttachedConstraints()) {
+                const touches = ropeBodyIds.has(link.bodyA.id)
+                    || ropeBodyIds.has(link.bodyB.id);
+                if (!touches) continue;
+                if (keptPairs.has(`${link.bodyA.id}|${link.bodyB.id}`)) continue;
+                this._removeConstraint(link);
+            }
+        } else {
+            // Wholesale: the whole chain leaves; everything touching it
+            // co-terminates so the freed rope falls apart as before.
+            for (const constraint of (previous ?? rope.constraints)) {
+                Composite.remove(this.world, constraint);
+            }
+            this._detachConstraintsTouching(
+                new Set(rope.bodies.filter(Boolean).map((body) => body.id))
+            );
         }
-        // Co-terminate engine-attached links at the rope (issue 04): a
-        // payload tied to a cut point is released the moment the chain
-        // parts.
-        this._detachConstraintsTouching(
-            new Set(rope.bodies.filter(Boolean).map((body) => body.id))
-        );
         // A rope held by constraints can be asleep; release it so it falls
         this.wakeBodies(rope.bodies);
     }
-
     /**
      * Exchange a rope's chain in the world. Consumes 'rope:chain-converge'
      * — Rope.restoreState rewinding a severed live rope to an intact

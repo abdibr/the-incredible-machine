@@ -171,10 +171,16 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         stepUntil(engine, () => rope.isSevered, 20, 'rope severing');
         expect(severed.length).toBe(1);
 
-        const tailY = rope.bodies[rope.bodies.length - 1].position.y;
+        // The burn splits the chain at the flame: the pieces are two, the
+        // anchor side keeps its constraint to the nail, and only one chain
+        // constraint died with the cut.
+        expect(rope.getPieces()).toHaveLength(2);
+        expect(rope.constraints).toHaveLength(5);
+
+        const tailY = rope.getPieces()[1][0].position.y;
         for (let i = 0; i < 45; i += 1) engine.step(DT);
-        const tailNow = rope.bodies[rope.bodies.length - 1].position.y;
-        expect(tailNow, 'severed tail must fall under gravity').toBeGreaterThan(tailY + 20);
+        const tailNow = rope.getPieces()[1][0].position.y;
+        expect(tailNow, 'the falling piece must drop under gravity').toBeGreaterThan(tailY + 20);
     });
 
     it('rope-closed-scissors-blade: a ball snapping the scissors cuts the rope mid-span', () => {
@@ -192,13 +198,10 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
         stepUntil(engine, () => scissors.isClosed, 90, 'scissors snap');
         stepUntil(engine, () => rope.isSevered, 90, 'rope cut');
 
-        // sever() empties the constraint chain synchronously (Rope.sever →
-        // rope:severed → the engine drops every rope constraint from the
-        // world), so nothing of the rope remains constraint-held. The freed
-        // pieces' landing geometry depends on what they collide with (the
-        // closed blades sit inside the span here), so assert the chain
-        // itself rather than a fall distance.
-        expect(rope.constraints.length, 'severing must drop the constraint chain').toBe(0);
+        // The cut lands at the blade fan: two pieces where one chain link
+        // died - the pieces keep holding themselves by their own links.
+        expect(rope.getPieces()).toHaveLength(2);
+        expect(rope.getPieces()[0]).toContain(rope.bodies[0]); // the hung side keeps the nail
     });
 
     it('free-rope-candle-flame: the first tie births the chain and the flame cuts it', () => {
@@ -218,6 +221,10 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
 
         stepUntil(engine, () => rope.isSevered, 60, 'free-rope chain severing');
         expect(severed.length).toBe(1);
+        // The spawn's anchor knot belongs to the anchor-side piece and its
+        // link keeps standing: the hung piece stays tied to the balloon.
+        expect(rope.getPieces()).toHaveLength(2);
+        expect(engine.getAttachedConstraints()).toHaveLength(1);
     });
 
     it('free-rope-closed-scissors-blade: a spawned chain across the blades is cut when the scissors snap', () => {
@@ -238,7 +245,8 @@ describe('pairwise conformance kit (C5) — one real-physics scenario per active
 
         stepUntil(engine, () => scissors.isClosed, 90, 'scissors snap');
         stepUntil(engine, () => rope.isSevered, 90, 'chain cut');
-        expect(rope.constraints.length, 'severing must drop the constraint chain').toBe(0);
+        expect(rope.getPieces(), 'the fan cut splits the chain into pieces').toHaveLength(2);
+        expect(rope.constraints.length, 'the pieces keep their own links').toBeGreaterThan(0);
     });
 
     it('balloon-scissors: contact with an open blade pops the balloon once, body gone', () => {

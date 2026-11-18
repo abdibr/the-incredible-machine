@@ -2,7 +2,9 @@
  * Unit tests for rope-as-connector (GitHub issue 04):
  * ropes tie to payloads at named attachment points; ties realize as
  * engine-attached constraint links on the next physics step; they survive
- * snapshot rewinds; a severed rope releases its payload co-terminally.
+ * snapshot rewinds; piece severing (issue #58) keeps a cut rope's payload
+ * tied to its piece, while the wholesale sever fallback (no hit
+ * information) still releases everything co-terminally.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -71,7 +73,30 @@ describe('Rope as connector (issue 04)', () => {
 
     // ── co-termination on sever ──────────────────────────────────────
 
-    it('releases a tied payload the moment the rope severs', () => {
+    it('a mid-chain cut keeps the payload tied to its piece', () => {
+        const physics = new PhysicsEngine(800, 600);
+        const rope = new Rope(400, 60, { length: 60 });
+        const balloon = new Balloon(400, 220);
+        physics.addObject(rope);
+        physics.addObject(balloon);
+        rope.attachEndpoint('end', balloon, 'knot');
+        for (let i = 0; i < 10; i++) physics.step(16.67); // realize the link
+        expect(physics.getAttachedConstraints()).toHaveLength(1);
+
+        rope.sever(1); // a cut near the anchor: the tail piece carries the knot
+        // Piece severing (issue #58): the links at surviving segments stand;
+        // the piece keeps its payload.
+        expect(physics.getAttachedConstraints()).toHaveLength(1);
+        for (let i = 0; i < 10; i++) physics.step(16.67);
+        expect(physics.getAttachedConstraints()).toHaveLength(1);
+        expect(rope.getAttachmentRefs()).toEqual([
+            { seat: 'end', target: balloon, pointId: 'knot' },
+        ]);
+        physics.dispose();
+        balloon.dispose();
+    });
+
+    it('a wholesale sever (no hit information) still releases everything', () => {
         const physics = new PhysicsEngine(800, 600);
         const rope = new Rope(400, 60, { length: 60 });
         const balloon = new Balloon(400, 220);
@@ -81,19 +106,19 @@ describe('Rope as connector (issue 04)', () => {
         for (let i = 0; i < 10; i++) physics.step(16.67); // realize the link, let it strain
         expect(physics.getAttachedConstraints()).toHaveLength(1);
 
-        rope.sever();
+        rope.sever(); // the fallback: whole-rope demolition
         // The engine-attached link is co-terminated with the chain
         expect(physics.getAttachedConstraints()).toHaveLength(0);
         // The freed balloon keeps rising (buoyancy, unrestrained): measured
         // from its placement, not from where the strain phase's yank left it
-        // — the zero-length knot realizes the API tie's gap on the first
+        // - the zero-length knot realizes the API tie's gap on the first
         // step (the app flow's pull-to-tie closes that gap at placement)
         const balloonYAtAttach = 220;
         for (let i = 0; i < 40; i++) physics.step(16.67);
         expect(balloon.bodies[0].position.y).toBeLessThan(balloonYAtAttach - 50);
         physics.dispose();
+        balloon.dispose();
     });
-
     // ── attachment API + realization ─────────────────────────────────
 
     it('validates attachEndpoint calls', () => {
