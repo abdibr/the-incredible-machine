@@ -173,9 +173,16 @@ export default class Scissors extends BaseObject {
             ...this._engine.queryObjectsByType('rope'),
             ...this._engine.queryObjectsByType('free-rope'), // issue #55: spawned chains cut too
         ]) {
-            if (rope.isSevered) continue; // already cut apart
+            // Piece severing (issue #58): an already-cut rope can be cut
+            // again - cutting an already-cut rope works; Rope.sever absorbs
+            // repeat hits at a location it has already cut.
+            // The snap cut lands where the blades sweep shut: the most
+            // anchor-ward chain segment inside the open-blade fan (one cut,
+            // one boundary edge, exactly there).
+            let hit = null;
+            let hitIndex = Infinity;
             for (const body of rope.bodies) {
-                // Skip the anchor in every rope family — the pinned rope's
+                // Skip the anchor in every rope family - the pinned rope's
                 // static nail or the free rope's dynamic knot (issue #55).
                 // This can no longer key on isStatic: the free rope's anchor
                 // is dynamic, and a cut works on rope itself, never its
@@ -183,17 +190,21 @@ export default class Scissors extends BaseObject {
                 if (!body || body.label === 'rope-anchor') continue;
                 const dx = body.position.x - this._x;
                 const dy = body.position.y - this._y;
-                // World → scissors-local: pivot at origin, blades on +x
+                // World - scissors-local: pivot at origin, blades on +x
                 const along = dx * cosB + dy * sinB;
                 const across = -dx * sinB + dy * cosB;
                 const reach = Math.tan(OPEN_SPLAY) * Math.max(along, 0) +
                     BLADE_THICKNESS / 2 + ROPE_CUT_PAD;
                 if (along > -(ROPE_CUT_PAD + BLADE_THICKNESS / 2) &&
                     along <= tip && Math.abs(across) <= reach) {
-                    rope.sever();
-                    break;
+                    const index = rope.bodies.indexOf(body) - 1; // chain segment index
+                    if (index < hitIndex) {
+                        hitIndex = index;
+                        hit = body;
+                    }
                 }
             }
+            if (hit) rope.sever(hit);
         }
     }
 

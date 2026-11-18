@@ -314,6 +314,14 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         expect(flow.handlePointerDown(anchor.x, anchor.y, [rope])).toBe(false);
         expect(flow.getRopeSquares([rope], null)).toEqual([]);
         rope.dispose();
+
+        // A piece-cut rope (issue #58) is still a severed rope: no squares.
+        const cutRope = new Rope(400, 100);
+        cutRope.sever(2);
+        const cutAnchor = cutRope.bodies[0].position;
+        expect(flow.handlePointerDown(cutAnchor.x, cutAnchor.y, [cutRope])).toBe(false);
+        expect(flow.getRopeSquares([cutRope], null)).toEqual([]);
+        cutRope.dispose();
     });
 
     it('hover reveals a free square; tied and seeking squares stay visible unhovered', () => {

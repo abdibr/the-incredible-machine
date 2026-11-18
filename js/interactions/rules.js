@@ -30,6 +30,25 @@
 
 import { ROPE_FAMILY_TYPES } from '../objects/Rope.js';
 
+/**
+ * The rope body a rope-family cut pair landed on (issue #58, ADR 0007
+ * decision 7): the pair holds one of the rope's own bodies, and the cut
+ * must land exactly there - rope.sever(hit) consumes the boundary edge at
+ * that body and splits the chain into its pieces. A pair carrying none of
+ * the rope's bodies (not normally reachable - the rows match the rope
+ * family through its own types) yields undefined: Rope.sever falls back to
+ * the wholesale cut when it cannot locate the hit.
+ * @param {import('../objects/Rope.js').default} rope
+ * @param {{bodyA?: Matter.Body, bodyB?: Matter.Body}} pair
+ * @returns {Matter.Body|undefined}
+ */
+function ropeCutHit(rope, pair) {
+    const bodies = rope.bodies;
+    if (pair.bodyA && bodies.includes(pair.bodyA)) return pair.bodyA;
+    if (pair.bodyB && bodies.includes(pair.bodyB)) return pair.bodyB;
+    return undefined;
+}
+
 // Wildcard matcher: any object.
 const ANY = { match: 'any object' };
 
@@ -96,7 +115,9 @@ const ropeCutRows = ROPE_FAMILY_TYPES.flatMap((type) => {
             summary: prose.candle.summary,
             actor: { type, match: prose.actorMatch },
             target: { type: 'candle', label: 'candle-flame', match: "candle flame (label 'candle-flame')" },
-            handler: (rope) => rope.sever(),
+            // The cut lands at the pair's rope body: a piece cut, exactly
+            // where the flame/blade hit (issue #58).
+            handler: (rope, target, pair) => rope.sever(ropeCutHit(rope, pair)),
             test: prose.candle.test,
         },
         {
@@ -109,7 +130,9 @@ const ropeCutRows = ROPE_FAMILY_TYPES.flatMap((type) => {
                 predicate: (scissors) => scissors.isClosed,
                 match: "scissors, closed, via label 'scissors-blade'",
             },
-            handler: (rope) => rope.sever(),
+            // The cut lands at the pair's rope body: a piece cut, exactly
+            // where the flame/blade hit (issue #58).
+            handler: (rope, target, pair) => rope.sever(ropeCutHit(rope, pair)),
             test: prose.scissors.test,
         },
     ];

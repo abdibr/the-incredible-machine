@@ -119,11 +119,14 @@ describe('Scissors - open until a weight snaps them shut', () => {
         expect(severed).toBe(true);
         expect(scissors.isClosed).toBe(true);
 
-        // Freed segments stay detached; the far rope is untouched
+        // The cut is a piece cut (issue #58): two pieces standing on their
+        // own survivors, never confetti; the far rope is untouched.
+        expect(rope.getPieces()).toHaveLength(2);
+        expect(rope.constraints.length).toBeGreaterThan(0);
         for (let i = 0; i < 30; i++) engine.step(16.67);
         const worldConstraints = Composite.allConstraints(engine.world);
         for (const constraint of rope.constraints) {
-            expect(worldConstraints).not.toContain(constraint);
+            expect(worldConstraints).toContain(constraint);
         }
         expect(farRope.isSevered).toBe(false);
     });
