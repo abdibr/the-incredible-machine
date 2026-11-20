@@ -35,11 +35,7 @@ function ownedBodyCount(placedObjects) {
 function buildFixedObjects(levelData, registry) {
     const fixed = [];
     for (const objData of levelData.fixedObjects) {
-        const obj = registry.create(objData.type, objData.x, objData.y, {
-            angle: objData.angle || 0,
-            isFixed: true,
-            customId: objData.id, // named id from level JSON (goal zone refs)
-        });
+        const obj = registry.create(objData.type, objData.x, objData.y, levelObjectOptions(objData));
         fixed.push(obj);
     }
     return fixed;
@@ -59,6 +55,7 @@ let levelReset;
 let objectRegistry;
 let PhysicsEngine;
 let GameLoop;
+let levelObjectOptions;
 
 beforeEach(async () => {
     const reg = await import('../js/objects/ObjectRegistry.js');
@@ -69,6 +66,7 @@ beforeEach(async () => {
 
     objectRegistry = reg.objectRegistry;
     levelReset = resetMod;
+    levelObjectOptions = (await import('../js/ui/selectionHandles.js')).levelObjectOptions;
     PhysicsEngine = physicsMod.PhysicsEngine;
     GameLoop = loopMod.GameLoop;
 

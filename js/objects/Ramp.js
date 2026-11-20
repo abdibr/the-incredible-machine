@@ -153,6 +153,7 @@ export default class Ramp extends BaseObject {
             angle: data.angle,
             isFixed: data.isFixed,
             isAnchored: data.isAnchored,
+isScene: data.isScene === true,
             customId: data.id,
             width: data.options?.width || RAMP_WIDTH,
         });

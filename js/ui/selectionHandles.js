@@ -1,5 +1,6 @@
 /**
- * selectionHandles — the state-driven selection handle set (issues #68, #67)
+ * selectionHandles — the state-driven selection handle set (issues #68, #67;
+ * scene lock from ADR 0009, `docs/adr/0009-scene-lock-and-solution-scenes.md`)
  *
  * THE single source of truth for which selection handles a part offers:
  * the renderer derives both what it draws and what it hit-tests from these
@@ -8,14 +9,19 @@
  * interacting can never disagree again.
  *
  * An offered set derives from (part state × stage posture):
- * - part state — classified below across the three part states: `isFixed`
- *   pinning (#66) and `isAnchored` scene content (#67); this file is that
- *   integration surface, so future part states stay table rows.
- * - stage posture — SANDBOX authoring edits scenery in place, so pinned and
- *   anchored parts keep their full handle set there (dragging a pinned goal
- *   bucket IS the goal-zone authoring move, #66); every other stage leaves
- *   a pinned part only its pin handle and an anchored part only its anchor
- *   handle — the unpin/unanchor escape hatches.
+ * - part state — classified below across the four part states: `isFixed`
+ *   pinning (#66), `isAnchored` scene content (#67), and `isScene` authored
+ *   scene content (ADR 0009 — level-author board furniture from `fixedObjects`);
+ *   this file is that integration surface, so future part states stay table rows.
+ * - stage posture — SANDBOX authoring edits scenery in place, so pinned,
+ *   anchored and scene parts keep their full handle set there (dragging a
+ *   pinned goal bucket IS the goal-zone authoring move, #66). Everywhere
+ *   else: a player-authored pinned part keeps only its pin, a player-authored
+ *   anchored part only its anchor — the unpin/unanchor escape hatches for
+ *   the player's OWN states — while authored scene parts (ADR 0009) offer
+ *   NOTHING: not movable, not deletable, and no unpin/un-anchor route into
+ *   a movable part — solving a level may not rearrange or un-author its
+ *   contents.
  */
 
 import { ROPE_FAMILY_TYPES } from '../objects/Rope.js';
@@ -28,14 +34,21 @@ import { ROPE_FAMILY_TYPES } from '../objects/Rope.js';
  */
 export const SELECTION_HANDLES = Object.freeze(['move', 'rotate', 'delete', 'pin', 'anchor']);
 
-/** A fixed part's handles outside sandbox authoring: only the pin — the
- * one affordance that can still unpin it (issue #66 follow-up). */
+/** A player-authored pinned part's handles outside sandbox authoring: only
+ * the pin — the one affordance that can still unpin it (issue #66
+ * follow-up). Authored scene parts offer nothing outside sandbox
+ * (ADR 0009); the empty list is frozen so per-frame asks reuse it. */
 const PINNED_OTHER_HANDLES = Object.freeze(['pin']);
 
 /** An anchored part's handles outside sandbox authoring: only the anchor —
  * the one affordance that can still un-anchor it (issue #67), the same
  * boundary the pinned part's unpin escape hatch uses. */
 const ANCHORED_OTHER_HANDLES = Object.freeze(['anchor']);
+
+/** Authored scene content (ADR 0009) outside sandbox authoring: no handles
+ * at all — no move, no delete, no unpin/un-anchor route into a movable
+ * part. Solving a level may neither rearrange nor un-author its contents. */
+const SCENE_OTHER_HANDLES = Object.freeze([]);
 
 /**
  * Solid parts may anchor; the rope family is refused (issue #67 scope,
@@ -73,22 +86,28 @@ export function isAnchorCapable(obj) {
  * affordances never produce — they keep pinned and anchored exclusive — so
  * a hand-written row with both flags acts play-static, the safe reading).
  * @param {BaseObject} obj
- * @returns {'movable'|'pinned'|'anchored'}
+ * @returns {'scene'|'movable'|'pinned'|'anchored'}
  */
 export function partHandleState(obj) {
+    // Scene classification wins (ADR 0009): authored scene content stays
+    // scene whether the row pins it, anchors it or leaves it dynamic — the
+    // player-locked posture answer keys on authorship, not the pin flags.
+    if (obj.isScene) return 'scene';
     if (obj.isFixed) return 'pinned';
     if (obj.isAnchored) return 'anchored';
     return 'movable';
 }
 
 /** Handle rows per part state per stage posture. Sandbox authoring is the
- * one posture that edits fixed scenery in place; everywhere else a pinned
- * part keeps only its pin and an anchored part only its anchor. Movable and
- * anchored-capable parts offer everything in all postures. */
+ * one posture that edits fixed scenery in place; everywhere else a player-
+ * authored pinned part keeps only its pin, a player-authored anchored part
+ * only its anchor, and authored scene parts (ADR 0009) nothing at all.
+ * Movable and anchored-capable player parts offer everything in all postures. */
 const HANDLE_SETS = Object.freeze({
     movable: { sandbox: SELECTION_HANDLES, other: SELECTION_HANDLES },
     pinned: { sandbox: SELECTION_HANDLES, other: PINNED_OTHER_HANDLES },
     anchored: { sandbox: SELECTION_HANDLES, other: ANCHORED_OTHER_HANDLES },
+    scene: { sandbox: SELECTION_HANDLES, other: SCENE_OTHER_HANDLES },
 });
 
 // Rope scope exclusion (issue #67): ropes resolve their rows like any part,
@@ -115,15 +134,20 @@ function anchorless(handles) {
  *   anchored rows reload play-dynamic);
  * - `isAnchored` rides along only for anchor-capable solid rows, and never
  *   on a fixed one (the states are exclusive — pinned absorbs the anchor).
- * @param {object} data — the serialized row
+ * @param {object} data - the serialized row
  * @returns {{ angle: number, isFixed: boolean, isAnchored: boolean,
- *             customId: string|null }} options for objectRegistry.create
+ *             isScene: boolean, customId: string|null }} options for objectRegistry.create
  */
 export function levelObjectOptions(data) {
     return {
         angle: data.angle || 0,
         isFixed: data.isFixed === undefined ? true : !!data.isFixed,
         isAnchored: data.isFixed !== true && isAnchorCapableType(data.type) && !!data.isAnchored,
+        // ADR 0009: every row rebuilt through the level/fixedObjects seams is
+        // authored scene content — stamped so the handle table and the
+        // placed-snapshot restore rule key on authorship, whichever pin
+        // state the row carries.
+        isScene: true,
         customId: data.id,
     };
 }

@@ -52,7 +52,7 @@ describe('Seat-role tokens — the save side (serializePlacedBoard, issue #88)',
         // A 420px pinned rope lays 11 segments: mid covering 210, end 400.
         // Ties sit inside their coverings — nothing grows, so the seat
         // identity is all the test exercises.
-        const bucket = new Bucket(760, 500, { isFixed: true });
+        const bucket = new Bucket(760, 500, { isFixed: true, isScene: true });
         const balloonMid = balloonWithKnotAt(300, 265.6); // 165.6 from the anchor
         const balloonEnd = balloonWithKnotAt(300, 445.6); // 345.6 from the anchor
         const rope = new Rope(300, 100, { length: 420 });
@@ -98,7 +98,7 @@ describe('Seat-role tokens — the save side (serializePlacedBoard, issue #88)',
 
 describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', () => {
     it('restores all three named seats onto the same seats of the restored chain', () => {
-        const bucket = new Bucket(760, 500, { isFixed: true });
+        const bucket = new Bucket(760, 500, { isFixed: true, isScene: true });
         const balloonMid = balloonWithKnotAt(300, 265.6);
         const balloonEnd = balloonWithKnotAt(300, 445.6);
         const rope = new Rope(300, 100, { length: 420 });
@@ -136,7 +136,7 @@ describe('Seat-role tokens — the restore side (bindAttachment, issue #88)', ()
         // 5); the restored row lays 7. The ROLE tokens must follow the
         // restored count — mid → the 7-chain's middle body — not any
         // literal saved index.
-        const bucket = new Bucket(760, 500, { isFixed: true });
+        const bucket = new Bucket(760, 500, { isFixed: true, isScene: true });
         const balloonMid = balloonWithKnotAt(300, 141.6); // 41.6 from the anchor
         const balloonEnd = balloonWithKnotAt(300, 191.6); // 91.6 from the anchor
         const rope = new Rope(300, 100, { length: 100 });
@@ -211,7 +211,7 @@ describe('Seat-role tokens — anything that is not a role name is refused (issu
             ],
         };
         const rope = Rope.deserialize(data);
-        const bucket = new Bucket(760, 500, { isFixed: true });
+        const bucket = new Bucket(760, 500, { isFixed: true, isScene: true });
         const balloonA = balloonWithKnotAt(300, 191.6);
         const balloonB = balloonWithKnotAt(300, 155);
 
@@ -311,7 +311,7 @@ describe('Seat-role tokens — anything that is not a role name is refused (issu
     });
 
     it('the role tokens are a fixed point: save → load → save re-uses the tokens warning-free', () => {
-        const bucket = new Bucket(760, 500, { isFixed: true });
+        const bucket = new Bucket(760, 500, { isFixed: true, isScene: true });
         const balloon = new Balloon(300, 141.6); // 41.6 from the anchor ≤ 41.7: the mid of the 6-chain
         const rope = new Rope(300, 100, { length: 100 });
         rope.attachEndpoint('anchor', bucket, 'rim');

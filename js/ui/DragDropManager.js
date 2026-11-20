@@ -297,8 +297,10 @@ class DragDropManager {
     clearPlacedObjects() {
         for (let i = this._objects.length - 1; i >= 0; i--) {
             // Anchored parts are scene content, not placed parts (issue #67):
-            // they survive a clear exactly like fixed scenery.
-            if (!this._objects[i].isFixed && !this._objects[i].isAnchored) {
+            // they survive a clear exactly like fixed scenery. Authored scene
+            // content generally (isScene, ADR 0009) survives too — the board
+            // clear must never erase the level's own furniture.
+            if (!this._objects[i].isFixed && !this._objects[i].isAnchored && !this._objects[i].isScene) {
                 this._objects[i].dispose();
                 this._objects.splice(i, 1);
             }

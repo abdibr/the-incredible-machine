@@ -187,6 +187,7 @@ export default class Fan extends BaseObject {
             angle: data.angle,
             isFixed: data.isFixed,
             isAnchored: data.isAnchored,
+isScene: data.isScene === true,
             customId: data.id,
             windRange: data.options?.windRange || WIND_RANGE,
             windForce: data.options?.windForce || WIND_FORCE,

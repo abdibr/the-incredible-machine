@@ -47,6 +47,9 @@ class PlayControls {
         // available at every stage but the menu - enabling it during play is
         // the deliberate decision-9 exception the overlay exists for.
         this._createButton('rope-debug', 'DBG', 'Rope debug overlay');
+        // Give up (ADR 0009): swap the board to the level's solution scene;
+        // in the solution view the same button becomes the return control.
+        this._createButton('give-up', '🏳', 'Give up — show this level\'s solution');
 
         // Button click handlers
         this.buttons.play.addEventListener('click', () => this._onPlay());
@@ -54,6 +57,7 @@ class PlayControls {
         this.buttons.reset.addEventListener('click', () => this._onReset());
         this.buttons.speed.addEventListener('click', () => this._onSpeed());
         this.buttons['rope-debug'].addEventListener('click', () => this._onRopeDebug());
+        this.buttons['give-up'].addEventListener('click', () => this._onGiveUp());
 
         // Keyboard shortcuts
         this._keyHandler = (e) => {
@@ -128,6 +132,20 @@ class PlayControls {
         eventBus.emit('controls:rope-debug', { enabled: this._ropeDebug });
     }
 
+    /**
+     * Give up / return control (ADR 0009): in the SOLUTION posture the same
+     * button returns to the user's attempt; everywhere else it swaps the
+     * board to the level's solution scene. main.js validates the posture.
+     * @private
+     */
+    _onGiveUp() {
+        if (this._mode === 'SOLUTION') {
+            eventBus.emit('controls:solution-return');
+        } else {
+            eventBus.emit('controls:give-up');
+        }
+    }
+
     _onSpeed() {
         // GameLoop.cycleSpeed() (wired at app level) owns the speed state;
         // this UI mirrors it via the `loop:speed` event.
@@ -151,6 +169,11 @@ class PlayControls {
             btn.disabled = false;
         }
 
+        // The give-up button's resting label (ADR 0009): SOLUTION re-labels
+        // it below as the return control.
+        this.buttons['give-up'].textContent = '🏳';
+        this.buttons['give-up'].title = 'Give up — show this level\'s solution';
+
         // Preserve the speed button's highlight — it reflects current speed
         if (this._speed !== 1) {
             this.buttons.speed.classList.add('btn-active');
@@ -172,6 +195,11 @@ class PlayControls {
             case 'SANDBOX':
                 // Play is enabled, pause/reset grayed out
                 this.buttons.pause.disabled = true;
+                if (mode === 'SANDBOX') {
+                    // No goal in the sandbox (#63): there is nothing to give
+                    // up on, and the editor is not a player posture.
+                    this.buttons['give-up'].disabled = true;
+                }
                 break;
 
             case 'PLAYING':
@@ -189,6 +217,17 @@ class PlayControls {
                 this.buttons.play.disabled = true;
                 this.buttons.pause.disabled = true;
                 this.buttons.speed.disabled = true;
+                break;
+
+            case 'SOLUTION':
+                // Read-only solution view (ADR 0009): give up becomes the
+                // return control; nothing here runs.
+                this.buttons.play.disabled = true;
+                this.buttons.pause.disabled = true;
+                this.buttons.speed.disabled = true;
+                this.buttons['give-up'].classList.add('btn-active');
+                this.buttons['give-up'].textContent = '↩';
+                this.buttons['give-up'].title = 'Return to your attempt';
                 break;
         }
     }

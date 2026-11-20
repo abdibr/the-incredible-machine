@@ -384,6 +384,7 @@ export default class Pulley extends BaseObject {
             angle: data.angle,
             isFixed: data.isFixed,
             isAnchored: data.isAnchored,
+isScene: data.isScene === true,
             customId: data.id,
             ropeLength: data.options?.ropeLength || 150,
         });

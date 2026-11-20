@@ -15,7 +15,7 @@ import Bucket from '../js/objects/Bucket.js';
 
 /** Board: fixed bucket pinned + rope tied at both ends (rim / knot). */
 function buildTiedBoard() {
-    const fixedBucket = new Bucket(800, 300, { isFixed: true });
+    const fixedBucket = new Bucket(800, 300, { isFixed: true, isScene: true });
     const rope = new Rope(800, 260, { length: 80 });
     const balloon = new Balloon(300, 300);
     rope.attachEndpoint('anchor', fixedBucket, 'rim');
@@ -100,7 +100,7 @@ describe('connector snapshot seam — restorePlacedFromSnapshot (issue 04)', () 
     });
 
     it('binds tokens to fixed targets too (rope pinned to a fixed bucket)', () => {
-        const fixedBucket = new Bucket(750, 300, { isFixed: true });
+        const fixedBucket = new Bucket(750, 300, { isFixed: true, isScene: true });
         const rope = new Rope(750, 260, { length: 80 });
         rope.attachEndpoint('anchor', fixedBucket, 'rim');
         const rows = serializePlacedBoard([fixedBucket, rope]);
@@ -156,7 +156,7 @@ describe('connector snapshot seam — restorePlacedFromSnapshot (issue 04)', () 
 
     it('restores a severed rope severed, without binding its tokens', () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const fixedBucket = new Bucket(750, 300, { isFixed: true });
+        const fixedBucket = new Bucket(750, 300, { isFixed: true, isScene: true });
         const balloon = new Balloon(400, 300);
         const rope = new Rope(750, 260, { length: 80, severed: true });
         // tokens written anyway (the annotator is dumb); a severed rope drops them

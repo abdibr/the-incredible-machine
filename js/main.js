@@ -20,7 +20,7 @@ import { editorPanel } from './ui/EditorPanel.js';
 import { palettePanel } from './ui/PalettePanel.js';
 import { dragDropManager } from './ui/DragDropManager.js';
 import { objectRegistry } from './objects/ObjectRegistry.js';
-import { beginPlay, restorePlacedFromSnapshot, resetSandboxBoard, resetReturnPosture } from './reset/levelReset.js';
+import { beginPlay, restorePlacedFromSnapshot, resetSandboxBoard, resetReturnPosture, serializePlacedBoard } from './reset/levelReset.js';
 import { levelObjectOptions } from './ui/selectionHandles.js';
 import { sessionRecorder } from './recorder/SessionRecorder.js';
 import { localMirrorStore } from './recorder/browser.js';
@@ -35,6 +35,8 @@ export const AppMode = Object.freeze({
     PAUSED: 'PAUSED',
     WON: 'WON',
     SANDBOX: 'SANDBOX',
+    /** Read-only display of a level's solution scene (ADR 0009 give-up). */
+    SOLUTION: 'SOLUTION',
 });
 
 // ──────────────────────────────────────────────
@@ -55,6 +57,12 @@ const state = {
      * id — the historical heuristic).
      */
     _runOriginPosture: null,
+    /**
+     * The give-up seam (ADR 0009): the user's attempt board, serialized when
+     * the solution view opens, restored by the return path. Empty outside
+     * the SOLUTION posture.
+     */
+    _attemptSnapshot: [],
     /** @type {PhysicsEngine|null} */
     physicsEngine: null,
     /** @type {GameLoop|null} */
@@ -86,6 +94,15 @@ export function setMode(newMode) {
  */
 export function getMode() {
     return state.mode;
+}
+
+/**
+ * The live physics engine (read-only test seam: give-up assertions peer at
+ * the engine to prove the solution view adds no game bodies).
+ * @returns {import('./engine/PhysicsEngine.js').PhysicsEngine|null}
+ */
+export function getPhysicsEngine() {
+    return state.physicsEngine;
 }
 
 /**
@@ -290,6 +307,9 @@ function _wireEvents() {
             // (GameLoop.play() takes the physics snapshot when STOPPED)
             if (mode === 'EDITING' || mode === 'SANDBOX') {
                 state._savedPlacedSnapshot = beginPlay(state.physicsEngine, state.placedObjects);
+                // The play-start snapshot, announced (ADR 0009): the editor
+                // captures it as the solution scene when this run wins.
+                eventBus.emit('run:started', { snapshot: state._savedPlacedSnapshot });
                 // Record the posture this run was born in: the reset path
                 // returns to it, not to a mode guessed from the level id —
                 // the sandbox Load Level path installs an id too (issue #71).
@@ -312,9 +332,14 @@ function _wireEvents() {
         }
     });
 
-    // Reset button → back to EDITING (restore snapshot)
+    // Reset button → back to EDITING (restore snapshot); in the solution
+    // view (ADR 0009) Reset doubles as the return to the user's attempt.
     eventBus.on('controls:reset', () => {
         const mode = getMode();
+        if (mode === AppMode.SOLUTION) {
+            _leaveSolution();
+            return;
+        }
         if (mode === 'PLAYING' || mode === 'PAUSED' || mode === 'WON') {
             // GameLoop.reset() already restores snapshot + clears it
             state.gameLoop.reset();
@@ -341,6 +366,18 @@ function _wireEvents() {
         // zone that matches nothing on the board is said out loud here too.
         setHeaderLevel(levelData, state.placedObjects);
     });
+
+    // Give up → the level's solution scene (ADR 0009, docs/adr/
+    // 0009-scene-lock-and-solution-scenes.md): player postures only, a
+    // solution having been validated in. The board swaps to the solved
+    // scene in a read-only posture; the user's attempt rides the snapshot
+    // for the return path.
+    eventBus.on('controls:give-up', () => _enterSolution());
+
+    // Return from the solution view → the user's attempt, rebuilt the same
+    // way a post-run reset rebuilds it (furniture fresh from level JSON,
+    // player parts from the give-up-time snapshot).
+    eventBus.on('controls:solution-return', () => _leaveSolution());
 
     // Next level
     eventBus.on('overlay:next-level', async ({ levelId }) => {
@@ -378,6 +415,89 @@ function _wireEvents() {
         renderer.setObjects(state.placedObjects);
         setMode(AppMode.MENU);
     });
+}
+
+/**
+ * Exported for testability (same slice pattern as setHeaderLevel): the
+ * give-up handler behind `controls:give-up`. Null-safe before a full boot —
+ * a test can drive the real seam with no game loop or engine built yet.
+ */
+export function enterSolutionView() {
+    _enterSolution();
+}
+
+/**
+ * Exported for testability: the return handler behind
+ * `controls:solution-return` (and Reset, while in the solution view).
+ */
+export function leaveSolution() {
+    _leaveSolution();
+}
+
+/**
+ * Show the level's solution scene (ADR 0009 give-up).
+ *
+ * Any running attempt stops first (the same ordered loop-stop the reset path
+ * uses). The user's board is serialized to `_attemptSnapshot`, then the board
+ * swaps to the level's `solution.scene` — rebuilt as a FULL board restore
+ * (furniture and placed rows, exactly as the author left them at their
+ * winning play-start). The SOLUTION posture is display-only: the loop is not
+ * stepped and no physics bodies are added, so the goal checker cannot be
+ * reached and watching the solution never marks the level complete.
+ * @private
+ */
+function _enterSolution() {
+    const mode = getMode();
+    if (!['EDITING', 'PLAYING', 'PAUSED', 'WON'].includes(mode)) return;
+    const levelData = levelManager.getCurrentLevel();
+    const scene = levelData?.solution?.scene;
+    if (!Array.isArray(scene) || scene.length === 0) return;
+
+    // Stop any running attempt before touching the board (ordered path;
+    // null-safe before a boot that has built the loop)
+    if (state.gameLoop && !state.gameLoop.isStopped) state.gameLoop.reset();
+    if (renderer.canvas) renderer.startLoop();
+    goalOverlay.hide();
+
+    state._attemptSnapshot = serializePlacedBoard(state.placedObjects);
+
+    if (state.physicsEngine) state.physicsEngine.clear();
+    state.placedObjects.length = 0;
+    restorePlacedFromSnapshot(state.placedObjects, scene, objectRegistry, { includeFixed: true });
+    _showHeaderSolution(levelData);
+    setMode(AppMode.SOLUTION);
+}
+
+/**
+ * Leave the solution view: rebuild the level, restore the user's attempt
+ * from the give-up-time snapshot, back to campaign editing.
+ * @private
+ */
+function _leaveSolution() {
+    if (getMode() !== AppMode.SOLUTION) return;
+    const levelData = levelManager.getCurrentLevel();
+    const attempt = state._attemptSnapshot;
+    _setupLevel(levelData);
+    restorePlacedFromSnapshot(state.placedObjects, attempt);
+    setHeaderLevel(levelData, state.placedObjects);
+    state._attemptSnapshot = [];
+    setMode(AppMode.EDITING);
+}
+
+/**
+ * Header line for the solution view (ADR 0009): the level name gains the
+ * solution marker and the goal line says what is shown and how to leave.
+ * @private
+ */
+function _showHeaderSolution(levelData) {
+    const nameEl = document.getElementById('level-name');
+    if (nameEl) {
+        nameEl.textContent = levelData?.name ? `💡 Solution — ${levelData.name}` : '💡 Solution';
+    }
+    const goalEl = document.getElementById('goal-name');
+    if (goalEl) {
+        goalEl.textContent = 'The solved machine, proven solvable — press Return (or Reset) to go back to your own attempt.';
+    }
 }
 
 /**

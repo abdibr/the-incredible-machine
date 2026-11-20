@@ -218,7 +218,7 @@ class LevelManager {
     // ── Private ──────────────────────────────────
 
     _validate(data) {
-        const required = ['id', 'name', 'goal', 'fixedObjects', 'availableParts'];
+        const required = ['id', 'name', 'goal', 'fixedObjects', 'availableParts', 'solution'];
         for (const field of required) {
             if (!(field in data)) {
                 throw new Error(`[LevelManager] Level missing required field: "${field}"`);
@@ -235,6 +235,24 @@ class LevelManager {
 
         if (typeof data.availableParts !== 'object') {
             throw new Error('[LevelManager] availableParts must be an object');
+        }
+
+        // Solvability proof (ADR 0009): a level definition is two scenes —
+        // the puzzle and its solution. Without a solution scene the level
+        // cannot be shown to a player who gives up, and nothing guarantees it
+        // can be won at all.
+        if (!data.solution || !Array.isArray(data.solution.scene)) {
+            throw new Error(
+                '[LevelManager] Level needs a solvable proof: "solution.scene" must be an array of board rows (the solved scene, shown when the player gives up)'
+            );
+        }
+        if (data.solution.scene.length === 0) {
+            throw new Error('[LevelManager] solution.scene must carry at least one row — the solved board, not an empty one');
+        }
+        for (const row of data.solution.scene) {
+            if (!row || typeof row.type !== 'string') {
+                throw new Error('[LevelManager] solution.scene rows must each carry a "type" string');
+            }
         }
     }
 

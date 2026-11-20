@@ -210,6 +210,7 @@ export default class Trampoline extends BaseObject {
             angle: data.angle,
             isFixed: data.isFixed,
             isAnchored: data.isAnchored,
+isScene: data.isScene === true,
             customId: data.id,
             width: data.options?.width || TRAMP_WIDTH,
         });

@@ -191,6 +191,7 @@ export default class Conveyor extends BaseObject {
             angle: data.angle,
             isFixed: data.isFixed,
             isAnchored: data.isAnchored,
+isScene: data.isScene === true,
             customId: data.id,
             speed: data.options?.speed ?? 2,
             width: data.options?.width || CONVEYOR_WIDTH,

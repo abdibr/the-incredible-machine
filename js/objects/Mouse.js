@@ -354,6 +354,7 @@ export default class Mouse extends BaseObject {
             angle: data.angle,
             isFixed: data.isFixed,
             isAnchored: data.isAnchored,
+isScene: data.isScene === true,
             customId: data.id,
             speed: data.options?.speed || MOUSE_SPEED,
             direction: data.options?.direction || 1,

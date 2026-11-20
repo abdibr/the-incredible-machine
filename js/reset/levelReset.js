@@ -137,12 +137,21 @@ export function restorePlacedFromSnapshot(
     const restored = [];
     const rows = snapshot ?? [];
     for (const data of rows) {
-        // Default (level reload): fixed AND anchored rows are level furniture
-        // rebuilt from level JSON — an anchored row (isFixed:false but
-        // player-immovable scene content, issue #67) must skip here too or the
-        // reload path would double-restore it beside the level rebuild. With
-        // includeFixed (sandbox rewind) they come back here.
-        if (!data || (!includeFixed && (data.isFixed || data.isAnchored))) continue;
+        // Level-reload skip rule (ADR 0009): rows that ARE the level's own
+        // furniture are rebuilt from level JSON and skipped here, or the
+        // reload path would double-restore them beside the level rebuild.
+        // New rows carry the explicit isScene marker (serialize() writes it
+        // true AND false), so authored furniture and player-authored
+        // pinned/anchored parts — a part the player pinned mid-session,
+        // isFixed:true but isScene:false — are told apart, and the player's
+        // pinned parts survive the reset on the board. Rows from before
+        // ADR 0009 carry no isScene key at all: those fall back to the legacy
+        // furniture rule (isFixed || isAnchored → furniture). With
+        // includeFixed (sandbox rewind) every row comes back here.
+        const sceneMarked = data && data.isScene !== undefined
+            ? data.isScene === true
+            : !!(data && (data.isFixed || data.isAnchored));
+        if (!data || (!includeFixed && sceneMarked)) continue;
         try {
             restored.push(registry.deserialize(data));
         } catch (e) {

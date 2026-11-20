@@ -1,27 +1,61 @@
 {
-    "id": "level-01",
-    "name": "First Steps",
-    "description": "Get the bowling ball into the bucket. Simple!",
-    "difficulty": 1,
-    "goal": {
-        "type": "object_in_zone",
-        "targetType": "ball",
-        "zoneId": "bucket-goal"
-    },
-    "fixedObjects": [
-        {
-            "type": "bucket",
-            "x": 700,
-            "y": 480,
-            "angle": 0,
-            "id": "bucket-goal"
+  "id": "level-01",
+  "name": "First Steps",
+  "description": "Get the bowling ball into the bucket. Simple!",
+  "difficulty": 1,
+  "goal": {
+    "type": "object_in_zone",
+    "targetType": "ball",
+    "zoneId": "bucket-goal"
+  },
+  "fixedObjects": [
+    {
+      "type": "bucket",
+      "x": 700,
+      "y": 480,
+      "angle": 0,
+      "id": "bucket-goal"
+    }
+  ],
+  "availableParts": {
+    "ball": 1,
+    "ramp": 1
+  },
+  "hints": [
+    "Place the ramp above and to the left of the bucket, then put the ball at the top of the ramp."
+  ],
+  "solution": {
+    "scene": [
+      {
+        "type": "bucket",
+        "x": 700,
+        "y": 480,
+        "angle": 0,
+        "id": "bucket-goal",
+        "isFixed": true,
+        "isScene": true,
+        "options": {}
+      },
+      {
+        "type": "ramp",
+        "x": 580,
+        "y": 380,
+        "angle": 0.4,
+        "isFixed": true,
+        "isScene": false,
+        "options": {}
+      },
+      {
+        "type": "ball",
+        "x": 539,
+        "y": 338,
+        "angle": 0,
+        "isFixed": false,
+        "isScene": false,
+        "options": {
+          "variant": "bowling"
         }
-    ],
-    "availableParts": {
-        "ball": 1,
-        "ramp": 1
-    },
-    "hints": [
-        "Place the ramp above and to the left of the bucket, then put the ball at the top of the ramp."
+      }
     ]
+  }
 }

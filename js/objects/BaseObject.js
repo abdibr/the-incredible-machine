@@ -53,11 +53,13 @@ export default class BaseObject {
      * @param {object} [options={}] - Object-specific configuration
      */
     constructor(x, y, options = {}) {
-        // customId, angle, isFixed, isAnchored are lifecycle keys (id/pose/
-        // placement/state), not behavior options: they are consumed here and
-        // never land in _options, so serialize→deserialize round-trips stay
-        // stable (C3).
-        const { customId, angle, isFixed, isAnchored, ...behaviorOptions } = options;
+        // customId, angle, isFixed, isAnchored, isScene are lifecycle keys
+        // (id/pose/placement/state), not behavior options: they are consumed
+        // here and never land in _options, so serialize→deserialize
+        // round-trips stay stable (C3). isScene joins via ADR 0009 — authored
+        // scene content is player-locked in the edit stage, and rows keep the
+        // marking through round-trips.
+        const { customId, angle, isFixed, isAnchored, isScene, ...behaviorOptions } = options;
 
         /** @type {number} Unique instance ID */
         this._id = _nextId++;
@@ -84,6 +86,18 @@ export default class BaseObject {
          * field directly, it would break the fixed/anchored exclusivity.
          */
         this._isAnchored = isAnchored || false;
+
+        /**
+         * @type {boolean} Authored scene content (ADR 0009): the level's own
+         * board — furniture from `fixedObjects`, never the player's palette
+         * parts. Scene parts offer no selection handles outside the sandbox
+         * authoring posture (no move, no delete, and — the anti-cheat core —
+         * no unpin/un-anchor route into a movable part); the sandbox keeps
+         * the full affordances. Stamped by `levelObjectOptions` at every
+         * rebuild-from-rows seam; serialized so play snapshots and saved
+         * levels carry it.
+         */
+        this._isScene = isScene || false;
 
         /** @type {object} Original options for serialization */
         this._options = { ...behaviorOptions };
@@ -148,6 +162,9 @@ export default class BaseObject {
 
     /** @returns {boolean} */
     get isFixed() { return this._isFixed; }
+
+    /** @returns {boolean} whether this part is authored scene content (ADR 0009) */
+    get isScene() { return this._isScene; }
 
     /**
      * Pin-state setter — the editor's pin affordance (the 📌 selection handle
@@ -374,6 +391,14 @@ export default class BaseObject {
         if (this._customId !== null) {
             data.id = this._customId;
         }
+        // Scene-content marking (ADR 0009) round-trips like the pin: rows
+        // carrying it rebuild as authored, player-locked scene content on
+        // load, and the placed-snapshot restore skip rule tells authored
+        // furniture from player-pinned parts by it. Written explicitly (true
+        // AND false) so a row's scene-ness is always decided in new data;
+        // rows from before ADR 0009 carry no key at all and fall back to the
+        // legacy isFixed/isAnchored furniture rule.
+        data.isScene = this._isScene;
         // The anchor marker (issue #67) round-trips like the pin: rows
         // carrying it rebuild as dynamic-but-player-immovable scene content
         // on load. Omitted when unset so the plain serial shape stays stable.

@@ -186,6 +186,16 @@ const SAVED_LEVEL = {
     ],
     goal: { type: 'object_in_zone', targetType: 'ball', zoneId: 'bucket-goal' },
     availableParts: { ball: 2, domino: 1 },
+    // The solvability proof (ADR 0009): a save the player import accepts
+    // carries its solution scene � here the solved board drops the ball
+    // through the floating mouth.
+    solution: {
+        scene: [
+            { type: 'bucket', id: 'bucket-goal', x: 600, y: 520, angle: 0, isFixed: true, isScene: true, options: {} },
+            { type: 'ramp', id: 'ramp-1', x: 260, y: 420, angle: -0.2, isFixed: true, isScene: true, options: {} },
+            { type: 'ball', x: 600, y: 300, angle: 0, isFixed: false, isScene: false, options: { variant: 'bowling' } },
+        ],
+    },
 };
 
 /**
@@ -286,10 +296,12 @@ describe('a saved level opens as a player (issue #70)', () => {
         expect(headerNode('goal-name').textContent).toBe(header.goal);
 
         // Fixed furniture is locked in the player's EDITING posture: the
-        // shared policy table (issue #68) leaves a pinned part only its pin
-        // handle — and the drawn/hit-test/verb sets are all that table.
+        // shared policy table (issue #68) leaves scene content (ADR 0009)
+        // NO handles at all — not movable, not deletable, and no unpin or
+        // un-anchor route into a movable part — and the drawn/hit-test/verb
+        // sets are all that table.
         for (const part of board) {
-            expect(selectionHandles.selectionHandleSet(part, mainModule.getMode())).toEqual(['pin']);
+            expect(selectionHandles.selectionHandleSet(part, mainModule.getMode())).toEqual([]);
         }
 
         // A player-placed part is not locked — placement is the session's point.

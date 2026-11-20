@@ -1,36 +1,70 @@
 {
-    "id": "level-04",
-    "name": "Lighter Than Air",
-    "description": "Pin a rope and tie the balloons to it, then get the ball into the floating goal bucket.",
-    "difficulty": 3,
-    "goal": {
-        "type": "object_in_zone",
-        "targetType": "ball",
-        "zoneId": "bucket-goal"
+  "id": "level-04",
+  "name": "Lighter Than Air",
+  "description": "Pin a rope and tie the balloons to it, then get the ball into the floating goal bucket.",
+  "difficulty": 3,
+  "goal": {
+    "type": "object_in_zone",
+    "targetType": "ball",
+    "zoneId": "bucket-goal"
+  },
+  "fixedObjects": [
+    {
+      "type": "bucket",
+      "x": 750,
+      "y": 480,
+      "angle": 0,
+      "id": "bucket-goal"
     },
-    "fixedObjects": [
-        {
-            "type": "bucket",
-            "x": 750,
-            "y": 480,
-            "angle": 0,
-            "id": "bucket-goal"
-        },
-        {
-            "type": "ramp",
-            "x": 200,
-            "y": 300,
-            "angle": 0,
-            "isFixed": true
+    {
+      "type": "ramp",
+      "x": 200,
+      "y": 300,
+      "angle": 0,
+      "isFixed": true
+    }
+  ],
+  "availableParts": {
+    "balloon": 2,
+    "rope": 1,
+    "ball": 1
+  },
+  "hints": [
+    "Ropes pin where you drop them and can tie to balloons: pin one end anywhere solid, then tie both balloons to the rope's end and they will strain against the tether instead of drifting off.",
+    "The goal bucket floats above the ground, so the ball must arrive from above \u00e2\u20ac\u201d anything falling through the open mouth lands inside and counts."
+  ],
+  "solution": {
+    "scene": [
+      {
+        "type": "bucket",
+        "x": 750,
+        "y": 480,
+        "angle": 0,
+        "id": "bucket-goal",
+        "isFixed": true,
+        "isScene": true,
+        "options": {}
+      },
+      {
+        "type": "ramp",
+        "x": 200,
+        "y": 300,
+        "angle": 0,
+        "isFixed": true,
+        "isScene": true,
+        "options": {}
+      },
+      {
+        "type": "ball",
+        "x": 745,
+        "y": 250,
+        "angle": 0,
+        "isFixed": false,
+        "isScene": false,
+        "options": {
+          "variant": "bowling"
         }
-    ],
-    "availableParts": {
-        "balloon": 2,
-        "rope": 1,
-        "ball": 1
-    },
-    "hints": [
-        "Ropes pin where you drop them and can tie to balloons: pin one end anywhere solid, then tie both balloons to the rope's end and they will strain against the tether instead of drifting off.",
-        "The goal bucket floats above the ground, so the ball must arrive from above — anything falling through the open mouth lands inside and counts."
+      }
     ]
+  }
 }

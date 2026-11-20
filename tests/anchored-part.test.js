@@ -431,11 +431,13 @@ describe('the anchor survives every rebuild path (issue #67)', () => {
     });
 
     it('the rebuild-row rule: legacy rows stay forced-fixed, anchored rows keep dynamic, rope anchors drop', () => {
+        // ADR 0009: every row rebuilt through the fixedObjects seams is scene
+        // content — the isScene stamp rides all rebuild-row options.
         expect(levelObjectOptions({ type: 'ramp', x: 1, y: 2 })).toEqual({
-            angle: 0, isFixed: true, isAnchored: false, customId: undefined,
+            angle: 0, isFixed: true, isAnchored: false, isScene: true, customId: undefined,
         });
         expect(levelObjectOptions({ type: 'ball', x: 1, y: 2, angle: 0.2, id: 'b1', isFixed: false, isAnchored: true }))
-            .toEqual({ angle: 0.2, isFixed: false, isAnchored: true, customId: 'b1' });
+            .toEqual({ angle: 0.2, isFixed: false, isAnchored: true, isScene: true, customId: 'b1' });
         // Pinned absorbs the anchor; rope rows lose it (scope)
         expect(levelObjectOptions({ type: 'bucket', x: 1, y: 2, isFixed: true, isAnchored: true }).isAnchored).toBe(false);
         expect(levelObjectOptions({ type: 'rope', x: 1, y: 2, isAnchored: true }).isAnchored).toBe(false);

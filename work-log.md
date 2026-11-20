@@ -1,5 +1,75 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-20 — Scene content is player-locked, and every level ships a proven solution scene (ADR 0009)
+
+Two holes closed in one decision (`docs/adr/0009-scene-lock-and-solution-scenes.md`). The
+cheat: solving a campaign level, the pin/anchor "escape hatches" (#66/#67) left authored
+scene content reachable in the player's EDITING posture — the level-06 target ball is an
+*anchored* scene part, and its anchor handle (the un-anchor escape) un-anchored it in place:
+become movable, drag it into the goal bucket, press Play, win. The gap: a level carried no
+proof it could be won at all — no solved board, no solvability check, nothing to show a
+player who gives up.
+
+The fix is a fourth part state plus a second scene per level:
+
+- **Scene content (`isScene`)** — every `fixedObjects` row rebuilt through the level seams
+  (`levelObjectOptions`: `main._setupLevel`, `EditorPanel._applyLoadedLevel`, the agent
+  harness) stamps `isScene: true` (a BaseObject lifecycle flag on the same seams as
+  `customId`/`angle`/`isFixed`/`isAnchored`, written explicitly — true AND false — so a row's
+  scene-ness is decided in new data; key-less rows fall back to the legacy furniture rule).
+  `partHandleState` classifies `scene` ahead of the pin flags; outside SANDBOX authoring a
+  scene part answers `[]` handles — no move, no delete, no unpin, no un-anchor — while the
+  sandbox keeps the full #66/#67 affordances and player-authored pinned/anchored parts keep
+  their own escapes. The rope-family anchor refusal stands.
+- **Restore skip rule** — `restorePlacedFromSnapshot`'s level branch keys on the explicit
+  marker (legacy rows keep the isFixed/isAnchored furniture rule), which also fixes the
+  older quirk that a player-pinned part vanished from the edit board after play/reset:
+  unmarked pinned rows are player content now and restore.
+- **Solution scenes** — level JSON gains `solution: { scene: [...] }`, required by
+  `LevelManager._validate` (campaign loader + player `validateCustom`; the editor's own
+  import stays lenient). All six campaign levels carry authored scenes, proven by replay:
+  `tests/solution-scenes.test.js` builds each scene exactly the way the give-up path does
+  and drives a real engine to `goal:reached`. Two shipped levels were rewritten in the
+  process: level-05's fixed ramp (a mouse walking downhill off its end now drops straight
+  into the floating bucket's mouth — the old spring-arc geometry could not reach the floating
+  bucket, so the level was effectively unsolvable as authored) and level-06's own machine
+  (gentler 140-wide ramp, ball re-seated so the anchored roll ends IN the bucket — the old
+  0.28-rad/200-wide ramp overshot the goal the hint promises).
+- **Solution capture** — `controls:play` announces the play-start snapshot (`run:started`);
+  the editor stamps it as the capture when a sandbox test run actually wins
+  (`goal:reached` while SANDBOX). Save writes it as `solution.scene`; a capture-less save is
+  an explained DRAFT (`solution: null`) — player import and the campaign loader refuse it,
+  the editor's lenient Load reopens it, so the authoring loop is save-draft → Load → win a
+  Test run → Save the proof. A level load or a goal-type change voids the capture.
+- **Give up / Return** — `controls:give-up` (fail overlay's Show-me-the-solution button or
+  the 🏳 transport control) stops the attempt, serializes the user's board as the attempt
+  snapshot, and swaps the board to the solution scene as a FULL restore — inside a new
+  read-only `SOLUTION` posture: loop not stepped, no physics bodies added, so the goal
+  checker cannot fire and watching the solution grants no credit. Return (the control
+  relabeled ↩, or Reset) rebuilds the level and restores the attempt with the same two-phase
+  token bind a post-run reset uses. `give-up` is refused outside player postures and for
+  solution-less levels.
+
+- **`js/objects/BaseObject.js` + all class deserializes** — the `isScene` lifecycle key,
+  forwarded through every `deserialize` (rope family excluded), serialized explicitly.
+- **`js/ui/selectionHandles.js`** — the `scene` row in `HANDLE_SETS`, state classification,
+  `levelObjectOptions` stamping.
+- **`js/ui/DragDropManager.js`** — scene parts survive clears beside pinned/anchored ones.
+- **`js/reset/levelReset.js`** — the keyed skip rule (scene vs player-authored pinned).
+- **`js/levels/LevelManager.js`** — `solution` required by `_validate` with readable errors.
+- **`js/main.js`** — `AppMode.SOLUTION`, `enterSolutionView`/`leaveSolution` (exported seams,
+  null-safe pre-boot), `controls:give-up`/`controls:solution-return`/Reset-in-SOLUTION
+  wiring, the `run:started` announcement, the solution header line, `getPhysicsEngine`.
+- **`js/ui/PlayControls.js`** — the 🏳 button (↩ in SOLUTION), posture-gated enablement.
+- **`js/ui/GoalOverlay.js`** — the fail overlay's solution offer; null-safe `hide()`.
+- **`js/ui/EditorPanel.js`** — solution capture (run:started + goal:reached + void rules),
+  the solution notice line, Save carrying the capture or explaining the draft.
+- **Tests** — `scene-lock.test.js` (policy table, round-trip, skip rule),
+  `solution-scenes.test.js` (the six-scene replay proof), `give-up.test.js` (full fake-DOM
+  boot: swap/restore/reset/refusals, no credit); updated the five suites that encoded the
+  old escape-hatch/furniture-skip contracts (`reset`, `connector-reset`, `rope-seat-tokens`,
+  `level-import`, `anchored-part`). 833/833 green.
+
 ## 2026-11-13 — Segment indices are no longer seats: the role is the only address (issue #90)
 
 The last of the old seat surface is deleted. Through #84–#89 the rope gained three named tie

@@ -256,6 +256,7 @@ export default class Spring extends BaseObject {
             angle: data.angle,
             isFixed: data.isFixed,
             isAnchored: data.isAnchored,
+isScene: data.isScene === true,
             customId: data.id,
             launchForce: data.options?.launchForce || LAUNCH_FORCE,
         });

@@ -56,7 +56,26 @@ import { setMode, AppMode } from '../main.js';
  * introduces the anchor affordance (issue #67) so the two scenery markers
  * are explained side by side, in plain language.
  */
+/**
+ * Standing pin tip (issue #66 follow-up): shown in the pin notice on every
+ * sandbox entry, before any pin action has produced a live message. Also
+ * introduces the anchor affordance (issue #67) so the two scenery markers
+ * are explained side by side, in plain language.
+ */
 const PIN_TIP = 'Tip: select a part and click its 📌 handle (or press P) to pin it — a pinned bucket is the goal zone, and only pinned parts are saved. The ⚓ handle (or A) anchors a part instead: the player cannot move it, but at play it still falls — Save Level keeps anchored parts too.';
+
+/**
+ * Standing solution tip (ADR 0009, docs/adr/0009-scene-lock-and-solution-
+ * scenes.md): shown in the solution notice until a winning test run — or a
+ * level load that invalidates the proof — changes the message.
+ */
+const SOLUTION_TIP = 'Not proven solvable yet (ADR 0009): Load this level again with 📂 Load Level, press ▶ Test Puzzle and WIN once — the winning machine is captured as the solution scene the next Save Level writes (solution.scene).';
+
+/** The line after a win captured the machine (ADR 0009). */
+const SOLUTION_CAPTURED = '💡 Solution captured (ADR 0009) — the machine that was on the board at this run\'s start will ride the next Save Level as solution.scene.';
+
+/** The line after a draft save wrote no solution scene (ADR 0009). */
+const SOLUTION_DRAFT = 'Saved as a DRAFT (ADR 0009): no solution scene yet, so player import will refuse it (the campaign loader does too). Re-open it with 📂 Load Level, win one ▶ Test Puzzle run, and Save again to write the proof.';
 
 class EditorPanel {
     constructor() {
@@ -93,6 +112,31 @@ class EditorPanel {
          * @type {HTMLElement|null}
          */
         this._pinNotice = null;
+
+        /**
+         * One plain-language line about the solution scene (ADR 0009): the
+         * standing tip until a winning test run captures the machine, a
+         * draft save explains what is missing, or a level load resets it.
+         * Null until the panel is built.
+         * @type {HTMLElement|null}
+         */
+        this._solutionNotice = null;
+
+        /**
+         * The play-start snapshot of the most recent sandbox run
+         * (`run:started`, ADR 0009): the solution-scene capture source.
+         * Overwritten at every play; null before the first.
+         * @type {object[]|null}
+         */
+        this._lastRunSnapshot = null;
+
+        /**
+         * The captured solution scene (ADR 0009): the play-start board
+         * snapshot of a winning sandbox test run of the loaded level. Every
+         * save carries it; a level load or a goal-type change voids it.
+         * @type {object[]|null}
+         */
+        this._capturedSolution = null;
 
         /**
          * Temporary disabled option displaying an imported level's
@@ -147,6 +191,17 @@ class EditorPanel {
                     // (issue #66); a return keeps the running session's
                     // notice instead.
                     this._setPinNotice(PIN_TIP);
+                    // Fresh sandbox visit: the solution proof (ADR 0009)
+                    // belongs to the loaded session — wipe it and the pin
+                    // notice opens its standing tip from scratch.
+                    this._capturedSolution = null;
+                    this._lastRunSnapshot = null;
+                    this._setSolutionNotice(SOLUTION_TIP);
+                } else {
+                    // Returning from the run family: a captured proof
+                    // survives (the same session proved the same goal), but
+                    // the notice refreshes to say what Save will carry.
+                    this._refreshSolutionNotice();
                 }
                 // The palette's own panel (PalettePanel) resets the sandbox
                 // palette posture on entry and releases the toolbox on exit
@@ -186,6 +241,24 @@ class EditorPanel {
         // Anchor affordance (issue #67): announce what anchoring did — the
         // same plain-language pattern as the pin notice.
         eventBus.on('object:anchored', (ev) => this._onAnchored(ev));
+
+        // Solution capture (ADR 0009): the play-start snapshot announced at
+        // each `controls:play` becomes the solution scene when this run wins
+        // the loaded goal. A level load voids the proof (a different level's
+        // proof is not this level's) and restores the standing tip.
+        eventBus.on('run:started', ({ snapshot }) => {
+            this._lastRunSnapshot = Array.isArray(snapshot) ? snapshot : null;
+        });
+        eventBus.on('goal:reached', () => {
+            if (this._mode === 'SANDBOX' && this._lastRunSnapshot) {
+                this._capturedSolution = JSON.parse(JSON.stringify(this._lastRunSnapshot));
+                this._setSolutionNotice(SOLUTION_CAPTURED);
+            }
+        });
+        eventBus.on('level:loaded', () => {
+            this._capturedSolution = null;
+            if (this._mode === 'SANDBOX') this._setSolutionNotice(SOLUTION_TIP);
+        });
 
         console.log('[EditorPanel] Initialized');
     }
@@ -266,7 +339,7 @@ class EditorPanel {
         // Built from the implemented-goal contract (GoalChecker.js): the
         // honest select + change listener replaces the old silent list.
         this._rebuildGoalOptions(ZONE_GOAL_TYPE);
-        this._goalSelect.addEventListener('change', () => this._updateGoalReadout());
+        this._goalSelect.addEventListener('change', () => this._onGoalSelectionChanged());
         this._panelBody.appendChild(this._goalSelect);
 
         // Goal readout (issue #66): immediately explains what the live
@@ -286,6 +359,14 @@ class EditorPanel {
         this._pinNotice.style.cssText = 'font-size: 12px; line-height: 1.4; margin: 0 0 8px; padding: 4px 6px; background: rgba(255, 255, 255, 0.12); border-radius: 4px;';
         this._pinNotice.textContent = PIN_TIP;
         this._panelBody.appendChild(this._pinNotice);
+
+        // Solution notice (ADR 0009): one plain-language line about the
+        // solution scene the next Save carries — standing tip, captured
+        // proof, or the draft-save explainer.
+        this._solutionNotice = document.createElement('div');
+        this._solutionNotice.style.cssText = 'font-size: 12px; line-height: 1.4; margin: 0 0 8px; padding: 4px 6px; background: rgba(255, 255, 255, 0.12); border-radius: 4px;';
+        this._solutionNotice.textContent = SOLUTION_TIP;
+        this._panelBody.appendChild(this._solutionNotice);
 
         this._panelBody.appendChild(this._makeSep());
 
@@ -504,6 +585,44 @@ class EditorPanel {
     }
 
     /**
+     * Show the solution notice line's text (ADR 0009).
+     * @param {string} text
+     * @private
+     */
+    _setSolutionNotice(text) {
+        if (!this._solutionNotice) return;
+        this._solutionNotice.textContent = text;
+    }
+
+    /**
+     * Refresh the solution notice from the capture state (ADR 0009) — the
+     * sandbox-entry return path reprints what the next Save carries.
+     * @private
+     */
+    _refreshSolutionNotice() {
+        if (this._capturedSolution) {
+            this._setSolutionNotice(SOLUTION_CAPTURED);
+        } else {
+            this._setSolutionNotice(SOLUTION_TIP);
+        }
+    }
+
+    /**
+     * Goal-select change (issue #66 readout; ADR 0009): the readout follows
+     * the selection, and a CHANGED goal voids the captured proof — the win
+     * proved the previous goal, not this one.
+     * @private
+     */
+    _onGoalSelectionChanged() {
+        this._updateGoalReadout();
+        if (this._mode !== 'SANDBOX') return;
+        if (this._capturedSolution) {
+            this._capturedSolution = null;
+            this._setSolutionNotice(SOLUTION_TIP);
+        }
+    }
+
+    /**
      * The pin message (issue #66 follow-up): right after a pin toggle, say in
      * plain language what the pin did — the goal-zone pin the user was looking
      * for, a decoy pin the field's GOAL marker does not point at, an unpin
@@ -662,6 +781,21 @@ class EditorPanel {
             availableParts: palettePanel.paletteForSave(),
             hints: [],
         };
+
+        // Solution scene (ADR 0009): a winning test run captured the machine
+        // as the solvability proof — the save carries it as solution.scene
+        // (a deep copy: the capture must not alias the live array). Without
+        // a capture the save is an explained DRAFT: player import and the
+        // campaign loader refuse solution-less levels, so a draft only
+        // re-opens in this editor's Load, where winning a Test run captures
+        // the proof for the next save.
+        if (this._capturedSolution) {
+            levelData.solution = { scene: JSON.parse(JSON.stringify(this._capturedSolution)) };
+            this._setSolutionNotice(SOLUTION_CAPTURED);
+        } else {
+            levelData.solution = null;
+            this._setSolutionNotice(SOLUTION_DRAFT);
+        }
 
         // Download as JSON
         const blob = new Blob([JSON.stringify(levelData, null, 4)], { type: 'application/json' });

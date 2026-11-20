@@ -80,8 +80,10 @@ class GoalOverlay {
      * Hide the overlay.
      */
     hide() {
-        this.container.classList.add('hidden');
-        this.overlayContainer.classList.add('hidden');
+        // Null-safe: the give-up path (ADR 0009) may hide the overlay before
+        // the boot built the containers (tests drive the seam directly).
+        this.container?.classList.add('hidden');
+        this.overlayContainer?.classList.add('hidden');
     }
 
     // ── Private ──────────────────────────────────
@@ -180,6 +182,22 @@ class GoalOverlay {
             eventBus.emit('overlay:retry');
         });
         btnRow.appendChild(retryBtn);
+
+        // Give-up affordance (ADR 0009): a level that ships its solution
+        // scene — every validated level does — can show the solved machine
+        // when the player gives up. main.js validates the posture; this
+        // button only announces the ask.
+        if (level?.solution?.scene?.length > 0) {
+            const solutionBtn = document.createElement('button');
+            solutionBtn.className = 'btn btn-primary';
+            solutionBtn.textContent = '🏳 Show me the solution';
+            solutionBtn.title = 'Give up and see the solved machine';
+            solutionBtn.addEventListener('click', () => {
+                this.hide();
+                eventBus.emit('controls:give-up');
+            });
+            btnRow.appendChild(solutionBtn);
+        }
 
         const menuBtn = document.createElement('button');
         menuBtn.className = 'btn btn-primary';
