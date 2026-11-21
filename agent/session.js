@@ -22,18 +22,11 @@ import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
 import { FIXED_STEP_MS } from '../js/engine/GameLoop.js';
 import { GoalChecker } from '../js/goals/GoalChecker.js';
+import { levelManager } from '../js/levels/LevelManager.js';
+
 import { levelObjectOptions } from '../js/ui/selectionHandles.js';
 import { EventRecorder } from './observe/events.js';
 import { createSeedRng, resolveSeed, SEED_ENV_VAR } from './rng.js';
-
-/** Validate a level document — mirrors LevelManager._validate(). @private */
-function validateLevelData(data) {
-    for (const field of ['id', 'name', 'goal', 'fixedObjects', 'availableParts']) {
-        if (!(field in data)) throw new Error(`[AgentSession] level missing field: "${field}"`);
-    }
-    if (!data.goal?.type) throw new Error('[AgentSession] level goal must have a "type" field');
-    if (!Array.isArray(data.fixedObjects)) throw new Error('[AgentSession] fixedObjects must be an array');
-}
 
 export class AgentSession {
     /**
@@ -97,7 +90,11 @@ export class AgentSession {
             const path = new URL(`../js/levels/puzzles/${idOrData}.json`, import.meta.url);
             data = JSON.parse(await fs.readFile(path, 'utf8'));
         }
-        validateLevelData(data);
+        // The level owner validates and publishes (issue #78): the same
+        // schema the campaign loader answers to (validateCustom), and the
+        // level:loaded fact emitted by the LevelManager seam in the rebuild
+        // below - never by hand here.
+        levelManager.validateCustom(data);
         this.levelData = data;
         this.placements = [];
         this._rebuild();
@@ -132,10 +129,13 @@ export class AgentSession {
         this._goalChecker.init({ physicsEngine: this.engine });
         this._outcome = null;
         this._failureReason = null;
-        // The level fact arms GoalChecker (same seam as the live app); the
-        // play-mode boundary row belongs to the run framing below, not the
-        // build (issue #78: the run lifecycle is the loop seam's business).
-        eventBus.emit('level:loaded', this.levelData);
+        // The level fact arms GoalChecker (same seam as the live app) and
+        // comes from the LevelManager owner - loadCustom, the exact seam
+        // editor imports ride (the glossary owner rule: level:loaded is
+        // never emitted by hand). The play-mode boundary row belongs to the
+        // run framing in trial(), not the build (issue #78: the run
+        // lifecycle is the loop seam's business).
+        levelManager.loadCustom(this.levelData);
         // Construction window (agent-side seeded determinism): object ctors are
         // the only Math.random consumers during a build (Balloon color/bob
         // phase, Candle flicker phase). With a seed configured, swap the global

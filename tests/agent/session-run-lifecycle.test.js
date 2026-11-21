@@ -3,6 +3,8 @@ import { eventBus } from '../../js/EventBus.js';
 import { FIXED_STEP_MS } from '../../js/engine/GameLoop.js';
 import { AgentSession } from '../../agent/session.js';
 import { place } from '../../agent/actions.js';
+import { levelManager } from '../../js/levels/LevelManager.js';
+
 
 /**
  * The agent session consumes the loop's run-lifecycle facts (issue #78).
@@ -135,5 +137,36 @@ describe('AgentSession.trial publishes the loop run facts (issue #78)', () => {
         } finally {
             stop();
         }
+    });
+});
+
+
+describe('AgentSession bootstrap consumes the level owner (issue #78)', () => {
+    it(
+        'loadLevel installs the level through the LevelManager seam - level:loaded from one owner',
+        async () => {
+            session = new AgentSession();
+            await session.loadLevel('level-01');
+            // The owner carries the loaded level (the same install editor
+            // imports ride through loadCustom) - the session never emits
+            // level:loaded by hand.
+            expect(levelManager.getCurrentLevel()?.id).toBe('level-01');
+        },
+    );
+
+    it('answers to the one level schema: a document without a solution scene is refused', async () => {
+        session = new AgentSession();
+        await expect(
+            session.loadLevel({
+                id: 'bare-fixture', name: 'Bare Fixture',
+                goal: { type: 'object_in_zone', targetType: 'ball', zoneId: 'z' },
+                fixedObjects: [], availableParts: {},
+            }),
+        ).rejects.toThrow(/\[LevelManager\].*solution/);
+    });
+
+    it('the level owner wording surfaces on an incomplete document - no session mirror', async () => {
+        session = new AgentSession();
+        await expect(session.loadLevel({ id: 'bare-2' })).rejects.toThrow(/\[LevelManager\] Level missing required field: "name"/);
     });
 });

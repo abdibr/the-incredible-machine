@@ -18,6 +18,11 @@ const AD_HOC = {
     goal: { type: 'object_in_zone', targetType: 'ball', zoneId: 'z1' },
     fixedObjects: [{ type: 'ball', x: 120, y: 120, id: 'the-ball' }],
     availableParts: { spring: 1 },
+    // A level document is two scenes (ADR 0009): the agent session loads
+    // ad-hoc worlds through the level owner's validateCustom, so the
+    // fixture carries its (fixed) board as the solvability scene, exactly
+    // like every shipped and saved level must.
+    solution: { scene: [{ type: 'ball', x: 120, y: 120, id: 'the-ball' }] },
 };
 
 describe('observe/graph', () => {
