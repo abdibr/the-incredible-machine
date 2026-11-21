@@ -6,6 +6,8 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { eventBus } from '../js/EventBus.js';
+import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
+import { GameLoop } from '../js/engine/GameLoop.js';
 import { objectRegistry } from '../js/objects/ObjectRegistry.js';
 import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import { SessionRecorder } from '../js/recorder/SessionRecorder.js';
@@ -231,6 +233,52 @@ describe('SessionRecorder run machinery', () => {
         expect(doc.runs[0].lastTick).toBe(5);
         expect(doc.runs[1].lastTick).toBe(4);
         recorder.dispose();
+    });
+
+    it('pins the fail-overlay retry shape: the fresh run carries the current board snapshot', () => {
+        // Mirrors main.js's overlay:retry ordering (loop-stop first), which
+        // never emits `controls:reset`: GameLoop.reset() announces the
+        // run-ended fact (`loop:reset`), then _resetLevel rewinds the board
+        // and returns to SANDBOX inside the session's mode family. The next
+        // play must open a fresh run whose play-start board snapshot is
+        // CURRENT (ADR 0006 decision 1) - not an append to the stale run.
+        vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+        vi.stubGlobal('cancelAnimationFrame', vi.fn());
+        const physics = new PhysicsEngine(1000, 600);
+        const loop = new GameLoop(physics, () => {});
+        const board = realBoard();
+        const recorder = makeRecorder({ board });
+        recorder.startSession();
+
+        // The attempt the fail overlay ends.
+        loop.play();
+        let t = 1000;
+        loop._frame(t);
+        loop._frame(t += 16.667);
+        loop._frame(t += 16.667);
+
+        // Retry: the guarded reset, then the sandbox-return posture.
+        loop.reset();
+        eventBus.emit('mode:changed', { oldMode: 'PLAYING', newMode: 'SANDBOX' });
+        board.pop(); // the rewind gives the board a different shape
+
+        // The next play opens a fresh run on the rewound board.
+        loop.play();
+        loop._frame(t += 16.667);
+        loop._frame(t += 16.667);
+
+        const doc = recorder.toJSON();
+        expect(doc.runs).toHaveLength(2);
+        expect(doc.runs[0].endedBy).toBe('loop:reset');
+        expect(doc.runs[0].lastTick).toBe(3);
+        expect(doc.runs[1].lastTick).toBe(2);
+        expect(doc.runs[1].dt.values).toHaveLength(2);
+        expect(doc.runs[1].boardSnapshot).toHaveLength(1);
+        expect(doc.runs[1].boardSnapshot[0].type).toBe('ramp');
+
+        recorder.dispose();
+        physics.dispose();
+        vi.unstubAllGlobals();
     });
 
     it('honors the dense toggle for future runs', () => {

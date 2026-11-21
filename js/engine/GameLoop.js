@@ -133,8 +133,16 @@ export class GameLoop {
 
         // One final render to show restored state
         this._renderCallback(this.physics.getObjects(), this.physics);
-        // (`loop:reset` was pruned — no listener; reset side-effects happen
-        // inline above: snapshot restore + final render.)
+
+        // The run-ended fact (issue #76): announce the completed reset.
+        // `loop:play` announces after its snapshot is taken, so `loop:reset`
+        // announces after the snapshot restore; the recorder treats it as
+        // the stop side of the play/pause/reset machine (ADR 0006 decision
+        // 7). Restores the event dec6c78 pruned - TODO 2.2's "no listener"
+        // verdict is superseded: SessionRecorder needs the run-end fact on
+        // EVERY reset path, not just `controls:reset` (the overlay handlers'
+        // retry/next-level/menu resets emit nothing there).
+        eventBus.emit('loop:reset', { elapsed: this._elapsed });
     }
 
     /** Toggle between 1× and 2× speed. */
