@@ -414,8 +414,12 @@ describe('Free Rope (issue #56) — unlimited span', () => {
 
         const tied = Math.hypot(rim.x - knot.x, rim.y - knot.y);
         // The mid seat sits (2+0.5)/6 of the span from the anchor, so the
-        // span grows to demanded / (2.5/6) and the count re-derives from it.
-        expect(rope._length).toBeCloseTo(tied * 6 / 2.5, 5);
+        // provisional grow is demanded / (2.5/6) — ~436px, count 11 — and
+        // the two-pass seal (issue #99) re-divides by count 11's own mid
+        // fraction (5.5/11): the laid chain spans tied * 11 / 5.5, whose own
+        // span re-derives its count (about 363px answers 10 bodies).
+        expect(Rope.segmentsForSpan(tied * 6 / 2.5)).toBe(11); // the grow crosses count bands
+        expect(rope._length).toBeCloseTo(tied * 11 / 5.5, 5);
         const count = ropeSegs(rope).length;
         expect(count).toBe(Rope.segmentsForSpan(rope._length));
         expect(count).toBeGreaterThan(6);

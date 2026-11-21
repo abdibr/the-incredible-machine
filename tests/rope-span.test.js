@@ -287,22 +287,25 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         const tail = pinned.bodies[pinned.bodies.length - 1]; // seat 5
         pinned.attachEndpoint('end', balloon, 'knot');
 
-        // The grow covered the knot (span = tied·6/5.5) and the count is
-        // the grown span's OWN answer — 13, re-counted like any re-lay
-        // (the frozen-count exception is retired). The end knot rides the
-        // re-count onto the NEW tail (issue #87), so its link realizes
-        // from the tail's new body.
+        // The grow covers the knot through the two-pass seal (issue #99):
+        // the provisional span tied*6/5.5 names count 13, and the seal re-
+        // divides by THAT count's own end fraction - tied*13/12.5 - whose
+        // own count answer (12) is what the re-lay lays, exactly like any
+        // re-lay (issue #89's one covering rule, the frozen-count exception
+        // retired). The end knot rides the re-count onto the NEW tail (issue
+        // #87), so its link realizes from the tail's new body.
         const knot = balloon.getAttachmentWorldPoint('knot');
         const tied = Math.hypot(knot.x - 200, knot.y - 100);
-        const grown = tied * 6 / 5.5;
+        const provisional = tied * 6 / 5.5;
+        expect(Rope.segmentsForSpan(provisional)).toBe(13); // the grow crosses count bands
+        const grown = tied * 13 / 12.5;
         expect(pinned._length).toBeCloseTo(grown, 5);
         expect(ropeSegs(pinned)).toHaveLength(Rope.segmentsForSpan(grown));
-        expect(ropeSegs(pinned)).toHaveLength(13);
         expect(pinned.getAttachmentRefs().map((r) => r.seat)).toEqual(['end']);
-        expect(pinned.bodies[13]).not.toBe(tail); // the tail is the re-count's own body
+        expect(pinned.bodies[12]).not.toBe(tail); // the tail is the re-count's own body
         engine.step(DT);
         const link = engine.getAttachedConstraints().find((c) => c.bodyB === balloon.bodies[0]);
-        expect(link.bodyA).toBe(pinned.bodies[13]); // realized from the new tail
+        expect(link.bodyA).toBe(pinned.bodies[12]); // realized from the new tail
 
         // The free rope's grow was always this rule: same covering, same
         // re-count (grown 865px → past the cap: 16 bodies), the mid knot
@@ -421,5 +424,55 @@ describe('Span-derived counts — the hand and the freeze (issue #56)', () => {
         const tail = rope.bodies[rope.bodies.length - 1].position;
         // The capacity circle, not the layout end: half a segment inboard.
         expect(Math.hypot(tail.x - 100, tail.y - 100)).toBeCloseTo(320, 5); // span·(9−0.5)/9 = the demand
+    });
+});
+describe('Band-crossing seals - the seal answers the post-re-lay count (issue #99)', () => {
+    it('a band-crossing mid tie-grow lands the tied seat on the knot; save/load stays idempotent', () => {
+        // A 240px rope lays 6 segments; the mid seat covers 240*2.5/6 = 100,
+        // so the ~130px knot grow crosses a count band (240 -> ~312 spans
+        // 6 to 8 bodies). The single-pass seal divided by the PRE-re-lay
+        // count's fraction, but the re-derived count changed the seat's
+        // fraction (2.5/6 -> 3.5/8): the seat landed ~5px past the knot and
+        // the span stayed inflated past every such tie (issue #99's B2,
+        // +22% on the measured class). The seal instead names the count the
+        // re-lay will end with (segmentsForSpan of the provisional grown
+        // span) and divides the tied distance by THAT count's own fraction -
+        // the laid chain rests with its middle seat exactly on the knot.
+        const rope = new Rope(200, 100, { length: 240 });
+        const balloon = new Balloon(330, 74.4); // knot at (330, 100): ~130px out
+        const knot = balloon.getAttachmentWorldPoint('knot');
+        const tied = Math.hypot(knot.x - 200, knot.y - 100);
+        expect(tied).toBeGreaterThan(100); // beyond the mid circle: the grow fires
+
+        rope.attachEndpoint('mid', balloon, 'knot');
+
+        // The two-pass seal: the provisional grown span (tied / frac(6))
+        // names count 8, and the sealed span re-divides by the 8-chain's
+        // mid fraction (3.5/8) - so the laid middle rests at tied exactly.
+        const count1 = 8; // segmentsForSpan(tied * 6 / 2.5)
+        expect(rope._length).toBeCloseTo(tied * count1 / 3.5, 5);
+        expect(ropeSegs(rope)).toHaveLength(count1);
+        const mid = rope.getTieSeats()[1];
+        expect(mid.body).toBe(rope.bodies[4]); // the middle of the 8-chain
+        expect(Math.hypot(mid.worldPoint.x - 200, mid.worldPoint.y - 100)).toBeCloseTo(tied, 5);
+
+        // Save -> load -> save: the restore re-derives the same 8 from the
+        // sealed span, the token lands back on the middle body, and the
+        // second save's row is the first's twin (no creep per cycle).
+        const rows = serializePlacedBoard([balloon, rope]);
+        const board2 = [];
+        restorePlacedFromSnapshot(board2, rows);
+        const rope2 = board2.find((o) => o.type === 'rope');
+        expect(rope2.bodies.length - 1).toBe(count1);
+        expect(rope2._length).toBeCloseTo(tied * count1 / 3.5, 3);
+        expect(rope2.getAttachmentRefs().map((r) => r.seat)).toEqual(['mid']);
+        expect(rope2.getTieSeats()[1].body).toBe(rope2.bodies[4]);
+        const rows2 = serializePlacedBoard(board2);
+        expect(rows2.find((r) => r.type === 'rope').options.length)
+            .toBeCloseTo(rows.find((r) => r.type === 'rope').options.length, 3);
+
+        rope.dispose();
+        balloon.dispose();
+        for (const obj of board2) obj.dispose();
     });
 });

@@ -860,8 +860,16 @@ export default class Rope extends BaseObject {
         // setEndpoints (bodies re-line, the chain rebuilds for the grown
         // span, and rope:chain-converge lets an in-world rope swap its
         // chain — the registration guard keeps the event a no-op out of
-        // world), then seals _length exact against setEndpoints'
-        // float-dust re-derivation, the same seal relayFreeEnd uses. Grown
+        // float-dust re-derivation, the same seal relayFreeEnd uses.
+        // The seal is the two-pass form (issue #99): a grown span whose
+        // segmentsForSpan answer crosses a count band changes the tied
+        // seat's own fraction, so dividing by the PRE-re-lay count's
+        // fraction landed the laid seat past the knot and inflated the
+        // span past it (the +22% measured class). span1 = tied /
+        // frac(seat, count0) names count1 = segmentsForSpan(span1), and
+        // the seal divides tied by count1's own fraction - the laid chain
+        // rests with its tied seat on the knot, and a tie never inflates
+        // the rope past the knot's own seat fraction.
         // capacity = tied span / seat inboard-ness.
         // The grow's count re-derives from the grown span (issue #89 — ONE
         // covering rule for both families): the tie that needs more reach
@@ -888,9 +896,17 @@ export default class Rope extends BaseObject {
                     world.y - this._anchor.position.y
                 );
                 const oldCount = this._segments.length;
-                const frac = seatFraction(seat, oldCount);
-                if (tied > this._length * frac) {
-                    const grown = tied / frac;
+                const frac0 = seatFraction(seat, oldCount);
+                if (tied > this._length * frac0) {
+                    // Two-pass seal (issue #99): seal the covering span
+                    // against the count the re-lay will actually end with -
+                    // span1 names count1 (segmentsForSpan), the seal
+                    // re-divides by count1's own seat fraction - so a
+                    // band-crossing grow lays its seat ON the knot instead
+                    // of past it.
+                    const span1 = tied / frac0;
+                    const count1 = Rope.segmentsForSpan(span1);
+                    const grown = tied / seatFraction(seat, count1);
                     if (!this._severed && oldCount) {
                         const anchor = this._anchor.position;
                         const ux = (world.x - anchor.x) / tied;
