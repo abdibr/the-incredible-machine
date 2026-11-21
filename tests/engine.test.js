@@ -310,6 +310,46 @@ describe('GameLoop', () => {
         physics.dispose();
     });
 
+    it('owns the run lifecycle: begin, step-to, end - one end fact per real stop', async () => {
+        const { eventBus } = await import('../js/EventBus.js');
+        const loopMod = await import('../js/engine/GameLoop.js');
+        const physics = new PhysicsEngine(800, 600);
+        const loop = new GameLoop(physics, () => { });
+
+        // Issue #77: run ordering lives in the loop seam - the ONE
+        // run-lifecycle owner. The loop publishes the run's facts as they
+        // happen: loop:play (begin), loop:frame per physics step (step-to),
+        // loop:pause (within-run), loop:reset (end). The owned stop is
+        // idempotent, so the end fact publishes exactly once per real stop
+        // and consumers never re-derive loop state around a call site.
+        const facts = [];
+        const unsubs = ['loop:play', 'loop:pause', 'loop:frame', 'loop:reset'].map((topic) => {
+            const listener = (packet) => facts.push([topic, packet]);
+            eventBus.on(topic, listener);
+            return () => eventBus.off(topic, listener);
+        });
+        try {
+            loop.play();           // begin
+            loop._frame(1000);     // step-to (dt<=0 priming: exactly one fixed step)
+            loop._frame(1016.667); // step-to
+            loop.pause();          // within-run fact
+            loop.play();           // resume, still inside the run
+            loop.reset();          // end
+            loop.reset();          // already stopped - no second end fact
+
+            expect(facts.map(([topic]) => topic)).toEqual([
+                'loop:play', 'loop:frame', 'loop:frame', 'loop:pause', 'loop:play', 'loop:reset',
+            ]);
+            // The step-to fact rides the published {dt, elapsed} packet
+            // (ADR 0008 decision 2) - one emit per quanta drained.
+            expect(facts[1][1]).toEqual({ dt: loopMod.FIXED_STEP_MS, elapsed: loopMod.FIXED_STEP_MS });
+            expect(facts[2][1]).toEqual({ dt: loopMod.FIXED_STEP_MS, elapsed: 2 * loopMod.FIXED_STEP_MS });
+        } finally {
+            for (const unsub of unsubs) unsub();
+            loop.dispose();
+            physics.dispose();
+        }
+    });
     it('should cycle speed between 1× and 2×', () => {
         const physics = new PhysicsEngine(800, 600);
         const loop = new GameLoop(physics, () => { });

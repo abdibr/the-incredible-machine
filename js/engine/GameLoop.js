@@ -1,9 +1,17 @@
 /**
- * GameLoop — Play/pause/reset state machine
+ * GameLoop — Play/pause/reset state machine, the run-lifecycle owner
  *
  * Controls simulation lifecycle with requestAnimationFrame,
  * speed scaling, fixed-timestep stepping (accumulator; issue #80), and
  * snapshot management.
+ *
+ * Run ordering lives HERE (issue #77): the loop is the ONE run-lifecycle
+ * owner and publishes the run facts as they happen — loop:play (begin),
+ * one loop:frame per physics step (step-to), loop:reset (end) — with
+ * loop:pause a within-run fact. Consumers (SessionRecorder, GoalChecker,
+ * main.js's overlay paths) adopt the published facts instead of
+ * re-deriving run state at their call sites; reset() is the one owned
+ * run-stop (idempotent, one end fact per real stop).
  */
 
 import { eventBus } from '../EventBus.js';
@@ -115,8 +123,15 @@ export class GameLoop {
         eventBus.emit('loop:pause', { elapsed: this._elapsed });
     }
 
-    /** Stop and reset to the snapshot. */
+    /**
+     * Stop and reset to the snapshot. The owned run-stop (issue #77):
+     * idempotent — an already-stopped loop has no snapshot to restore and
+     * no end fact to announce, so callers adopt this one ordering instead
+     * of hand-checking isStopped first.
+     */
     reset() {
+        if (this._state === LoopState.STOPPED) return;
+
         if (this._rafId !== null) {
             cancelAnimationFrame(this._rafId);
             this._rafId = null;
