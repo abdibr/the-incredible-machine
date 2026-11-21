@@ -3,7 +3,7 @@
  *
  * DOM-free core, Node-safe (replay harness + vitest reuse this very class).
  * Subscribes on the shared eventBus, mirrors the GameLoop lifecycle from
- * `loop:play` / `loop:pause` / `controls:reset` / `mode:changed`, and
+ * `loop:play` / `loop:pause` / `loop:reset` / `controls:reset` / `mode:changed`, and
  * produces a self-contained JSON "bug file" for one sandbox visit:
  *
  *   { header..., build[], runs[] }  — build[] = edit trace (per-action object
@@ -127,6 +127,7 @@ export class SessionRecorder {
         this._unsubs.push(eventBus.on('loop:play', () => this._onLoopPlay()));
         this._unsubs.push(eventBus.on('loop:pause', () => this._onLoopPause()));
         this._unsubs.push(eventBus.on('loop:frame', (packet) => this._onLoopFrame(packet)));
+        this._unsubs.push(eventBus.on('loop:reset', () => this._onLoopReset()));
         // Generic topic recording — installed BEFORE the run-boundary close
         // listener below, so a `controls:reset` row lands in the closing run.
         for (const topic of PLAY_TOPICS) {
@@ -220,6 +221,20 @@ export class SessionRecorder {
         this._loopState = LOOP_PAUSED;
     }
 
+    /**
+     * The run-ended fact (issue #76): GameLoop.reset() publishes
+     * `loop:reset` announcing the completed reset. The reset paths the
+     * overlay handlers drive never emit `controls:reset` (only the top-bar
+     * Reset does), so this is what closes the open run and lets the next
+     * `loop:play` open a fresh, snapshot-current one (ADR 0006 decision 7).
+     * @private
+     */
+    _onLoopReset() {
+        if (!this._active) return;
+        this._loopState = LOOP_STOPPED;
+        this.closeOpenRun('loop:reset');
+    }
+
     /** @private */
     _onLoopFrame({ dt = 0 } = {}) {
         if (!this._active || !this._openRun) return;
@@ -245,7 +260,7 @@ export class SessionRecorder {
 
     /**
      * Close the open run (run-ends marker). Safe to call freely.
-     * @param {string} endedBy — 'controls:reset' | 'mode:changed' | 'open-at-export' | 'replay-end'
+     * @param {string} endedBy — 'controls:reset' | 'loop:reset' | 'mode:changed' | 'open-at-export' | 'replay-end'
      * @returns {object|null} the closed run
      */
     closeOpenRun(endedBy = 'controls:reset') {

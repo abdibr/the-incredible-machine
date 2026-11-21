@@ -212,6 +212,27 @@ describe('SessionRecorder run machinery', () => {
         recorder.dispose();
     });
 
+    it('opens a fresh run per play after a loop reset (two-run session)', () => {
+        // `loop:reset` is the run-ended fact GameLoop.reset() publishes on
+        // every reset path (issue #76): the overlay-retry resets never emit
+        // `controls:reset` (only the top-bar Reset does), so the loop's own
+        // event is what closes the stale run and lets the next play open a
+        // fresh one (ADR 0006 decision 7).
+        const recorder = makeRecorder({ board: realBoard() });
+        recorder.startSession();
+        eventBus.emit('loop:play', { elapsed: 0 });
+        for (let i = 0; i < 5; i++) eventBus.emit('loop:frame', { dt: 16.667, elapsed: 0 });
+        eventBus.emit('loop:reset');
+        eventBus.emit('loop:play', { elapsed: 0 });
+        for (let i = 0; i < 4; i++) eventBus.emit('loop:frame', { dt: 16.667, elapsed: 0 });
+        const doc = recorder.toJSON();
+        expect(doc.runs).toHaveLength(2);
+        expect(doc.runs[0].endedBy).toBe('loop:reset');
+        expect(doc.runs[0].lastTick).toBe(5);
+        expect(doc.runs[1].lastTick).toBe(4);
+        recorder.dispose();
+    });
+
     it('honors the dense toggle for future runs', () => {
         const recorder = makeRecorder({ board: realBoard() });
         recorder.startSession();
