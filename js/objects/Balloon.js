@@ -138,11 +138,25 @@ export default class Balloon extends BaseObject {
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
+        // Knot + string: the tie point rides the body's rotation (issue #100).
+        // The drawn triangle and decorative string pivot with the body angle
+        // exactly like the attachment offset, so the drawn knot stays on
+        // getAttachmentWorldPoint's answer — and on the realized pin — at
+        // every body angle (the balloon spins under collision torque).
+        const angle = this._body.angle;
+        const rot = (x, y) => ({
+            x: x * Math.cos(angle) - y * Math.sin(angle),
+            y: x * Math.sin(angle) + y * Math.cos(angle),
+        });
+        const tip = rot(0, r * 1.2 + 4);
+
         // Knot
         ctx.beginPath();
-        ctx.moveTo(-2, r * 1.2);
-        ctx.lineTo(0, r * 1.2 + 4);
-        ctx.lineTo(2, r * 1.2);
+        const knotBaseL = rot(-2, r * 1.2);
+        const knotBaseR = rot(2, r * 1.2);
+        ctx.moveTo(knotBaseL.x, knotBaseL.y);
+        ctx.lineTo(tip.x, tip.y);
+        ctx.lineTo(knotBaseR.x, knotBaseR.y);
         ctx.fillStyle = this._color;
         ctx.fill();
         ctx.strokeStyle = '#333';
@@ -153,10 +167,12 @@ export default class Balloon extends BaseObject {
         ctx.strokeStyle = '#888';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(0, r * 1.2 + 4);
+        ctx.moveTo(tip.x, tip.y);
         const stringLen = 25;
-        // Curvy string
-        ctx.quadraticCurveTo(-6, r * 1.2 + stringLen / 2, 2, r * 1.2 + stringLen);
+        // Curvy string, carried with the body angle
+        const stringMid = rot(-6, r * 1.2 + stringLen / 2);
+        const stringEnd = rot(2, r * 1.2 + stringLen);
+        ctx.quadraticCurveTo(stringMid.x, stringMid.y, stringEnd.x, stringEnd.y);
         ctx.stroke();
 
         ctx.restore();

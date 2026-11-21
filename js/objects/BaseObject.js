@@ -341,7 +341,18 @@ export default class BaseObject {
         const ap = this.attachmentPoints.find((p) => p.id === id);
         const body = ap ? (ap.body ?? this.bodies[0]) : null;
         if (!ap || !body) return null;
-        return { x: body.position.x + ap.offset.x, y: body.position.y + ap.offset.y };
+        // The offset is BODY-LOCAL (issue #100): it rides the point's own body
+        // angle, so the tie square, knot ring, knot tooltip and the drawn
+        // knots all read the same point the realized engine link pins (Matter
+        // re-rotates the knot link's stored pointB in place as the body turns
+        // — ADR 0005's "Matter pins worth knowing"). At angle 0 this is the
+        // world offset the pre-#100 spelling answered.
+        const c = Math.cos(body.angle);
+        const s = Math.sin(body.angle);
+        return {
+            x: body.position.x + ap.offset.x * c - ap.offset.y * s,
+            y: body.position.y + ap.offset.x * s + ap.offset.y * c,
+        };
     }
 
     // ── Rendering ─────────────────────────────────
