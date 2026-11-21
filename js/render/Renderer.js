@@ -545,7 +545,13 @@ class Renderer {
      * targets (glow = tieable, issue #54). A refused tie flashes its
      * seeking handle red plus a reason badge at the refused aim — "rope
      * too short" (issue #54), "seat already tied" (issue #85), or "tie
-     * refused" (the rope-side gate, issue #93).
+     * refused" (the rope-side gate, issue #93). The square colors fight
+     * for priority only against the board's truth (issue #103): a tied
+     * seat always paints gold — the seeking blue loses to the occupancy
+     * even on the square whose seat got tied under an armed seek — and
+     * the dashed preview never points at the cursor while the armed seat
+     * is occupied; only the timed refusal flash outranks the gold, the
+     * click feedback it is.
      * Edit modes only (EDITING/SANDBOX): gates itself so PLAY
      * boards draw nothing.
      *
@@ -564,8 +570,12 @@ class Renderer {
         ctx.save();
 
         // The seek preview: the seeking square aims a dashed tie-green line
-        // at the cursor.
-        const seeking = squares.find((s) => s.seeking);
+        // at the cursor — never over an OCCUPIED armed seat (issue #103):
+        // the dashed line points where a tie can land, and a seat that
+        // already holds its knot is not that. The tied square's gold paint
+        // below tells the truth; the flow's own advance keeps the seek off
+        // tied seats anyway (this gate is the renderer's side of that).
+        const seeking = squares.find((s) => s.seeking && !s.tied);
         if (seeking && this._connectFlow.preview) {
             ctx.beginPath();
             ctx.moveTo(seeking.x, seeking.y);
@@ -601,19 +611,27 @@ class Renderer {
             if (!square.visible) continue;
             // Refused-tie flash (ADR 0007 decision 4, issue #54): the
             // seeking handle goes red for the flash duration.
+            // The priority fight (issue #103): tied beats seeking. A tied
+            // seat ALWAYS paints gold — the seeking blue loses to the
+            // occupancy even on the degenerate square whose seat got tied
+            // under an armed seek (the restore path's out-of-band bind);
+            // the board never shows a live blue aiming square where the
+            // seat cannot take a knot. Only the refused flash outranks
+            // gold: it is the timed feedback of a refused click, not a
+            // state color, and it decays back to the gold truth.
             ctx.fillStyle = square.refused
                 ? 'rgba(232, 76, 76, 0.9)'
-                : square.seeking
-                    ? 'rgba(64, 128, 255, 0.9)'
-                    : square.tied
-                        ? 'rgba(184, 134, 11, 0.85)'
+                : square.tied
+                    ? 'rgba(184, 134, 11, 0.85)'
+                    : square.seeking
+                        ? 'rgba(64, 128, 255, 0.9)'
                         : 'rgba(255, 255, 255, 0.8)';
             ctx.strokeStyle = square.refused
                 ? '#e34e4e'
-                : square.seeking
-                    ? '#4080ff'
-                    : square.tied
-                        ? '#8a6508'
+                : square.tied
+                    ? '#8a6508'
+                    : square.seeking
+                        ? '#4080ff'
                         : '#777';
             ctx.lineWidth = 1.5;
             ctx.fillRect(square.x - 7, square.y - 7, 14, 14);
