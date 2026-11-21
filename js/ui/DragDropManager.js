@@ -392,6 +392,17 @@ class DragDropManager {
                 // the physical links on the next play.
                 if (isRopeFamily(this._dragObject)) {
                     this._dragObject.clearAttachments();
+                } else {
+                    // A moved TARGET bearing knots unties them the same
+                    // way (issue #98's symmetric policy - one untie rule
+                    // on both sides): exactly the knots that bear on the
+                    // dropped part, through the rope's own per-knot
+                    // detachEndpoint seam - the reconcile releases their
+                    // physical links on the next step (the same feedback
+                    // path the rope-drag untie answers). Rope-family
+                    // drags keep the wholesale clear above - rope-to-rope
+                    // handling stays as shipped.
+                    this._untieMovedTargetKnots(this._dragObject);
                 }
                 eventBus.emit('object:moved', {
                     id: this._dragObject.id,
@@ -409,6 +420,33 @@ class DragDropManager {
             }
         } finally {
             this._clearDragState();
+        }
+    }
+
+    /**
+     * Untie the knots a dropped (moved) part bears (issue #98, the
+     * target-side half of the move-release untie): every knot-walking part
+     * on the board that ties INTO `target` loses exactly the knots that
+     * bear on it - detachEndpoint per live ref, the same per-knot untie
+     * seam every other roper drop rides - and nothing else: the ropes'
+     * other knots, seats and ref order are unmoved by the clear. The
+     * physical links drop on the next reconcile step (the same feedback
+     * path the rope-side release untie answers). The walk is
+     * capability-first on "offers attachment refs" (the reconcile's own
+     * gate), so a rope-family roster change cannot strand the scan; a
+     * severed holder answers no refs and drops nothing.
+     *
+     * @param {import('../objects/BaseObject.js').default} target - the dropped part
+     * @private
+     */
+    _untieMovedTargetKnots(target) {
+        for (const part of this._objects) {
+            if (part === target || typeof part.getAttachmentRefs !== 'function') continue;
+            for (const ref of part.getAttachmentRefs()) {
+                if (ref.target === target) {
+                    part.detachEndpoint(ref.seat, ref.target, ref.pointId);
+                }
+            }
         }
     }
 
