@@ -131,10 +131,12 @@ export class AgentSession {
         this._failureReason = null;
         // The level fact arms GoalChecker (same seam as the live app) and
         // comes from the LevelManager owner - loadCustom, the exact seam
-        // editor imports ride (the glossary owner rule: level:loaded is
-        // never emitted by hand). The play-mode boundary row belongs to the
-        // run framing in trial(), not the build (issue #78: the run
-        // lifecycle is the loop seam's business).
+        // editor imports ride (the glossary owner rule: the browser/session
+        // surface never emits level:loaded by hand; the replay harness
+        // still hand-emits it for its checker wiring - the one known case
+        // left). The play-mode boundary row belongs to the run framing in
+        // trial(), not the build (issue #78: the run lifecycle is the loop
+        // seam's business).
         levelManager.loadCustom(this.levelData);
         // Construction window (agent-side seeded determinism): object ctors are
         // the only Math.random consumers during a build (Balloon color/bob

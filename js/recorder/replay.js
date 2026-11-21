@@ -90,7 +90,9 @@ export function replayRun(file, runIndex, { untilTick = Infinity } = {}) {
     restorePlacedFromSnapshot(board, run.boardSnapshot ?? [], objectRegistry, { includeFixed: true });
     for (const obj of board) engine.addObject(obj);
 
-    // A recorded goal needs a checker on the bus (the AgentSession pattern).
+    // A recorded goal needs a checker on the bus (the AgentSession
+    // pattern - the hand level:loaded/mode:changed pair below is the one
+    // known case outside the LevelManager owner).
     let goalCheckerInstance = null;
     if (run.goal) {
         goalCheckerInstance = new GoalChecker();
@@ -131,9 +133,10 @@ export function replayRun(file, runIndex, { untilTick = Infinity } = {}) {
         eventBus.emit('loop:frame', { dt, elapsed });
     }
 
-    // The run-end fact (issue #78): the owned end fact the loop publishes
-    // (GameLoop.reset()'s loop:reset) closes the run through the recorder's
-    // own consumption - no harness-private closeOpenRun('replay-end').
+    // The run-end fact (issue #78): the recorder consumes the loop's
+    // published end fact (`loop:reset` - GameLoop.reset()) and closes
+    // the open run by its own consumption - the same consumption the
+    // sandbox's reset path rides.
     eventBus.emit('loop:reset', { elapsed: 0 });
     const replayedRuns = observer.toJSON().runs;
     const replayed = replayedRuns[0] ?? null;

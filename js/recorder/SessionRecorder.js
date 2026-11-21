@@ -264,7 +264,7 @@ export class SessionRecorder {
 
     /**
      * Close the open run (run-ends marker). Safe to call freely.
-     * @param {string} endedBy — 'controls:reset' | 'loop:reset' | 'mode:changed' | 'open-at-export' | 'replay-end'
+     * @param {string} endedBy — 'controls:reset' | 'loop:reset' | 'mode:changed' | 'open-at-export'
      * @returns {object|null} the closed run
      */
     closeOpenRun(endedBy = 'controls:reset') {
