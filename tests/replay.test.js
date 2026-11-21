@@ -394,3 +394,53 @@ describe('committed bugfile regression fixtures (ADR 0006)', () => {
         }
     });
 });
+/**
+ * The replay harness consumes the run-lifecycle owner's facts (issue #78):
+ * the replayed run is framed with the loop's published contract - loop:play
+ * (begin), one loop:frame {dt, elapsed} per tape row in the step -> elapsed
+ * -> emit order (ADR 0006 decision 2: the dt tape is consumed verbatim),
+ * loop:reset (the owned end fact) - so the recorder's run bookkeeping runs
+ * by its own consumption, sandbox-identical, and no harness-private close
+ * marker exists.
+ */
+describe('the replay harness consumes the loop run facts (issue #78)', () => {
+    it('publishes the loop fact sequence for a replayed run: begin, per-step step-to facts, end', () => {
+        const file = recordScenario({ steps: 30, boardFactory: rampAndBall });
+        const facts = [];
+        const topics = ['loop:play', 'loop:frame', 'loop:reset'];
+        const unsubs = topics.map((topic) => {
+            const listener = (packet) => facts.push({ topic, packet });
+            eventBus.on(topic, listener);
+            return () => eventBus.off(topic, listener);
+        });
+        try {
+            const report = replayRun(file, 0);
+            expect(report.ok).toBe(true);
+            expect(facts[0]).toMatchObject({ topic: 'loop:play', packet: { elapsed: 0 } });
+            const frames = facts.filter((f) => f.topic === 'loop:frame');
+            expect(frames).toHaveLength(30);
+            expect(frames[0].packet).toEqual({ dt: DT, elapsed: DT });
+            expect(facts[facts.length - 1].topic).toBe('loop:reset');
+        } finally {
+            for (const unsub of unsubs) unsub();
+        }
+    });
+
+    it("closes the replayed run by consuming the end fact - the recorder's consumption, sandbox-identical", () => {
+        const file = recordScenario({ steps: 30, boardFactory: rampAndBall });
+        // The harness's own consumer is internal; a second passive recorder
+        // on the bus sees the same published facts and runs the same
+        // consumption the sandbox recorder runs.
+        const watcher = new SessionRecorder({ passive: true });
+        watcher.init({}); // binds the bus - accessors stay out (pose refs unneeded here)
+        watcher.startSession();
+        try {
+            replayRun(file, 0);
+            const run = watcher.toJSON().runs[0];
+            expect(run.endedBy).toBe('loop:reset');
+            expect(run.lastTick).toBe(30);
+        } finally {
+            watcher.dispose();
+        }
+    });
+});

@@ -9,20 +9,26 @@
  * replayed streams share recording conventions by construction (ADR 0006
  * decision 9).
  *
- * Ordering matters and matches the browser GameLoop exactly:
- *   engine.step(dt)  →  eventBus.emit('loop:frame', {dt, elapsed})
- * (loop:frame AFTER the step; the GoalChecker's off-world check therefore
- * sees post-step states, same as live). The recorder's collision hook is
- * attached after engine construction — later than PhysicsEngine's own
- * matrix listeners, reproducing the browser's listener order.
- */
+ * The harness publishes the run lifecycle in the loop seam's contract
+ * (issue #78): loop:play opens the run (the begin fact), one loop:frame
+ * {dt, elapsed} follows each engine step in the step -> elapsed -> emit
+ * order the browser loop pins (ADR 0008 decision 2; loop:frame AFTER the
+ * step - the GoalChecker's off-world check sees post-step states, same as
+ * live), and loop:reset ends it (the owned end fact, #76/#77, consumed by
+ * the recorder exactly as the sandbox consumes it). The recorded dt tape
+ * is still stepped verbatim, one engine.step(dt) per recorded row (ADR
+ * 0006 decision 2, the mechanism #80 left standing) - the replay is NOT
+ * an accumulator loop, it mirrors the loop's fact contract instead. The
+ * recorder's collision hook is attached after engine construction -
+ * later than PhysicsEngine's own matrix listeners, reproducing the
+ * browser's listener order. */
 
 import { eventBus } from '../EventBus.js';
 import { objectRegistry } from '../objects/ObjectRegistry.js';
 import { registerAllObjects } from '../objects/registerAllObjects.js';
 import { PhysicsEngine } from '../engine/PhysicsEngine.js';
 import { GoalChecker } from '../goals/GoalChecker.js';
-import { bindPlacedTokens } from '../reset/levelReset.js';
+import { restorePlacedFromSnapshot } from '../reset/levelReset.js';
 import { SessionRecorder } from './SessionRecorder.js';
 import { REPLAYABLE_TOPICS } from './schema.js';
 
@@ -72,28 +78,16 @@ export function replayRun(file, runIndex, { untilTick = Infinity } = {}) {
         enableSleeping: file.engine?.enableSleeping ?? true,
     });
 
-    // Build the board from the authoritative snapshot rows — all of them,
-    // including isFixed rows (in the sandbox the snapshot IS the level) —
-    // then two-phase-bind rope attachment tokens, mirroring
-    // restorePlacedFromSnapshot's aligned-board rule.
+    // Build the board from the authoritative snapshot rows through the
+    // placed-restore owner (issue #78): restorePlacedFromSnapshot with
+    // includeFixed - the resetSandboxBoard rule, "in the sandbox the
+    // snapshot IS the level" - deserializes every row (the fresh
+    // deserialize that IS the restore, ADR 0006 decision 1), runs the
+    // aligned-board two-phase bind with its retry passes (issue #57), and
+    // owns the mismatch warn + token-drop handling. No hand-rolled
+    // parallel build.
     const board = [];
-    for (const row of run.boardSnapshot ?? []) {
-        if (!row) continue;
-        try {
-            board.push(objectRegistry.deserialize(row));
-        } catch (e) {
-            console.warn(`[Replay] could not deserialize row "${row.type}":`, e);
-        }
-    }
-    const aligned = board.length === (run.boardSnapshot?.length ?? 0);
-    if (!aligned) {
-        console.warn(`[Replay] board/row mismatch (${board.length} vs ${run.boardSnapshot?.length ?? 0}) — unbinding attachment tokens`);
-    }
-    // The same two-phase bind restorePlacedFromSnapshot runs — retry
-    // passes included (issue #57): a rope-to-rope token earlier in the
-    // board order than its spawned free-rope target defers until that
-    // target's own bind pass spawns its chain.
-    bindPlacedTokens(board, aligned ? board : null);
+    restorePlacedFromSnapshot(board, run.boardSnapshot ?? [], objectRegistry, { includeFixed: true });
     for (const obj of board) engine.addObject(obj);
 
     // A recorded goal needs a checker on the bus (the AgentSession pattern).
@@ -115,7 +109,11 @@ export function replayRun(file, runIndex, { untilTick = Infinity } = {}) {
         getEngineInfo: () => file.engine ?? null,
     });
     observer.startSession();
-    eventBus.emit('loop:play', { elapsed: 0 }); // opens the run
+    // The run-begin fact (issue #78): the loop's published begin opens the
+    // run - the recorder consumes it (a play opens a run when none is
+    // open), the same consumption the sandbox run-open rides. The packet
+    // is GameLoop.play()'s first-play packet.
+    eventBus.emit('loop:play', { elapsed: 0 });
 
     const dts = run.dt?.values ?? [];
     const pendingTimeScale = [...(run.timeScale ?? [])];
@@ -133,7 +131,10 @@ export function replayRun(file, runIndex, { untilTick = Infinity } = {}) {
         eventBus.emit('loop:frame', { dt, elapsed });
     }
 
-    observer.closeOpenRun('replay-end');
+    // The run-end fact (issue #78): the owned end fact the loop publishes
+    // (GameLoop.reset()'s loop:reset) closes the run through the recorder's
+    // own consumption - no harness-private closeOpenRun('replay-end').
+    eventBus.emit('loop:reset', { elapsed: 0 });
     const replayedRuns = observer.toJSON().runs;
     const replayed = replayedRuns[0] ?? null;
     observer.dispose();
