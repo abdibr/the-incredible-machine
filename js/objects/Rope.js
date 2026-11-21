@@ -245,6 +245,101 @@ function midSeatSegment(count) {
 }
 
 /**
+ * The float-dust allowance in the re-seat pass (issue #98): a leg's
+ * crow-fly distance may exceed its arclength budget by this much and
+ * still lay as its leg's straight answer, and station/waypoint
+ * arclengths compare with this much fuzz (the seat fractions and the
+ * station arithmetic are the same numbers taken through different
+ * float orders).
+ * @type {number}
+ */
+const RESEAT_EPS_PX = 0.5;
+
+/**
+ * Wrap an angle into (-PI, PI] - the re-seat lay's sweep bookkeeping.
+ * @param {number} a
+ * @returns {number}
+ */
+function wrapHalfAngle(a) {
+    return a - Math.PI * 2 * Math.floor((a + Math.PI) / (Math.PI * 2));
+}
+
+/**
+ * One bowed leg of the re-seat lay (issue #98): the circular arc that
+ * starts at `from`, ends at `to`, and runs exactly the leg's arclength
+ * budget long - the uniform-curvature lay that keeps every station of the
+ * leg at its own arc-length position (each link's rest length still
+ * equals the laid distance along the path, ADR 0005 decision 12) while
+ * the leg ENDS on its knot instead of straightening to it. A straight lay
+ * to a knot inside the leg's budget would lay the chain shorter than its
+ * span - the tie never shortens the rope (ADR 0007 decision 4) - so the
+ * slack bows instead. A taut leg (the knot sitting at the budget, float
+ * dust aside) lays straight; the bulge of a bowed one leans downward
+ * where the geometry allows (canvas down - the settled sag direction),
+ * rightward otherwise, so the same tie always lays the same shape.
+ *
+ * @param {{arc: number, x: number, y: number}} from
+ * @param {{arc: number, x: number, y: number}} to
+ * @returns {{from: object, to: object, pointAt: (t: number) => {x: number, y: number},
+ *   endTangent: {x: number, y: number}}} pointAt over t in [0, budget];
+ *   endTangent is the arrival direction, feeding an open tail's straight
+ *   continuation (a chain whose last tied seat is the mid one).
+ */
+function bowedLeg(from, to) {
+    const budget = to.arc - from.arc;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const d = Math.hypot(dx, dy);
+    const ux = d ? dx / d : 0;
+    const uy = d ? dy / d : 1; // a degenerate chord points down by convention
+    if (budget - d <= RESEAT_EPS_PX) {
+        return {
+            from, to,
+            pointAt: (t) => ({ x: from.x + ux * t, y: from.y + uy * t }),
+            endTangent: { x: ux, y: uy },
+        };
+    }
+    // The uniform arc: half-sweep a roots sin(a)/a = d/budget on (0, PI]
+    // (that ratio falls monotonically from 1 to 0 over the range;
+    // bisection). radius = budget / (2a) closes the circle.
+    let lo = 1e-9;
+    let hi = Math.PI;
+    for (let k = 0; k < 80; k++) {
+        const mid = (lo + hi) / 2;
+        if (Math.sin(mid) / mid > d / budget) lo = mid;
+        else hi = mid;
+    }
+    const alpha = (lo + hi) / 2;
+    const radius = budget / (2 * alpha);
+    // Chord geometry: perpendicular v bulges downward when it can, else
+    // rightward; the centre rides the back side of the bulge.
+    const v1 = { x: -uy, y: ux };
+    const v = (v1.y > 0 || (v1.y === 0 && v1.x > 0)) ? v1 : { x: uy, y: -ux };
+    const cx = from.x + ux * (d / 2) - v.x * radius * Math.cos(alpha);
+    const cy = from.y + uy * (d / 2) - v.y * radius * Math.cos(alpha);
+    // The sweep spends the whole budget turning from the start radius to
+    // the end one; the sign is whichever way round the centre lands the
+    // end point (long-way-round legs turn against the minor delta).
+    const a0 = Math.atan2(from.y - cy, from.x - cx);
+    const sweep = budget / radius;
+    const delta = wrapHalfAngle(Math.atan2(to.y - cy, to.x - cx) - a0);
+    // The turn starts toward the minor delta; long-way-round legs (a
+    // sweep past PI) turn the other way - lands() below is the authority
+    // and flips the guess when the geometry says so.
+    let sign = delta >= 0 ? 1 : -1;
+    const angleAt = (t) => a0 + sign * (t / radius);
+    const lands = (ang) => Math.hypot(cx + radius * Math.cos(ang) - to.x, cy + radius * Math.sin(ang) - to.y) <= RESEAT_EPS_PX;
+    if (!lands(a0 + sign * sweep)) sign = -sign; // the other way round
+    const eQx = (to.x - cx) / radius;
+    const eQy = (to.y - cy) / radius;
+    return {
+        from, to,
+        pointAt: (t) => ({ x: cx + radius * Math.cos(angleAt(t)), y: cy + radius * Math.sin(angleAt(t)) }),
+        endTangent: { x: -eQy * sign, y: eQx * sign },
+    };
+}
+
+/**
  * One named-seat answer (issue #84): the shape every body-bearing seat
  * answers — role, tie body, world point at ask time (a fresh snapshot:
  * Matter mutates `position` in place), and the seat's reach as a fraction
@@ -674,8 +769,16 @@ export default class Rope extends BaseObject {
      * @param {'anchor'|'mid'|'end'} seat
      * @param {import('./BaseObject.js').default} target
      * @param {string} pointId
+     * @param {{reseat?: boolean}} [opts] - `reseat: false` keeps the
+     *   restore contract: the caller ties from a ROW (the token bind), and
+     *   the board the row describes must re-lay exactly as recorded - the
+     *   chain keeps the row's own shape instead of taking the seat policy
+     *   (ADR 0006 decision 1's snapshot-authoritative replay, and the same
+     *   boundary the anchor-seat pull keeps in ConnectFlow when it leaves
+     *   the restore paths alone). Live ties - the flow's, the hand's, a
+     *   tie made after the target moved - default to the re-seat.
      */
-    attachEndpoint(seat, target, pointId) {
+    attachEndpoint(seat, target, pointId, opts = {}) {
         if (!SEAT_ROLES.includes(seat)) {
             throw new Error(`[Rope] attachEndpoint: seat must be 'anchor', 'mid' or 'end', got ${String(seat)}`);
         }
@@ -802,9 +905,106 @@ export default class Rope extends BaseObject {
                     } else {
                         this._length = grown; // severed: reconcile skips it — accounting only
                     }
+                } else if (opts.reseat !== false) {
+                    // The in-reach half (issue #98): the knot sits inside
+                    // the seat's covering circle, so the covering grow has
+                    // nothing to cover - and moving nothing left the seat
+                    // a reach-gap off the knot until play, where the
+                    // length-0 knot link hauled it in with a violent
+                    // single-beat yank. The re-seat lays the chain ONTO the
+                    // knot instead: seats move, never knots - fixed targets
+                    // and rope targets need no gate here, because only this
+                    // rope's own segment bodies reposition (the anchor seat
+                    // keeps its pull gates in ConnectFlow).
+                    this._reseatSeatsToKnots();
                 }
             }
         }
+    }
+
+    /**
+     * Re-seat pass (issue #98): lay the chain so every tied chain seat's
+     * body stands exactly on its knot point, at that seat's own arclength
+     * fraction of the span along the chain path (the number seatFraction
+     * answers - the same fraction the reach gate and the covering grow
+     * use). The knots sit inside their seats' windows (the reach gate let
+     * their ties through), so the path bows instead of straightening:
+     * each waypoint-to-waypoint leg spends exactly its arclength budget on
+     * the arc bowedLeg lays, so every link's rest length still equals the
+     * laid distance between its stations - nothing is over-tensioned, and
+     * play start has nothing to yank (the length-0 knot links find their
+     * seats already seated). An open tail (a chain whose last tied seat is
+     * the mid one) continues the arrival tangent past the last knot. Only
+     * segment bodies move - the anchor stays, and the span, count,
+     * constraints and every other rope record are untouched - so fixed
+     * targets and rope targets need no gate: the ROPE re-seats, never the
+     * knots (issue #98's one policy), and the tie never shortens the rope
+     * (ADR 0007 decision 4). A leg the knots overshoot cannot be laid
+     * without stretching or shrinking - the pass refuses whole and no body
+     * moves; the seat stays where it is and the next reconcile step closes
+     * the residual gap at play (the shipped anchor behavior).
+     *
+     * @returns {boolean} whether the chain was re-laid
+     * @private
+     */
+    _reseatSeatsToKnots() {
+        const span = this._length;
+        const count = this._segments.length;
+        if (!this._anchor || count === 0 || this._severed || !(span > 0)) return false;
+        const pitch = span / count;
+        const midArc = seatFraction('mid', count) * span;
+        const tailArc = seatFraction('end', count) * span; // the tail's own station
+
+        // Waypoints along the chain: the anchor body at arclength 0 (the
+        // path always starts at the body the chain hangs from), then every
+        // tied chain seat's fresh knot point at its seat role's own
+        // arclength. One knot per seat keeps these strictly in arc order.
+        // A knot whose point does not resolve (a dead target the reconcile
+        // has not pruned yet) aborts the pass - the lay stays as it is and
+        // the reconcile prunes on its next step.
+        const waypoints = [{ arc: 0, x: this._anchor.position.x, y: this._anchor.position.y }];
+        for (const ref of this.getAttachmentRefs()) {
+            if (ref.seat === 'anchor') continue;
+            const point = ref.target?.getAttachmentWorldPoint?.(ref.pointId) ?? null;
+            if (!point) return false;
+            waypoints.push({ arc: ref.seat === 'mid' ? midArc : tailArc, x: point.x, y: point.y });
+        }
+
+        // Feasibility (the never-shorten guard): a leg lays at exactly its
+        // arclength budget, so the leg's crow-fly distance must fit the
+        // budget. An overshoot would mean stretching the chain or
+        // shortening the rope - both refused; nothing moves.
+        for (let k = 1; k < waypoints.length; k++) {
+            const budget = waypoints[k].arc - waypoints[k - 1].arc;
+            const crowFly = Math.hypot(waypoints[k].x - waypoints[k - 1].x, waypoints[k].y - waypoints[k - 1].y);
+            if (crowFly > budget + RESEAT_EPS_PX) return false;
+        }
+
+        // One arc per leg (bowedLeg precomputes the circle), then every
+        // segment takes its station: arclength (i + 0.5) * pitch from the
+        // anchor - the seat roles' own arclengths land their bodies
+        // exactly on their waypoints. An open tail rides the arrival
+        // tangent; no station ever lacks a leg or tail to ride.
+        const legs = [];
+        for (let k = 0; k < waypoints.length - 1; k++) legs.push(bowedLeg(waypoints[k], waypoints[k + 1]));
+        const last = legs[legs.length - 1];
+        const openTail = last.to.arc < tailArc;
+        for (let i = 0; i < count; i++) {
+            const station = (i + 0.5) * pitch;
+            let point = null;
+            for (const leg of legs) {
+                if (station <= leg.to.arc + RESEAT_EPS_PX) {
+                    point = leg.pointAt(station - leg.from.arc);
+                    break;
+                }
+            }
+            if (!point && openTail) {
+                const tailT = station - last.to.arc;
+                point = { x: last.to.x + last.endTangent.x * tailT, y: last.to.y + last.endTangent.y * tailT };
+            }
+            if (point) Body.setPosition(this._segments[i], point);
+        }
+        return true;
     }
 
     /**
@@ -943,7 +1143,11 @@ export default class Rope extends BaseObject {
                 continue;
             }
             try {
-                this.attachEndpoint(token.seat, target, token.pointId);
+                // reseat: false (issue #98): the restore contract - the
+                // token binds the row's knot over the row's own chain lay,
+                // whatever seat policy now ships at tie time, so a bug
+                // file's recorded board keeps replaying bit-exactly.
+                this.attachEndpoint(token.seat, target, token.pointId, { reseat: false });
                 bound = true;
             } catch (e) {
                 // The rope-target deferral (issue #57): a target rope whose
