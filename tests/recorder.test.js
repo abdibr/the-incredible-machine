@@ -267,18 +267,22 @@ describe('SessionRecorder run machinery', () => {
         loop._frame(t += 16.667);
         loop._frame(t += 16.667);
 
-        const doc = recorder.toJSON();
-        expect(doc.runs).toHaveLength(2);
-        expect(doc.runs[0].endedBy).toBe('loop:reset');
-        expect(doc.runs[0].lastTick).toBe(3);
-        expect(doc.runs[1].lastTick).toBe(2);
-        expect(doc.runs[1].dt.values).toHaveLength(2);
-        expect(doc.runs[1].boardSnapshot).toHaveLength(1);
-        expect(doc.runs[1].boardSnapshot[0].type).toBe('ramp');
-
-        recorder.dispose();
-        physics.dispose();
-        vi.unstubAllGlobals();
+        try {
+            const doc = recorder.toJSON();
+            expect(doc.runs).toHaveLength(2);
+            expect(doc.runs[0].endedBy).toBe('loop:reset');
+            expect(doc.runs[0].lastTick).toBe(3);
+            expect(doc.runs[1].lastTick).toBe(2);
+            expect(doc.runs[1].dt.values).toHaveLength(2);
+            expect(doc.runs[1].boardSnapshot).toHaveLength(1);
+            expect(doc.runs[1].boardSnapshot[0].type).toBe('ramp');
+        } finally {
+            // unstubAllGlobals inside finally: a failed assertion must not
+            // leak the rAF stubs into the rest of the file.
+            recorder.dispose();
+            physics.dispose();
+            vi.unstubAllGlobals();
+        }
     });
 
     it('reopens recording when a play finds no open run (export leaves nothing stale)', () => {

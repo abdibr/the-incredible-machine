@@ -150,57 +150,49 @@ function recordFacts() {
 describe('overlay run-stop ordering (issue #77: the loop owns run ordering)', () => {
     it('fail-overlay retry stops the run once, before the posture rows', () => {
         loadLevelAndEnterEditing();
-        try {
-            const facts = recordFacts();
-            eventBus.emit('controls:play');
-            expect(mainModule.getMode()).toBe('PLAYING');
+        const facts = recordFacts();
+        eventBus.emit('controls:play');
+        expect(mainModule.getMode()).toBe('PLAYING');
 
-            eventBus.emit('overlay:retry');
+        eventBus.emit('overlay:retry');
 
-            // play: the begin fact then the posture row; retry: the owned
-            // stop sends its end fact first, the return posture follows.
-            expect(facts.map((f) => f.topic)).toEqual([
-                'loop:play', 'mode:changed', 'loop:reset', 'mode:changed',
-            ]);
-            expect(facts[2].topic).toBe('loop:reset');
-            expect(facts[3].packet.newMode).toBe('EDITING');
-            expect(mainModule.getMode()).toBe('EDITING');
+        // play: the begin fact then the posture row; retry: the owned
+        // stop sends its end fact first, the return posture follows.
+        expect(facts.map((f) => f.topic)).toEqual([
+            'loop:play', 'mode:changed', 'loop:reset', 'mode:changed',
+        ]);
+        expect(facts[2].topic).toBe('loop:reset');
+        expect(facts[3].packet.newMode).toBe('EDITING');
+        expect(mainModule.getMode()).toBe('EDITING');
 
-            // The owned stop is idempotent: a retry on a stopped loop
-            // re-announces nothing - and main needs no isStopped guard.
-            eventBus.emit('overlay:retry');
-            expect(facts.map((f) => f.topic)).toEqual([
-                'loop:play', 'mode:changed', 'loop:reset', 'mode:changed',
-            ]);
-            expect(mainModule.getMode()).toBe('EDITING');
-        } finally {
-        }
+        // The owned stop is idempotent: a retry on a stopped loop
+        // re-announces nothing - and main needs no isStopped guard.
+        eventBus.emit('overlay:retry');
+        expect(facts.map((f) => f.topic)).toEqual([
+            'loop:play', 'mode:changed', 'loop:reset', 'mode:changed',
+        ]);
+        expect(mainModule.getMode()).toBe('EDITING');
     });
 
     it('back-to-menu adopts the same single ordering', async () => {
         loadLevelAndEnterEditing();
-        const unsubs = [];
-        try {
-            const facts = recordFacts();
-            eventBus.emit('controls:play');
-            eventBus.emit('overlay:menu');
+        const facts = recordFacts();
+        eventBus.emit('controls:play');
+        eventBus.emit('overlay:menu');
 
-            expect(mainModule.getMode()).toBe('MENU');
-            expect(facts.map((f) => f.topic)).toEqual([
-                'loop:play', 'mode:changed', 'loop:reset', 'mode:changed',
-            ]);
-            expect(facts[2].topic).toBe('loop:reset');
-            expect(facts[3].packet.newMode).toBe('MENU');
+        expect(mainModule.getMode()).toBe('MENU');
+        expect(facts.map((f) => f.topic)).toEqual([
+            'loop:play', 'mode:changed', 'loop:reset', 'mode:changed',
+        ]);
+        expect(facts[2].topic).toBe('loop:reset');
+        expect(facts[3].packet.newMode).toBe('MENU');
 
-            // LevelSelect re-renders the puzzle list on MENU mode (two
-            // menu listeners) after setMode(MENU) - let those async show()
-            // chains settle HERE, while the DOM stub is still up, or they
-            // land after afterEach as unhandled rejections. getLevelList
-            // skips its unfetchable entries, so the chain drains fast.
-            await new Promise((resolve) => setTimeout(resolve, 10));
-        } finally {
-            for (const unsub of unsubs) unsub();
-        }
+        // LevelSelect re-renders the puzzle list on MENU mode (two
+        // menu listeners) after setMode(MENU) - let those async show()
+        // chains settle HERE, while the DOM stub is still up, or they
+        // land after afterEach as unhandled rejections. getLevelList
+        // skips its unfetchable entries, so the chain drains fast.
+        await new Promise((resolve) => setTimeout(resolve, 10));
     });
 
     it('next-level adopts the same single ordering', async () => {
@@ -208,24 +200,19 @@ describe('overlay run-stop ordering (issue #77: the loop owns run ordering)', ()
         // loadLevel fetches a shipped level it has not cached: headless,
         // serve the next id with level-06's data (goals.test.js pattern).
         const nextLevel = { ...structuredClone(level06), id: 'level-07' };
-        const unsubs = [];
-        try {
-            const facts = recordFacts();
-            vi.stubGlobal('fetch', vi.fn(async () => ({
-                ok: true,
-                json: async () => structuredClone(nextLevel),
-            })));
-            eventBus.emit('controls:play');
-            eventBus.emit('overlay:next-level', { levelId: 'level-07' });
-            await vi.waitFor(() => expect(mainModule.getMode()).toBe('EDITING'));
+        const facts = recordFacts();
+        vi.stubGlobal('fetch', vi.fn(async () => ({
+            ok: true,
+            json: async () => structuredClone(nextLevel),
+        })));
+        eventBus.emit('controls:play');
+        eventBus.emit('overlay:next-level', { levelId: 'level-07' });
+        await vi.waitFor(() => expect(mainModule.getMode()).toBe('EDITING'));
 
-            expect(facts.map((f) => f.topic)).toEqual([
-                'loop:play', 'mode:changed', 'loop:reset', 'mode:changed',
-            ]);
-            expect(facts[2].topic).toBe('loop:reset');
-            expect(facts[3].packet.newMode).toBe('EDITING');
-        } finally {
-            for (const unsub of unsubs) unsub();
-        }
+        expect(facts.map((f) => f.topic)).toEqual([
+            'loop:play', 'mode:changed', 'loop:reset', 'mode:changed',
+        ]);
+        expect(facts[2].topic).toBe('loop:reset');
+        expect(facts[3].packet.newMode).toBe('EDITING');
     });
 });
