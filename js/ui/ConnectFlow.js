@@ -34,6 +34,14 @@
  * that already holds its knot refuses before any pull, so a click-tied
  * rope holds at most three knots, one per seat.
  *
+ * Multi-tie (ADR 0007 amendment 3 / issue #56): a free rope's tie keeps
+ * the flow armed — armed on the NEXT FREE seat (issue #103; the group
+ * spec's decision 7, the issue's option 2). The flow advances anchor,
+ * then mid, then end, and closes when no seat after the tie is free: no
+ * armed square is ever the seat it just tied, so no click bounces "seat
+ * already tied" there and the armed preview always aims a seat that can
+ * tie.
+ *
  * Edit-only (ADR 0007 decision 9): squares, preview and seek exist only in
  * EDITING/SANDBOX. Any stage change cancels an in-flight seek cleanly — a
  * seek mutates nothing but the hand's re-lay, which is a placement edit
@@ -182,12 +190,13 @@ class ConnectFlow {
                 // One knot per seat (issue #85): a tie aim into a seat that
                 // already holds a knot refuses before reach or any pull —
                 // no knot is created, the seek stays alive, and the
-                // "seat already tied" flash marks the refused aim. This is
-                // the armed free-rope seek's second-tie click (the free
-                // family's seek stays armed after a tie, ADR 0007
-                // amendment 3): the rope's own seat gate would refuse it
-                // with a throw (Rope.attachEndpoint), the flow adds the
-                // feedback so the refusal explains itself.
+                // "seat already tied" flash marks the refused aim. The armed
+                // free-rope seek holds a FREE seat under the advance (issue
+                // #103: it arms the next free seat after its tie), so this
+                // gate answers a seat tied OUT OF BAND while armed — the
+                // restore path binds its tokens straight into the rope —
+                // mirroring Rope.attachEndpoint's own seat gate, whose
+                // throw the flow paints instead of swallowing.
                 if (this._seek.rope.getAttachmentRefs().some((ref) => ref.seat === this._seek.role)) {
                     this._refuse(x, y, 'occupied');
                     return true;
@@ -273,16 +282,23 @@ class ConnectFlow {
                         this._refuse(x, y, 'refused');
                         return true;
                     }
-                    // Tie exit per family (issue #56): a pinned rope's first
-                    // knot closes the seek at a settled state; a free rope's
-                    // tie keeps the seek — its span is the aim's property,
-                    // every later target ties as far as anything on the
-                    // board, so the flow stays armed for the next tie. The
-                    // seek's seat is a ROLE (issue #90): it needs no
-                    // re-resolution when a tie-grow re-counts the chain
-                    // — the role names the seat wherever the live count
-                    // puts it (issue #87's keeps, kept by the roles).
+                    // Tie exit per family (issue #56 / ADR 0007 amendment
+                    // 3): a pinned rope's first knot closes the seek at a
+                    // settled state; a free rope's tie keeps the flow armed
+                    // — its span is the aim's property, every later target
+                    // ties as far as anything on the board — but the armed
+                    // seat MOVES with the tie: the seek advances to the NEXT
+                    // FREE seat (issue #103; the group spec's decision 7 —
+                    // the issue's option 2). A seek parked on the seat it
+                    // just tied bounced every later click with "seat already
+                    // tied" and aimed a live-looking preview at a dead
+                    // square. The advance re-reads getTieSeats(): a tie-grow
+                    // re-counts the chain and the mid seat is role-derived
+                    // (issue #90) — the role names the seat wherever the
+                    // live count puts it (issue #87's keeps, kept by the
+                    // roles).
                     if (!rope.isFree) this.cancel(); // the tie ends the seek at a settled state
+                    else this._advanceSeek(rope); // armed on the NEXT free seat, or closed (issue #103)
                     return true;
                 }
                 this._refuse(x, y);
@@ -338,6 +354,43 @@ class ConnectFlow {
         this._seek = null;
         this._preview = null;
         this._refusal = null;
+    }
+
+    /**
+     * Advance the armed free-rope seek to the next FREE seat after the
+     * seat a tie just landed on (issue #103; the group spec's decision 7
+     * — the issue's option 2). ADR 0007 amendment 3 / issue #56's
+     * one-handed multi-tie flow stays — anchor, then mid, then end — but
+     * the armed square is always a seat that can still take its knot, so
+     * the armed preview is a live one: no click bounces "seat already
+     * tied" at the seat the previous click tied, and the dashed preview
+     * never parks on an occupied seat.
+     *
+     * The seat list is re-read through rope.getTieSeats(), never carried
+     * from before the tie: a tie-grow re-counts the chain (the free
+     * family's span is its chain) and the mid seat is role-derived
+     * (issue #90) — the seats answer by ROLE, wherever the live count
+     * puts their bodies (issue #87's keeps). The walk is FORWARD in seat
+     * order: no seat before the tied one is re-armed, and when no seat
+     * after it is free — the end seat's tie has none, the rope answers no
+     * seat for an out-of-band-tied square — the seek cancels: an armed
+     * square must always be one that can tie.
+     * A landed tie also sweeps a refused click's paint the way a settled
+     * tie sweeps it on the pinned side: the newest click's outcome
+     * replaces the last refusal's flash at its aim.
+     * @private
+     * @param {import('../objects/Rope.js').default} rope — the rope the tie landed on
+     */
+    _advanceSeek(rope) {
+        this._refusal = null;
+        const seats = rope.getTieSeats();
+        const index = seats.findIndex((seat) => seat.role === this._seek.role);
+        const refs = rope.getAttachmentRefs();
+        const next = index >= 0
+            ? seats.slice(index + 1).find((seat) => !refs.some((ref) => ref.seat === seat.role))
+            : null;
+        if (next) this._seek = { rope, role: next.role };
+        else this.cancel();
     }
 
     /**

@@ -17,7 +17,10 @@
  * - ConnectFlow.handlePointerDown — a free square seeks at that seat; an
  *   occupied square unties exactly that knot (the target keeps its point);
  *   a tie through the mid square realizes from the middle chain body; the
- *   armed free-rope seek refuses a second tie into its occupied seat.
+ *   armed free-rope seek ADVANCES past the seat it tied (issue #103, the
+ *   group spec's decision 7 — the next free seat, cancelled at the end
+ *   seat); a seat tied UNDER an armed seek (out-of-band, the restore
+ *   path) refuses its second tie.
  * - Rope.attachEndpoint — the rope-side seat gate: one knot per seat.
  *
  * Companion suites: rope-seats (issues #84/#90 — the seat answers),
@@ -206,36 +209,48 @@ describe('One knot per seat (issue #85)', () => {
         endBalloon.dispose();
     });
 
-    it('the armed free-rope seek refuses a second tie into its occupied seat; the next seat ties on', () => {
+    it('the armed free-rope seek advances past its tie; a seat tied under the seek refuses its second tie', () => {
         const rope = objectRegistry.create('free-rope', 300, 300); // bodyless coil
         const bucket = new Bucket(360, 240);
         const balloon = new Balloon(320, 340);
 
-        // First tie from the coil spawns the chain; the FREE family's seek
-        // stays armed at the anchor seat it just tied (ADR 0007 amendment 3).
+        // First tie from the coil spawns the chain. Issue #103 (the group
+        // spec's decision 7): the seek does NOT sit down on the seat it
+        // just tied — that armed square bounced every later click with
+        // "seat already tied" — the flow arms the NEXT free seat the
+        // spawned chain answers, the mid seat (role-derived, issue #90).
         flow.handlePointerDown(300, 300, [rope, bucket]);
         const rim = bucket.getAttachmentWorldPoint('rim');
         flow.handlePointerDown(rim.x, rim.y, [rope, bucket]);
-        expect(flow.seek).toEqual({ rope, role: 'anchor' });
+        expect(flow.seek).toEqual({ rope, role: 'mid' });
         expect(rope.getAttachmentRefs()).toHaveLength(1);
 
-        // A second tie click into the now-occupied seat refuses: no knot,
-        // the seek survives, and the refusal paints its own reason.
+        // A seat tied UNDER an armed seek — the restore path binds its
+        // tokens straight into the rope — keeps the one-knot-per-seat
+        // gate honest (issue #85): a tie aim into the armed seat's knot
+        // refuses, no knot is created, and the refusal paints its reason.
+        rope.attachEndpoint('mid', balloon, 'knot');
         const knot = balloon.getAttachmentWorldPoint('knot');
         expect(flow.handlePointerDown(knot.x, knot.y, [rope, bucket, balloon])).toBe(true);
-        expect(rope.getAttachmentRefs()).toHaveLength(1); // one knot per seat
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid']);
         expect(flow.refusal).toMatchObject({ x: knot.x, y: knot.y, reason: 'occupied' });
+        expect(flow.seek).toEqual({ rope, role: 'mid' }); // the refusal keeps the seek armed
 
-        // Exit the armed seek and tie from a FREE seat: the end square.
+        // The NEXT seat still ties on: the end square — the last seat —
+        // takes this aim, and its tie CLOSES the flow (no seat past the
+        // end seat; issue #103). The refused aim never became a knot.
         flow.cancel();
+        const secondBalloon = new Balloon(700, 120);
         const end = rope.bodies[rope.bodies.length - 1].position;
-        flow.handlePointerDown(end.x, end.y, [rope, bucket, balloon]);
+        flow.handlePointerDown(end.x, end.y, [rope, bucket, balloon, secondBalloon]);
         expect(flow.seek).toEqual({ rope, role: 'end' });
-        flow.handlePointerDown(knot.x, knot.y, [rope, bucket, balloon]);
-        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'end']);
-        flow.cancel();
+        const farKnot = secondBalloon.getAttachmentWorldPoint('knot');
+        flow.handlePointerDown(farKnot.x, farKnot.y, [rope, bucket, balloon, secondBalloon]);
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid', 'end']);
+        expect(flow.seek).toBe(null);
         rope.dispose();
         bucket.dispose();
         balloon.dispose();
+        secondBalloon.dispose();
     });
 });
