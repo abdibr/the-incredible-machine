@@ -281,6 +281,30 @@ describe('SessionRecorder run machinery', () => {
         vi.unstubAllGlobals();
     });
 
+    it('reopens recording when a play finds no open run (export leaves nothing stale)', () => {
+        // Issue #77: the recorder consumes the loop's published run facts -
+        // its run-open gate is the run state itself (an open run or none),
+        // not a private copy of the loop's stop/run state machine.
+        // exportSession() ends the run it had (open-at-export) while the
+        // session stays live; a later pause + resume play must not silently
+        // drop the recording - a resume that finds no open run opens a
+        // fresh one.
+        const recorder = makeRecorder({ board: realBoard() });
+        recorder.startSession();
+        eventBus.emit('loop:play', { elapsed: 0 });
+        for (let i = 0; i < 3; i++) eventBus.emit('loop:frame', { dt: 16.667, elapsed: 0 });
+        recorder.exportSession();
+        eventBus.emit('loop:pause', { elapsed: 50 });
+        eventBus.emit('loop:play', { elapsed: 50 });
+        for (let i = 0; i < 2; i++) eventBus.emit('loop:frame', { dt: 16.667, elapsed: 0 });
+
+        const doc = recorder.toJSON();
+        expect(doc.runs).toHaveLength(2);
+        expect(doc.runs[0].endedBy).toBe('open-at-export');
+        expect(doc.runs[0].lastTick).toBe(3);
+        expect(doc.runs[1].dt.values).toHaveLength(2);
+        recorder.dispose();
+    });
     it('honors the dense toggle for future runs', () => {
         const recorder = makeRecorder({ board: realBoard() });
         recorder.startSession();

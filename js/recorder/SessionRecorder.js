@@ -2,9 +2,11 @@
  * SessionRecorder — always-on bug-file recorder for SANDBOX play (ADR 0006).
  *
  * DOM-free core, Node-safe (replay harness + vitest reuse this very class).
- * Subscribes on the shared eventBus, mirrors the GameLoop lifecycle from
- * `loop:play` / `loop:pause` / `loop:reset` / `controls:reset` / `mode:changed`, and
- * produces a self-contained JSON "bug file" for one sandbox visit:
+ * Subscribes on the shared eventBus and consumes the run facts the loop
+ * seam publishes (issue #77: the ONE run-lifecycle owner) - `loop:play`
+ * (begin) / `loop:frame` (step-to) / `loop:reset` (end) - plus the app's
+ * `controls:reset` / `mode:changed` rows, and produces a self-contained
+ * JSON "bug file" for one sandbox visit:
  *
  *   { header..., build[], runs[] }  — build[] = edit trace (per-action object
  *   snapshots); runs[] = per-play board snapshot + recorded dt stream +
@@ -42,13 +44,6 @@ import {
 } from './schema.js';
 import { APP_VERSION, userAgentString } from './meta.js';
 
-const LOOP_STOPPED = 'stopped';
-const LOOP_RUNNING = 'running';
-const LOOP_PAUSED = 'paused';
-
-/** Mode family one sandbox visit survives across (ADR 0006 decision 7). */
-const SESSION_MODES = new Set(['SANDBOX', 'PLAYING', 'PAUSED', 'WON']);
-
 export class SessionRecorder {
     /**
      * @param {object} [options]
@@ -85,7 +80,6 @@ export class SessionRecorder {
         this._openRun = null;
         this._tick = 0;           // completed loop:frames within the open run
         this._seq = 0;
-        this._loopState = LOOP_STOPPED;
         this._latestLevelId = null;
         this._latestGoal = null;
 
@@ -124,8 +118,11 @@ export class SessionRecorder {
         this._bound = true;
 
         this._unsubs.push(eventBus.on('mode:changed', (packet) => this._onModeChanged(packet)));
+        // The loop's published run facts (issue #77): loop:play opens the
+        // run when none is open, loop:frame records the steps, loop:reset
+        // ends it. `loop:pause` is a within-run fact recorded as a
+        // narrative PLAY_TOPICS row below - no dedicated handler needed.
         this._unsubs.push(eventBus.on('loop:play', () => this._onLoopPlay()));
-        this._unsubs.push(eventBus.on('loop:pause', () => this._onLoopPause()));
         this._unsubs.push(eventBus.on('loop:frame', (packet) => this._onLoopFrame(packet)));
         this._unsubs.push(eventBus.on('loop:reset', () => this._onLoopReset()));
         // Generic topic recording — installed BEFORE the run-boundary close
@@ -169,7 +166,6 @@ export class SessionRecorder {
         this._openRun = null;
         this._tick = 0;
         this._seq = 0;
-        this._loopState = LOOP_STOPPED;
         this._latestLevelId = null;
         this._latestGoal = null;
         this._active = true;
@@ -199,30 +195,39 @@ export class SessionRecorder {
             this.startSession();
         }
         if (!this._active) return;
-        // The mode row belongs to the run it closes.
+        // The mode row belongs to the run it closes / the visit it ends.
         this._recordInContext('mode:changed', { oldMode: oldMode ?? null, newMode: newMode ?? null });
-        if (!SESSION_MODES.has(newMode)) {
+        // Session boundary - the arming rule's twin, owned here as session
+        // policy per ADR 0006 decision 7 (NOT moved into GameLoop): a visit
+        // arms at its sandbox entry row above and ends at the first
+        // recorded posture outside the family the visit survives across -
+        // the run postures (SANDBOX entry, a live run in PLAYING/PAUSED, a
+        // reached goal in WON); campaign EDITING, MENU and the ADR 0009
+        // give-up SOLUTION posture are the exits. The RUN itself is the
+        // loop seam's business - its end fact (loop:reset) closed it on the
+        // adopted ordering already, so stopSession() only ends the visit.
+        if (!['SANDBOX', 'PLAYING', 'PAUSED', 'WON'].includes(newMode)) {
             this.stopSession();
         }
     }
 
-    // ── Loop-state mirroring / run boundaries ─────
+    // ── Run boundaries — consumed from the loop's published facts ───
 
-    /** @private */
+    /**
+     * Run begin - the loop's published fact: opens a run when none is
+     * open. The gate is the run state itself, not a mirrored loop state:
+     * pause/resume reuses the run that is still open (ADR 0006 decision
+     * 7), and a play that finds no open run (fresh play after the loop's
+     * end fact, or a resume past a closed run) opens a fresh one.
+     * @private
+     */
     _onLoopPlay() {
         if (!this._active) return;
-        if (this._loopState === LOOP_STOPPED) this._startRun();
-        this._loopState = LOOP_RUNNING;
-    }
-
-    /** @private */
-    _onLoopPause() {
-        if (!this._active) return;
-        this._loopState = LOOP_PAUSED;
+        if (!this._openRun) this._startRun();
     }
 
     /**
-     * The run-ended fact (issue #76): GameLoop.reset() publishes
+     * Run end - the loop's published fact: GameLoop.reset() publishes
      * `loop:reset` announcing the completed reset. The reset paths the
      * overlay handlers drive never emit `controls:reset` (only the top-bar
      * Reset does), so this is what closes the open run and lets the next
@@ -231,14 +236,13 @@ export class SessionRecorder {
      */
     _onLoopReset() {
         if (!this._active) return;
-        this._loopState = LOOP_STOPPED;
         this.closeOpenRun('loop:reset');
     }
 
     /** @private */
     _onLoopFrame({ dt = 0 } = {}) {
         if (!this._active || !this._openRun) return;
-        this._loopState = LOOP_RUNNING;
+        // The step-to fact: one recorded dt row per published step.
         const run = this._openRun;
         this._tick++;
         run.lastTick = this._tick;
@@ -269,7 +273,6 @@ export class SessionRecorder {
         run.endedBy = endedBy;
         this._openRun = null;
         this._tick = 0;
-        this._loopState = LOOP_STOPPED;
         return run;
     }
 
