@@ -341,7 +341,8 @@ function _wireEvents() {
             return;
         }
         if (mode === 'PLAYING' || mode === 'PAUSED' || mode === 'WON') {
-            // GameLoop.reset() already restores snapshot + clears it
+            // GameLoop.reset() is the owned run-stop (issue #77): restores
+            // the snapshot + clears it, one end fact per real stop.
             state.gameLoop.reset();
             // Restart renderer loop for edit-mode rendering
             renderer.startLoop();
@@ -381,14 +382,14 @@ function _wireEvents() {
 
     // Next level
     eventBus.on('overlay:next-level', async ({ levelId }) => {
-        // The goal overlay fires while the GameLoop is still RUNNING (the
+        // The goal overlay fires while the loop is still RUNNING (the
         // win/fail overlay itself does not pause it; it only emits events).
-        // Overlay-driven mode switches MUST stop the loop first, or the next
-        // `controls:play` hits GameLoop.play()'s RUNNING early-return and
-        // skips the contracted play-start snapshot (stale snapshot then
-        // false-triggers the mismatch re-baseline on the next reset).
-        // Mirrors controls:reset's ordered path (reviewer finding #1).
-        if (!state.gameLoop.isStopped) state.gameLoop.reset();
+        // Overlay-driven mode switches run after the loop-owned stop
+        // (issue #77): reset() is idempotent and announces loop:reset
+        // exactly once per real stop, so the next controls:play always
+        // finds a stopped loop and takes the contracted play-start
+        // snapshot. One ordering, one owner - no hand-rolled guards.
+        state.gameLoop.reset();
         renderer.startLoop();
         try {
             await levelManager.loadLevel(levelId);
@@ -400,16 +401,18 @@ function _wireEvents() {
 
     // Retry → reset the level
     eventBus.on('overlay:retry', () => {
-        // Loop-stop first (same reason as overlay:next-level).
-        if (!state.gameLoop.isStopped) state.gameLoop.reset();
+        // The loop-owned stop (issue #77), same as the overlay siblings:
+        // one call, one end fact per real stop, no hand-rolled guard.
+        state.gameLoop.reset();
         renderer.startLoop();
         _resetLevel();
     });
 
     // Back to menu
     eventBus.on('overlay:menu', () => {
-        // Loop-stop first (same reason as overlay:next-level).
-        if (!state.gameLoop.isStopped) state.gameLoop.reset();
+        // The loop-owned stop (issue #77), same as the overlay siblings:
+        // one call, one end fact per real stop, no hand-rolled guard.
+        state.gameLoop.reset();
         renderer.startLoop();
         state.placedObjects.length = 0;
         renderer.setObjects(state.placedObjects);
@@ -453,9 +456,11 @@ function _enterSolution() {
     const scene = levelData?.solution?.scene;
     if (!Array.isArray(scene) || scene.length === 0) return;
 
-    // Stop any running attempt before touching the board (ordered path;
-    // null-safe before a boot that has built the loop)
-    if (state.gameLoop && !state.gameLoop.isStopped) state.gameLoop.reset();
+    // Stop any running attempt before touching the board - the same
+    // loop-owned run-stop the overlay siblings call (issue #77; reset()
+    // is idempotent, so no isStopped re-derivation; the null check stays
+    // only for the pre-boot null-safety the exported seam guarantees).
+    if (state.gameLoop) state.gameLoop.reset();
     if (renderer.canvas) renderer.startLoop();
     goalOverlay.hide();
 
