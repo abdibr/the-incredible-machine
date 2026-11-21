@@ -129,14 +129,15 @@ describe('Knots keep their seats — the hand\'s re-lay (issue #87)', () => {
         expect(knotLinks(engine, target)[0].bodyA).toBe(roper.bodies[6]); // seg 5, the middle of 11
 
         // The hand re-lays: free family, tied knots and all, any span. The
-        // END square must sit at demanded·count/(count−0.5) from the ANCHOR
-        // to land the span at 300 (240 < span ≤ 320 → count 8: the demand
-        // is aimed well inside that band so float dust cannot flip it).
-        // The aim reads the anchor as it lies (one step ran; the balloon's
-        // bob moves the moving knot a little) — relayFreeEnd measures from
-        // there.
+        // demand names the POST-re-lay count's own end fraction (issue #99):
+        // 300px · 7.5/8 = 281.25 seals the span at 300 through the two-pass
+        // (the provisional 281.25/(10.5/11) = 294.6 names count 8, and the
+        // seal re-divides by 7.5/8) — the fixed point laying span 300 with
+        // the 8-chain. The aim reads the anchor as it lies (one step ran;
+        // the balloon's bob moves the moving knot a little) — relayFreeEnd
+        // measures from there.
         const root = roper.bodies[0].position;
-        roper.relayFreeEnd(root.x, root.y + 300 * (10.5 / 11));
+        roper.relayFreeEnd(root.x, root.y + 300 * (7.5 / 8));
         expect(roper.bodies.length - 1).toBe(8); // 11 → 8, the tail traded
         expect(roper._length).toBeCloseTo(300, 3);
         expect(roper.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid']); // the roles never moved
@@ -186,9 +187,12 @@ describe('Knots keep their seats — the hand\'s re-lay (issue #87)', () => {
         expect(knotLinks(engine, endB)[0].bodyA).toBe(roper.bodies[12]); // seg 11, the tail
 
         // LONG: the anchor as it lies, aim down-right so the re-lay stays
-        // in the playfield; span 590 → count 15 (well inside the band).
+        // in the playfield; span 590 → count 15 (well inside the band). The
+        // demand names the post count's own end fraction (issue #99): the
+        // two-pass seals 570.7 back to the 590 fixed point (provisional
+        // 570.7/(11.5/12) = 595.5 also names 15).
         const root = roper.bodies[0].position;
-        const demand = 590 * (11.5 / 12); // end square at demand for the span 590
+        const demand = 590 * (14.5 / 15); // the post-re-lay count's own end fraction, span 590
         roper.relayFreeEnd(root.x + 0.6 * demand, root.y + 0.8 * demand);
         expect(roper.bodies.length - 1).toBe(15);
         expect(roper.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid', 'end']); // roles unchanged by the re-count
@@ -203,9 +207,12 @@ describe('Knots keep their seats — the hand\'s re-lay (issue #87)', () => {
         // flip the re-derived count (the dust here rides the balloons' bob
         // noise through the hauled anchor). The anchor is a moving knot
         // (decision 5): the step above hauled it, so re-aim from where it
-        // lies NOW — the demand measures from there.
+        // lies NOW — the demand measures from there. The demand names the
+        // post count's own end fraction (issue #99): 236 · 5.5/6 = 216.3
+        // seals back to span 236 (its provisional 216.3/(14.5/15) = 223.8
+        // also names count 6).
         const root2 = roper.bodies[0].position;
-        const demand2 = 236 * (14.5 / 15); // the end square at the 15-chain's fraction, span ~236
+        const demand2 = 236 * (5.5 / 6); // the post-re-lay count's own end fraction, span ~236
         roper.relayFreeEnd(root2.x + 0.6 * demand2, root2.y + 0.8 * demand2);
         expect(roper.bodies.length - 1).toBe(6);
         expect(roper.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid', 'end']); // still the same three roles

@@ -455,10 +455,12 @@ describe('Free Rope (issue #56) — unlimited span', () => {
         const dy = -160;
         const demanded = Math.hypot(dx, dy); // ≈272px
         rope.relayFreeEnd(anchor.x + dx, anchor.y + dy);
-        // One re-lay lays the span that backs the tail square to the
-        // demand at the CURRENT count — demanded·c/(c−0.5) ≈ 296.7px —
-        // and setEndpoints re-derives the count from that grown span.
-        expect(rope._length).toBeCloseTo(demanded * before / (before - 0.5), 5);
+        // The two-pass seal (issue #99): the provisional grown span
+        // (demanded·c/(c−0.5) = 296.7px) names count 8, and the hand's span
+        // re-divides by THAT count's own end fraction (7.5/8) - 290.1px,
+        // the span whose laid tail (7.5/8 of it) rides the demand on this
+        // growth frame.
+        expect(rope._length).toBeCloseTo(demanded * 8 / 7.5, 5);
         expect(ropeSegs(rope)).toHaveLength(Rope.segmentsForSpan(rope._length));
         // The anchor knot stays parked; the tail rides the demand within
         // the half-segment gap the under-span pays for.

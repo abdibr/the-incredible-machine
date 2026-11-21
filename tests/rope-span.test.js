@@ -157,25 +157,28 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         link = engine.getAttachedConstraints().find((c) => c.bodyB === balloon.bodies[0]);
         expect(link, 'the mid-seat knot survives the re-segmentation').toBeTruthy();
         expect(link.bodyA).toBe(rope.bodies[6]); // the new middle body (seat 5 of 11)
-        // Anchor and tail sit on the endpoints — the anchor exactly (static),
-        // the tail as exactly as a post-step read can be: the lay itself puts
-        // it ON `end` (issue #56, handoff fix 4 — an appended tail is not
-        // centre-laid half a pitch inboard), but these reads run AFTER the
-        // step above, and one 16.7ms gravity step drops a free dynamic body
-        // ~0.6px while the constraint solve leaves float dust in x (1e-11).
-        // So: coordinate-wise closeness — 3 decimals in x (dust only), a
-        // sub-pixel band in y (one step's fall) — which keeps the geometry
+        // Anchor and tail sit on their stations — the anchor exactly (on
+        // the start), the tail at the END seat's own fraction: the re-lay
+        // lays what a birth of the same span would — half a pitch
+        // inboard of the layout end (issue #99 retired the #56 handoff fix 4's
+        // ON-end placement, whose fraction-1.0 tail sealed past the hand on
+        // growth frames). These reads run AFTER the step above, and one
+        // 16.7ms gravity step drops a free dynamic body ~0.6px while the
+        // constraint solve leaves float dust in x (1e-11). So:
+        // coordinate-wise closeness - 3 decimals in x (dust only), a
+        // sub-pixel band in y (one step's fall) - which keeps the geometry
         // intent without asserting that integration is a no-op.
         expect([rope.bodies[0].position.x, rope.bodies[0].position.y]).toEqual([200, 100]);
         expect(rope.bodies[11].position.x).toBeCloseTo(200, 3);
-        // The tail's residual after the step is a HAUL, not a snap: the
-        // re-lay parked the knot on the NEW mid seat (issue #87) and its
-        // rest sits ~79px past the balloon, so the knot link's first step
-        // drags the chain inboard a few px. The intent is unchanged — the
-        // append did not snap the tail off the end point, and the residual
-        // stays under a pitch (~40px) — it is just the knot's strain now,
-        // not one free-fall step (the gravity component is still ~0.6px).
-        expect(Math.abs(rope.bodies[11].position.y - 520)).toBeLessThan(420 / 40); // < a pitch
+        // The tail rides 10.5/11 of the span (= ~500.9px laid); the residual
+        // after the step is a HAUL, not a snap: the re-lay parked the knot on
+        // the NEW mid seat (issue #87) and its rest sits ~79px past the
+        // balloon, so the knot link's first step drags the chain inboard a
+        // few px. The intent is unchanged — the tail holds its seat
+        // station, and the residual stays under a pitch — it is just the
+        // knot's strain.
+        expect(Math.abs(rope.bodies[11].position.y - (100 + 420 * 10.5 / 11)))
+            .toBeLessThan(420 / 40); // the seat station, within a pitch's haul
     });
 
     it('a shorter re-lay rides the end knot onto the new tail; the roles never lose a knot', () => {
@@ -266,11 +269,13 @@ describe('Span-derived counts — tail trades and the world reconcile (issue #56
         expect(rope.bodies.slice(0, chainBefore.length)).toEqual(chainBefore);
         expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['end']); // the end knot IS the tail's through the re-count
         expect(rope._length).toBe(600);
-        // The rebuilt rest lengths span the new span (half a pitch to
-        // seg-0, 1½ pitches out to the appended tail on `end`).
+        // The rebuilt rest lengths span the new span - half a pitch to
+        // seg-0, one pitch between every neighbour: the appended tail rides
+        // its seat's fraction (issue #99), so every link is the standard
+        // birth spacing (rest lengths equal laid distances, unbroken).
         expect(rope.constraints).toHaveLength(15);
         expect(rope.constraints[0].length).toBeCloseTo(20, 5);
-        expect(rope.constraints[14].length).toBeCloseTo(60, 5);
+        expect(rope.constraints[14].length).toBeCloseTo(40, 5);
         // The packet reports the tail trade: 9 bodies appended, none dropped.
         expect(events).toHaveLength(1);
         expect(events[0].added).toHaveLength(9);
@@ -400,11 +405,13 @@ describe('Span-derived counts — the hand and the freeze (issue #56)', () => {
         engine.addObject(rope);
 
         rope.relayFreeEnd(100, 420); // a 320px demand
-        // The under-span trick: the tail square backs to the demand at the
-        // current count — span = demand·c/(c−0.5) — and the count
-        // re-derives from that grown span.
-        expect(rope._length).toBeCloseTo(320 * 6 / 5.5, 5);
-        expect(ropeSegs(rope)).toHaveLength(9); // ceil(349.1/40)
+        // The two-pass seal (issue #99): the provisional grown span
+        // (demand·c/(c−0.5) = 320·6/5.5 = 349.1) names count 9, and the
+        // hand's span re-divides by THAT count's own end fraction (8.5/9) -
+        // 338.8, the span whose laid tail (10.5/9 of it) rides the 320px
+        // demand on the growth frame.
+        expect(rope._length).toBeCloseTo(320 * 9 / 8.5, 5);
+        expect(ropeSegs(rope)).toHaveLength(9); // ceil(338.8/40)
         // A second demand at the settled count converges (9 segments).
         rope.relayFreeEnd(100, 420);
         expect(rope._length).toBeCloseTo(320 * 9 / 8.5, 5);
@@ -474,5 +481,118 @@ describe('Band-crossing seals - the seal answers the post-re-lay count (issue #9
         rope.dispose();
         balloon.dispose();
         for (const obj of board2) obj.dispose();
+    });
+    it('a free-end re-lay that grows the chain puts the tie square on the cursor on that frame; the save is the sealed span', () => {
+        // relayFreeEnd (before issue #99) sealed the hand's span with the
+        // PRE-re-lay count's end fraction (5.5/6) while setEndpoints' re-lay
+        // re-derived the count across the 6 -> 7 band and parked the
+        // appended tail ON the layout end (fraction 1.0): the first reel to
+        // a 250px cursor set the tie square 272.7px out - +22.7px past the
+        // cursor, snapping back only on the next pointer move (issue #99's
+        // B3; probe scenario 4's measured 272.7 -> 250.0). The hand's seal
+        // now answers the count the re-lay ends with (the two-pass, the
+        // same shape the tie-grow seals with) and the appended tail rides
+        // its seat's fraction, so the square is on the cursor on the very
+        // frame the chain grows.
+        const rope = new Rope(200, 100, { length: 240 }); // 6 segments
+        const cursor = { x: 200, y: 350 }; // 250px below the anchor
+
+        rope.relayFreeEnd(cursor.x, cursor.y);
+
+        // The reel crosses the 6 -> 7 band and seals against the laid
+        // count's own end fraction (6.5/7): the span is the hand's 250px
+        // re-divided, NOT the single-pass 250 * 6 / 5.5 = 272.7.
+        expect(Rope.segmentsForSpan(250 * 6 / 5.5)).toBe(7); // the demand crosses the band
+        expect(rope._length).toBeCloseTo(250 * 7 / 6.5, 5);
+        expect(ropeSegs(rope)).toHaveLength(7); // the chain grew
+        const tail = rope.bodies[rope.bodies.length - 1].position;
+        expect(Math.hypot(tail.x - 200, tail.y - 100)).toBeCloseTo(250, 6); // the cursor, float dust
+
+        // A second reel at the settled count holds both answers (the old
+        // code's snap-back frame gone; no per-move creep either way).
+        rope.relayFreeEnd(cursor.x, cursor.y);
+        expect(rope._length).toBeCloseTo(250 * 7 / 6.5, 5);
+        const tail2 = rope.bodies[rope.bodies.length - 1].position;
+        expect(Math.hypot(tail2.x - 200, tail2.y - 100)).toBeCloseTo(250, 6);
+
+        // Save -> load -> save stays idempotent for the grown span: the
+        // count is the span's rule (issue #89), so the restore re-derives
+        // the same 7 from the sealed 269.23 and the second save is the
+        // first's twin.
+        const rows = serializePlacedBoard([rope]);
+        const board2 = [];
+        restorePlacedFromSnapshot(board2, rows);
+        const rope2 = board2.find((o) => o.type === 'rope');
+        expect(rope2.bodies.length - 1).toBe(7);
+        expect(rope2._length).toBeCloseTo(250 * 7 / 6.5, 3);
+        const rows2 = serializePlacedBoard(board2);
+        expect(rows2.find((r) => r.type === 'rope').options.length)
+            .toBeCloseTo(rows.find((r) => r.type === 'rope').options.length, 3);
+
+        rope.dispose();
+        for (const obj of board2) obj.dispose();
+    });
+    it("a mid tie crossing the 6 -> 7 band lands the seat on the knot (no +20% inflation)", () => {
+        // The issue's first measured class: a 240px rope's mid seat covers
+        // 100px, so a 137px knot grow crosses a band. The single-pass seal
+        // divided by 2.5/6 (328.8 -> count 9), and the laid 9-chain's mid
+        // rode its OWN fraction (4.5/9) to 164.4 - +27.4px PAST the knot
+        // (+20%), the inflation that never shrank. The two-pass seal names
+        // the count the re-lay ends with: the provisional 328.8 names
+        // count 9, and the seal re-divides by 9's own mid fraction (4.5/9)
+        // to 274 - whose own answer is 7 (an odd-pair fraction match), so
+        // the laid 7-chain's middle rests exactly on the knot.
+        const rope = new Rope(200, 100, { length: 240 }); // 6 segments
+        const balloon = new Balloon(337, 74.4); // knot at (337, 100): 137px out
+        const knot = balloon.getAttachmentWorldPoint("knot");
+        const tied = Math.hypot(knot.x - 200, knot.y - 100);
+        expect(tied).toBeGreaterThan(100); // beyond the mid circle: the grow fires
+
+        rope.attachEndpoint("mid", balloon, "knot");
+
+        expect(rope._length).toBeCloseTo(tied * 9 / 4.5, 5); // 274: the post-band seal
+        expect(ropeSegs(rope)).toHaveLength(7); // 6 -> 7 across the band
+        const mid = rope.getTieSeats()[1];
+        expect(mid.body).toBe(rope.bodies[4]); // the middle of the 7-chain
+        expect(Math.hypot(mid.worldPoint.x - 200, mid.worldPoint.y - 100)).toBeCloseTo(tied, 5);
+
+        // The sealed span's own count re-derives the same 7: save-load-save
+        // holds the row (the count is the span's rule, issue #89).
+        const rows = serializePlacedBoard([balloon, rope]);
+        const board2 = [];
+        restorePlacedFromSnapshot(board2, rows);
+        const rope2 = board2.find((o) => o.type === "rope");
+        expect(rope2.bodies.length - 1).toBe(7);
+        expect(rope2._length).toBeCloseTo(tied * 9 / 4.5, 3);
+
+        rope.dispose();
+        balloon.dispose();
+        for (const obj of board2) obj.dispose();
+    });
+    it("a mid tie crossing the 8 -> 9 band lands the seat on the knot (no +20% inflation)", () => {
+        // The issue's second measured class: a 300px rope (count 8) whose
+        // mid seat covers 131.25px ties a 178px knot. The single-pass seal
+        // divided by 3.5/8 (406.9 -> count 11), and the laid 11-chain's mid
+        // rode its fraction (5.5/11) to 203.4 - +25.4px PAST the knot. The
+        // two-pass seal re-divides by the provisional 406.9's OWN count
+        // (11, fraction 5.5/11) to 356 - whose own answer is 9 (the odd
+        // pair shares the exact-half fraction), so the laid 9-chain's
+        // middle rests exactly on the knot.
+        const rope = new Rope(200, 100, { length: 300 }); // 8 segments
+        const balloon = new Balloon(378, 74.4); // knot at (378, 100): 178px out
+        const knot = balloon.getAttachmentWorldPoint("knot");
+        const tied = Math.hypot(knot.x - 200, knot.y - 100);
+        expect(tied).toBeGreaterThan(131.25); // beyond the 8-chain's mid circle
+
+        rope.attachEndpoint("mid", balloon, "knot");
+
+        expect(rope._length).toBeCloseTo(tied * 11 / 5.5, 5); // 356: the post-band seal
+        expect(ropeSegs(rope)).toHaveLength(9); // 8 -> 9 across the band
+        const mid = rope.getTieSeats()[1];
+        expect(mid.body).toBe(rope.bodies[5]); // the middle of the 9-chain
+        expect(Math.hypot(mid.worldPoint.x - 200, mid.worldPoint.y - 100)).toBeCloseTo(tied, 5);
+
+        rope.dispose();
+        balloon.dispose();
     });
 });
