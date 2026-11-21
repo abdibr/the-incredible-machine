@@ -98,7 +98,7 @@ describe('Tie points ignore body rotation (issue #100) — frame coincidence', (
         expect(px(square, pin)).toBeLessThanOrEqual(1);
     });
 
-    it('the drawn knot triangle and decorative string spin with the body, onto the realized pin', () => {
+    it('the drawn knot triangle spins with the body, onto the realized pin', () => {
         const physics = new PhysicsEngine(800, 600);
         engines.push(physics);
         const { targetPart } = tieAndRealize(
@@ -111,7 +111,8 @@ describe('Tie points ignore body rotation (issue #100) — frame coincidence', (
 
         // Independent truth: the offset is the public attachment point's, the
         // angle the body's own — the knot triangle's tip draws at the rotated
-        // point and the string hangs from it.
+        // point. (No tail below it: the balloon paints no decorative string at
+        // all - issue #101 - the rope's own drawn tail is the only string.)
         const offset = targetPart.attachmentPoints.find((p) => p.id === 'knot').offset;
         const tipLocal = rotate(offset, knotBody.angle);
 
@@ -121,8 +122,6 @@ describe('Tie points ignore body rotation (issue #100) — frame coincidence', (
         const apex = ctx.lineTo.mock.calls.filter(([x, y]) =>
             Math.abs(x - tipLocal.x) <= 0.5 && Math.abs(y - tipLocal.y) <= 0.5);
         expect(apex).toHaveLength(1); // the drawn knot tip rides the rotated knot point
-        expect(ctx.moveTo.mock.calls.some(([x, y]) =>
-            Math.abs(x - tipLocal.x) <= 0.5 && Math.abs(y - tipLocal.y) <= 0.5)).toBe(true); // the string hangs from it
 
         // ...and the drawn tip is the realized pin (the acceptance chain's
         // drawn-knot leg), read at the same instant the pin is.

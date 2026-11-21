@@ -138,8 +138,8 @@ export default class Balloon extends BaseObject {
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Knot + string: the tie point rides the body's rotation (issue #100).
-        // The drawn triangle and decorative string pivot with the body angle
+        // Knot: the tie point rides the body's rotation (issue #100).
+        // The drawn triangle pivots with the body angle
         // exactly like the attachment offset, so the drawn knot stays on
         // getAttachmentWorldPoint's answer — and on the realized pin — at
         // every body angle (the balloon spins under collision torque).
@@ -163,17 +163,11 @@ export default class Balloon extends BaseObject {
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        // String
-        ctx.strokeStyle = '#888';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(tip.x, tip.y);
-        const stringLen = 25;
-        // Curvy string, carried with the body angle
-        const stringMid = rot(-6, r * 1.2 + stringLen / 2);
-        const stringEnd = rot(2, r * 1.2 + stringLen);
-        ctx.quadraticCurveTo(stringMid.x, stringMid.y, stringEnd.x, stringEnd.y);
-        ctx.stroke();
+        // No decorative string (issue #101): the balloon paints no second
+        // connection story - the rope's own drawn tail is the only string in
+        // the game. The policy is unconditional by design: a knot may be
+        // inbound from another rope's ref, which this object's attachment
+        // list does not carry, so the draw path consults no attachments.
 
         ctx.restore();
     }

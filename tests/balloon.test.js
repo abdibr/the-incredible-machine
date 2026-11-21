@@ -4,11 +4,16 @@
  * A popped balloon must leave zero physics bodies in the world immediately.
  * Leftover "ghost" bodies are invisible but keep colliding and acting on
  * other objects (buoyancy), breaking the puzzles that pop balloons.
+ *
+ * It also pins the balloon's board-draw string policy (issue #101, group spec
+ * Implementation Decision 6): the balloon paints NO decorative string - tied
+ * or untied - so the rope's own drawn tail is the only string in the game.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
 import Matter from 'matter-js';
 import Balloon from '../js/objects/Balloon.js';
+import Rope from '../js/objects/Rope.js';
 import Ball from '../js/objects/Ball.js';
 import Scissors from '../js/objects/Scissors.js';
 import PhysicsEngine from '../js/engine/PhysicsEngine.js';
@@ -132,5 +137,93 @@ describe('Balloon pop - ghost body removal', () => {
         // per second of simulation.
         expect(rise).toBeGreaterThan(50);
         expect(rise).toBeLessThan(250);
+    });
+});
+
+describe('Balloon decorative string (issue #101) - the rope is the only string', () => {
+    // No canvas in Node. balloon.draw is observed at the recorded-canvas seam
+    // (the rope.test.js recording-ctx style). Spec test #5 pins the string
+    // policy as a SNAPSHOT OF THE DRAWN PATH, never as a knot query: a knot
+    // may be inbound from another rope's ref, which the balloon's own
+    // attachment list does not carry, so the draw path must not consult
+    // attachments at all (group spec Implementation Decision 6 - the
+    // unconditional no-string policy).
+    function makeRecordingCtx() {
+        const calls = [];
+        const ctx = {};
+        for (const fn of [
+            'save', 'restore', 'translate', 'beginPath', 'moveTo', 'lineTo',
+            'quadraticCurveTo', 'arc', 'ellipse', 'closePath', 'fill', 'stroke',
+        ]) {
+            ctx[fn] = (...args) => { calls.push([fn, ...args]); };
+        }
+        ctx.calls = calls;
+        return ctx;
+    }
+
+    // The drawn path is the ordered path-geometry ops; fill/style calls are
+    // presentation, not the connection story under test.
+    const GEOMETRY_OPS = new Set(['ellipse', 'moveTo', 'lineTo', 'quadraticCurveTo']);
+
+    // Snapshot form: the op sequence must match exactly and each written
+    // coordinate must match within 1e-9 (bit-equal where the same arithmetic
+    // repeats on both sides).
+    function expectDrawnPath(ctx, expected) {
+        const path = ctx.calls.filter(([op]) => GEOMETRY_OPS.has(op));
+        expect(path.map(([op]) => op), 'drawn-path op sequence')
+            .toEqual(expected.map(([op]) => op));
+        for (let i = 0; i < expected.length; i++) {
+            const [, ...expArgs] = expected[i];
+            const [, ...actArgs] = path[i];
+            for (const [j, e] of expArgs.entries()) {
+                expect(actArgs[j], `path op #${i} arg #${j}`).toBeCloseTo(e, 9);
+            }
+        }
+    }
+
+    // The expected drawn path for an unpopped balloon, built from PUBLIC
+    // surfaces only - R from the public bounds, TIP from the public
+    // attachment seam (the knot address the rope ties), the triangle shape
+    // from the issue's own description of the geometry. An extra string
+    // segment below the knot would add ops past the final lineTo.
+    function expectedBalloonPath(balloon) {
+        const R = balloon.bounds.width / 2;
+        const TIP = balloon.attachmentPoints[0].offset.y; // r*1.2 + 4
+        return [
+            ['ellipse', 0, 0, R, R * 1.2, 0, 0, Math.PI * 2],      // body oval
+            ['ellipse', -R * 0.3, -R * 0.4, R * 0.25, R * 0.35, -0.4, 0, Math.PI * 2], // shine
+            ['ellipse', 0, 0, R, R * 1.2, 0, 0, Math.PI * 2],      // outline
+            ['moveTo', -2, R * 1.2],                               // knot triangle base
+            ['lineTo', 0, TIP],                                    // tip: the rope ties exactly here
+            ['lineTo', 2, R * 1.2],
+        ];
+    }
+
+    it('an untied balloon draws no decorative string - the drawn path ends at the knot triangle (accepted delta: no 25px tail)', () => {
+        const balloon = new Balloon(300, 250);
+        const ctx = makeRecordingCtx();
+        balloon.draw(ctx);
+
+        expectDrawnPath(ctx, expectedBalloonPath(balloon));
+
+        balloon.dispose();
+    });
+
+    it('a tied balloon draws no decorative string either - the rope owns the connection story', () => {
+        const balloon = new Balloon(100, 74.4); // knot lands at (100, 100), on the rope's anchor
+        const rope = new Rope(100, 100);
+        rope.attachEndpoint('anchor', balloon, 'knot');
+        // Precondition read off the ROPE's own public roster (the rope holds
+        // the ref) - the assertion under test stays the drawn path, never a
+        // knot query on the balloon.
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor']);
+
+        const ctx = makeRecordingCtx();
+        balloon.draw(ctx);
+
+        expectDrawnPath(ctx, expectedBalloonPath(balloon));
+
+        rope.dispose();
+        balloon.dispose();
     });
 });
