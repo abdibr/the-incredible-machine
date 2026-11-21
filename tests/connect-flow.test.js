@@ -208,9 +208,13 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
 
         physics.step(16.67); // the lazy per-step reconcile (ADR 0004 seam)
         expect(physics.getAttachedConstraints()).toHaveLength(1);
-        // The tie covers its own knot: the length grew from 40 to the
-        // tied span times the 6/5.5 chain-rest factor.
-        expect(rope._length).toBeCloseTo(Math.hypot(200, 225.6) * 6 / 5.5, 3);
+        // The tie covers its own knot … through the two-pass seal of
+        // issue #99: the reel's provisional grown span (tied times the
+        // 6/5.5 chain-rest factor = 328.9) names count 9, and the hand's
+        // span re-divides by THAT count's own end fraction (8.5/9); the
+        // click's tie re-seals the same span, so the length rests at the
+        // post-re-lay seal, not the single-pass one.
+        expect(rope._length).toBeCloseTo(Math.hypot(200, 225.6) * 9 / 8.5, 3);
 
         physics.dispose();
         rope.dispose();
@@ -454,14 +458,18 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         flow.setPreview(knot.x, knot.y);
         expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
         // The tie lands on the END seat (issue #90: the seek is a role) —
-        // the reel laid span = hypot(400, 225.6) · 6/5.5 = 500.98px, so the
-        // chain re-counted to ceil(500.98 / 40) = 13, and the end seat's
-        // capacity (500.98 · 12.5/13 = 481.7px) covers the 459.06px knot —
-        // hence the untouched `_length` pinned two lines below.
+        // and it covers its own knot through the two-pass seal of issue #99:
+        // the reel's provisional span (tied · 6/5.5 = 501.0) names count 13,
+        // the reel re-divides by THAT count's end fraction (12.5/13) and
+        // lays 12 bodies whose tail rides 457.7 - 1.5px shy of the knot,
+        // which sits in the end seat's uncoverable 12/13-band gap; the
+        // click's tie-grow then re-seals against the laid count's OWN
+        // fraction (12/11.5) - a fixed point - and the tail square lands
+        // exactly on the knot (the tie covers its own seat 1:1).
         expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'end', target: balloon, pointId: 'knot' });
         expect(flow.seek).toBe(null);
         expect(flow.refusal).toBe(null); // a settled tie sweeps the flash
-        expect(rope._length).toBeCloseTo(Math.hypot(400, 225.6) * 6 / 5.5, 3);
+        expect(rope._length).toBeCloseTo(Math.hypot(400, 225.6) * 12 / 11.5, 3);
         rope.dispose();
         balloon.dispose();
     });

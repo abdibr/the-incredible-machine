@@ -860,8 +860,16 @@ export default class Rope extends BaseObject {
         // setEndpoints (bodies re-line, the chain rebuilds for the grown
         // span, and rope:chain-converge lets an in-world rope swap its
         // chain — the registration guard keeps the event a no-op out of
-        // world), then seals _length exact against setEndpoints'
-        // float-dust re-derivation, the same seal relayFreeEnd uses. Grown
+        // float-dust re-derivation, the same seal relayFreeEnd uses.
+        // The seal is the two-pass form (issue #99): a grown span whose
+        // segmentsForSpan answer crosses a count band changes the tied
+        // seat's own fraction, so dividing by the PRE-re-lay count's
+        // fraction landed the laid seat past the knot and inflated the
+        // span past it (the +22% measured class). span1 = tied /
+        // frac(seat, count0) names count1 = segmentsForSpan(span1), and
+        // the seal divides tied by count1's own fraction - the laid chain
+        // rests with its tied seat on the knot, and a tie never inflates
+        // the rope past the knot's own seat fraction.
         // capacity = tied span / seat inboard-ness.
         // The grow's count re-derives from the grown span (issue #89 — ONE
         // covering rule for both families): the tie that needs more reach
@@ -888,9 +896,17 @@ export default class Rope extends BaseObject {
                     world.y - this._anchor.position.y
                 );
                 const oldCount = this._segments.length;
-                const frac = seatFraction(seat, oldCount);
-                if (tied > this._length * frac) {
-                    const grown = tied / frac;
+                const frac0 = seatFraction(seat, oldCount);
+                if (tied > this._length * frac0) {
+                    // Two-pass seal (issue #99): seal the covering span
+                    // against the count the re-lay will actually end with -
+                    // span1 names count1 (segmentsForSpan), the seal
+                    // re-divides by count1's own seat fraction - so a
+                    // band-crossing grow lays its seat ON the knot instead
+                    // of past it.
+                    const span1 = tied / frac0;
+                    const count1 = Rope.segmentsForSpan(span1);
+                    const grown = tied / seatFraction(seat, count1);
                     if (!this._severed && oldCount) {
                         const anchor = this._anchor.position;
                         const ux = (world.x - anchor.x) / tied;
@@ -1852,9 +1868,23 @@ export default class Rope extends BaseObject {
         // A free rope's span is the hand's at all times (issue #56): the
         // frozen-circle clamp is pinned-rope bookkeeping only.
         const frozen = !this._isFree && this.lengthFrozen;
+        // Two-pass seal (issue #99): the hand's span re-derives the chain
+        // count on lay, so across a segmentsForSpan band the end seat's own
+        // fraction changes under it - dividing by the PRE-re-lay count's
+        // fraction laid the appended tail past the cursor on the growth
+        // frame (+22.7px on the measured 250px reel across 6 -> 7, probe
+        // scenario 4's class). span1 names the count the re-lay will lay
+        // (segmentsForSpan), and the hand's span re-divides by THAT count's
+        // own end fraction - the same post-re-lay shape attachEndpoint's
+        // tie-grow seals with. The laid chain's tail rides the fraction the
+        // seal used (setEndpoints), so the free-end tie square sits on the
+        // cursor on the very frame the chain grows. A non-crossing re-lay
+        // re-derives the same count and answers the single-pass span.
+        const span1 = demanded / seatFraction('end', count);
+        const count1 = Rope.segmentsForSpan(span1);
         const span = frozen
             ? this._length
-            : Math.max(demanded / seatFraction('end', count), MIN_ROPE_SPAN);
+            : Math.max(demanded / seatFraction('end', count1), MIN_ROPE_SPAN);
         this.setEndpoints(
             { x: anchor.x, y: anchor.y },
             { x: anchor.x + ux * span, y: anchor.y + uy * span }
@@ -1908,14 +1938,19 @@ export default class Rope extends BaseObject {
             // by #90's roles): knots address roles, and the roles re-derive
             // their bodies from the live chain — nothing to re-seat, no
             // knot can land on a traded-away body.
-            // The appended tail lands ON the end point (issue #56, handoff
-            // fix 4): a re-lay that GREW the chain puts its new last body
-            // exactly where the endpoints say, instead of half a pitch
-            // inboard like a centre-laid seat. Every other re-lay — a
-            // same-count re-lay, a prune — keeps the centre lay, so every
-            // seat that already had a body keeps today's geometry.
-            const laid = added.length > 0;
-            const pitch = this._length / targetCount;
+            // The appended tail lands at the END seat's own fraction (issue
+            // #99): the centre lay puts it half a pitch inboard of the
+            // layout end - the ONE geometry birth, same-count re-lays and
+            // prunes already share. The #56 handoff placement put it ON the
+            // end point, which is exactly what a free-end re-lay that grew
+            // across a segmentsForSpan band sealed past the hand (the span
+            // answered the PRE-band count's fraction, the tail rode the
+            // layout end). The re-lay seal now answers the post-band count's
+            // fraction (relayFreeEnd's two-pass), and the tail riding its
+            // own seat fraction puts the tie square on the cursor on the
+            // very frame the chain grows. An appended tail is the birth of
+            // the new tail body, not a re-lay of the end point: the re-lay
+            // lays what a birth of the same span would lay.
             const dx = (end.x - start.x) / targetCount;
             const dy = (end.y - start.y) / targetCount;
             for (let i = 0; i < targetCount; i++) {
@@ -1924,19 +1959,13 @@ export default class Rope extends BaseObject {
                     y: start.y + dy * (i + 0.5),
                 });
             }
-            if (laid) {
-                Body.setPosition(this._segments[targetCount - 1], { x: end.x, y: end.y });
-            }
             const previous = this._constraints;
             this._constraints = this._buildChainConstraints(this._length);
-            // …and the last link's rest length follows the laid distance (1½
-            // pitches: centred seat count−1 out to the tail on `end`), or the
-            // chain would be half a pitch over-stretched and the first step
-            // would snap the tail back to the centre. Rest lengths still
-            // equal laid distances, so the grown chain rests taut at `end`.
-            if (laid && targetCount > 1) {
-                this._constraints[this._constraints.length - 1].length = pitch * 1.5;
-            }
+            // Rest lengths equal laid distances for the WHOLE chain (ADR 0007
+            // amendment 2's appended-tail override rides out with the ON-end
+            // placement): the centre-laid tail needs no special link - the
+            // re-lay lays exactly the chain a birth of the same span would,
+            // so growth and birth share one chain shape.
             // The re-lay replaced the chain: announce the swap so the
             // physics engine drops the old chain for the rebuilt one when
             // this rope lives in a world (the usual edit-stage case is

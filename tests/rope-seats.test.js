@@ -106,10 +106,11 @@ describe('Rope named tie seats (issues #84/#90) — the three-seat answer', () =
     it('the mid seat follows a FREE tie-grow: the recount moves it, nothing written at tie time', () => {
         // An authored free rope lays its 6-segment chain as it enters a
         // world (birthAuthoredChain at addObject). Its end-seat tie to a
-        // balloon ~301px away grows the span to ~327 to cover the knot and
-        // re-counts the chain (the free family: its span IS its chain,
-        // issue #56) → 9 segments. The mid seat is never written at tie
-        // time — it re-derives as the new chain's middle.
+        // balloon ~301px away grows the span to ~319 to cover the knot: the
+        // two-pass seal of issue #99 answers the count the re-lay ends with
+        // (the free family: its span IS its chain, issue #56) → 8 segments.
+        // The mid seat is never written at tie time — it re-derives as the
+        // new chain's middle.
         const physics = new PhysicsEngine(800, 600);
         engines.push(physics);
         const rope = objectRegistry.create('free-rope', 200, 100, { length: 100 });
@@ -121,10 +122,10 @@ describe('Rope named tie seats (issues #84/#90) — the three-seat answer', () =
         expect(bornMidBody).toBe(rope.bodies[3]);
 
         rope.attachEndpoint('end', balloon, 'knot'); // end-seat tie beyond reach
-        expect(rope.bodies.length - 1).toBe(9); // grown span re-counted 6→9
+        expect(rope.bodies.length - 1).toBe(8); // the sealed span re-counts 6 to 8
 
         const [mid, end] = rope.getTieSeats().slice(1);
-        expect(mid.body).toBe(rope.bodies[5]); // the exact middle of the 9-chain
+        expect(mid.body).toBe(rope.bodies[4]); // the middle of the 8-chain
         expect(mid.body).not.toBe(bornMidBody); // the old middle's body is mid no more
         rope.dispose();
         balloon.dispose();
@@ -132,10 +133,12 @@ describe('Rope named tie seats (issues #84/#90) — the three-seat answer', () =
 
     it('the mid seat follows a PINNED tie-grow too: one covering rule, same re-count (issue #89)', () => {
         // The pinned/free counting split is retired (issue #89): a pinned
-        // rope's end-seat tie beyond reach grows the span (~100 → ~328)
-        // and re-counts the chain exactly like the free family's own
-        // tie-grow (issue #56) → 9 segments. The mid seat is never written
-        // at tie time — it re-derives as the new chain's middle.
+        // rope's end-seat tie beyond reach grows the span (~100 → ~319)
+        // through the two-pass seal of issue #99 (the seal answers the count
+        // the re-lay ends with) and re-counts the chain exactly like the
+        // free family's own tie-grow (issue #56) → 8 segments. The mid seat
+        // is never written at tie time — it re-derives as the new chain's
+        // middle.
         const rope = new Rope(200, 100, { length: 100 });
         const balloon = new Balloon(500, 100); // knot ≈ (500, 125.6): tied ≈ 301px
         const bornMidBody = rope.getTieSeats()[1].body;
@@ -143,11 +146,11 @@ describe('Rope named tie seats (issues #84/#90) — the three-seat answer', () =
         expect(rope.lengthFrozen).toBe(false); // untied: reach is the hand's
         rope.attachEndpoint('end', balloon, 'knot'); // end-seat tie beyond reach
         expect(rope.lengthFrozen).toBe(true);
-        expect(rope.bodies.length - 1).toBe(9); // the grow re-counted 6→9, same rule as free
+        expect(rope.bodies.length - 1).toBe(8); // the grow re-counts 6 to 8, same rule as free
 
         const [anchor, mid, end] = rope.getTieSeats();
         expect(anchor.body).toBe(rope.bodies[0]);
-        expect(mid.body).toBe(rope.bodies[5]); // the re-counted chain's middle
+        expect(mid.body).toBe(rope.bodies[4]); // the re-counted chain's middle
         expect(mid.body).not.toBe(bornMidBody); // the old middle's body is mid no more
         rope.dispose();
         balloon.dispose();
