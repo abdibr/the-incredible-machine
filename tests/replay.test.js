@@ -8,19 +8,21 @@
  * phase was construction-random and unreproducible; now it rides the
  * board snapshot.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { eventBus } from '../js/EventBus.js';
 import { objectRegistry } from '../js/objects/ObjectRegistry.js';
 import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
-import { restorePlacedFromSnapshot, serializePlacedBoard } from '../js/reset/levelReset.js';
+import { GameLoop } from '../js/engine/GameLoop.js';
+import { bindPlacedTokens, restorePlacedFromSnapshot, serializePlacedBoard } from '../js/reset/levelReset.js';
 import { SessionRecorder } from '../js/recorder/SessionRecorder.js';
 import { assertBugFileReplaysExactly, loadBugFile, replayRun, replayBugFile } from './helpers/replayBugFile.js';
 
 registerAllObjects();
 const FIXTURE = fileURLToPath(new URL('./fixtures/bugfiles/ball-drop-ramp.json', import.meta.url));
 const FIXTURE_UFZS = fileURLToPath(new URL('./fixtures/bugfiles/bug-20261114T021258Z-ufzs.json', import.meta.url));
+const FIXTURE_0TXH = fileURLToPath(new URL('./fixtures/bugfiles/bug-20261027T151221Z-0txh.json', import.meta.url));
 
 const DT = 1000 / 60;
 
@@ -205,5 +207,190 @@ describe('committed bugfile regression fixtures (ADR 0006)', () => {
         ]);
         expect(collisions.every((e) => e.data.a.body === 'bucket-wall'
             && e.data.a.ref === 'bucket@1' && e.data.b.ref === 'free-rope@3')).toBe(true);
+    });
+
+    /**
+     * bug-20261027T151221Z-0txh — "weird mechanics for tennis ball interacting
+     * with the spring .. it should not be that fast and the ball tunnels thru
+     * the spring" (issue #81; the recording is issue #80's original exhibit,
+     * captured 2026-10-27 UNDER THE PRE-FIX LOOP). A pre-#80 recording: the
+     * dt tape carries the reporter's raw variable frame dts (16.67 prime,
+     * then ~31 ms), because then GameLoop fed raw frame dt straight into
+     * Engine.update. The replay harness consumes that tape verbatim (ADR 0006
+     * decision 2 — the mechanism #80 left standing), so the rebuild follows
+     * the broken trajectory BIT-EXACTLY — the recording as-recorded:
+     *
+     *   - the spring-under-throttle launch burst scales with frame dt² — the
+     *     release wraps the ball to ≈ 77 px/tick (a raw ~31 ms step integrates
+     *     a 0.08 force into 0.08 × 31² ≈ 77 px, vs the tuned 0.08 × 16.67² ≈ 22);
+     *   - the re-entry at that warp silently tunnels the 8 px spring-platform
+     *     (no CCD): armed t15, ceiling slam t34, ball x floor + spring-base at
+     *     t45 — NO spring-platform contact after the arming one — and settles
+     *     below the base at y ≈ 592.6 until the reset at t107.
+     *
+     * This test pins the verbatim file AND its broken stream as the red side
+     * of the pair: the next test steps the same snapshot through the current
+     * (ADR 0008) contract and asserts every one of these symptoms GONE. If the
+     * symptoms ever return, that test fails while this one keeps replaying —
+     * exactly the deliberate-divergence shape of the 2026-10-23 spring fix
+     * (bug-20261023T180834Z-gwce: "the fixed replay's next collision
+     * diverges from the recording's").
+     */
+    it('bug-20261027T151221Z-0txh replays bit-exactly: the recording is the broken pre-#80 stream (issue #81)', () => {
+        const report = assertBugFileReplaysExactly(FIXTURE_0TXH);
+        expect(report.ok).toBe(true);
+
+        // The pinned RECORDED facts (file data, not live behavior): the
+        // collision stream skips the re-entry contact...
+        const file = loadBugFile(FIXTURE_0TXH);
+        const run = file.runs[0];
+        const collisions = run.events.filter((e) => e.topic === 'physics:collision');
+        expect(collisions.map((e) => [e.tick, e.data.a.body, e.data.b.body])).toEqual([
+            [15, 'spring-platform', 'ball-tennis'], // the arming contact
+            [34, 'ball-tennis', 'wall-ceiling'], // the dt² burst slams the ceiling
+            [45, 'ball-tennis', 'wall-floor'], // and the re-entry tunnels down past
+            [45, 'spring-base', 'ball-tennis'], // everything, floor + base at t45
+        ]);
+        expect(collisions.filter((e) => e.tick > 15 && e.data.a.body === 'spring-platform')).toHaveLength(0);
+
+        // ...the burst is the dt² wrap (pose samples are [ref,label,x,y,a,vx,vy]):
+        const rowAt = (tick) => run.poses.rows.find((r) => r[0] === tick)[1];
+        const ballRow = (tick) => rowAt(tick).find((c) => c[1] === 'ball-tennis');
+        expect(ballRow(30)[6]).toBe(-39.425); // mid-burst, sampled on the way up
+
+        // ...and the recorded run "settles" beneath the spring's static base —
+        // reachable only through the 8 px platform it tunneled (base bottom at
+        // spring.y + 15 + 5 = 585.297; the ball rests on the floor at 592.648).
+        expect(ballRow(102)[3]).toBe(592.648);
+    });
+
+    /**
+     * The fix side of the 0txh pair (issue #81). The same play-start board
+     * snapshot, rebuilt per the ADR 0006 flow (fresh deserialize = the
+     * restore, ADR 0006 decision 1) and collected by the same passive
+     * SessionRecorder conventions (decision 9) — but played through the REAL
+     * GameLoop (ADR 0008): the recorded ~31 ms dt rows are rAF FRAMES now,
+     * fed to _frame as wall-clock deltas; the accumulator drains them as
+     * exact 1000/60 quanta. Physics never sees dt ≠ 1000/60, so:
+     *
+     *   - the launch burst is dt-independent: the release integrates the
+     *     tuned 0.08 × 16.67² ≈ 22 px/tick one-step Δv — not the recorded
+     *     ≈ 77 the raw ~31 ms steps would wrap;
+     *   - the re-entry lands at a catchable speed and CONTACTS the 8 px
+     *     spring-platform again in the replayed collision stream;
+     *   - the ball never passes below the spring base — the recorded
+     *     y ≈ 592.6 sub-base settle is unreachable.
+     *
+     * Driving the real loop (not a re-implementation of its accumulator)
+     * means this pin trips if the stepping contract itself regresses, just
+     * as it trips if the spring or platform contract does. Replay ticks are
+     * re-numbered by quantization (~1.87 quanta per ~31 ms frame; t29 arm,
+     * t43 release, t64 ceiling, t96 re-entry) — the assertions pin the
+     * sequence, not the legacy tick numbers.
+     */
+    it('bug-20261027T151221Z-0txh: the current GameLoop contract clears both symptoms (issue #81)', () => {
+        const file = loadBugFile(FIXTURE_0TXH);
+        const run = file.runs[0];
+
+        // ADR 0006 rebuild: the snapshot rows ARE the world (construction is
+        // the restore) — identical to replayRun's board assembly.
+        const physics = new PhysicsEngine(file.playfield.width, file.playfield.height, {
+            gravityX: file.engine.gravityX, gravityY: file.engine.gravityY,
+            enableSleeping: file.engine.enableSleeping,
+        });
+        const board = run.boardSnapshot.map((row) => objectRegistry.deserialize(row));
+        bindPlacedTokens(board, board);
+        for (const obj of board) physics.addObject(obj);
+        const loop = new GameLoop(physics, () => {}); // the real browser loop
+        const ball = board.find((obj) => obj.type === 'tennis-ball');
+        const spring = board.find((obj) => obj.type === 'spring');
+
+        // The comparison collector — same SessionRecorder, driven passively
+        // (decisions 2 + 9): the collision stream is recorded under the same
+        // conventions the original report used.
+        const observer = new SessionRecorder({ passive: true });
+        observer.init({
+            getBoard: () => board,
+            getSnapshot: () => run.boardSnapshot,
+            getEngine: () => physics.engine,
+            getPlayfield: () => file.playfield,
+            getEngineInfo: () => file.engine,
+        });
+        observer.startSession();
+
+        // rAF never fires: _frame is driven with the recording's rhythm.
+        vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+        vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+        const baseBottom = spring.bounds.y + spring.bounds.height; // 586.297 at angle 0
+        let maxAbsVy = 0;
+        let firstBurstDv = null;
+        let prevVy = 0;
+        let ticks = 0;
+        const unFrame = eventBus.on('loop:frame', () => {
+            ticks++;
+            // The emission lands after Engine.update — the same post-step
+            // per-tick window the live recorder samples.
+            const body = ball.bodies[0];
+            const vy = body.velocity.y;
+            maxAbsVy = Math.max(maxAbsVy, Math.abs(vy));
+            if (prevVy - vy > 16 && firstBurstDv === null) firstBurstDv = prevVy - vy;
+            prevVy = vy;
+            if (body.position.y > baseBottom + 1) {
+                throw new Error(`ball below the spring base at tick ${ticks}: y ${body.position.y.toFixed(3)} > ${baseBottom.toFixed(3)} + 1`);
+            }
+        });
+
+        try {
+            loop.play(); // emits loop:play → the recorder opens the run
+
+            // Consume the recorded frame sequence as wall clock: the tape's
+            // row 0 (16.67) is the priming frame after play() (dt <= 0 →
+            // exactly one fixed step), each ~31 ms row drains 2− quanta.
+            let t = 1000;
+            loop._frame(t);
+            for (let i = 1; i < run.dt.values.length; i++) loop._frame(t += run.dt.values[i]);
+
+            // The whole tape played under the current contract.
+            const replayed = observer.closeOpenRun('replay-end');
+
+            // The launch burst is dt-independent (≈ the tuned 0.08 × 16.67²
+            // = 22.22, friction-trimmed): the first upward one-tick launch Δv —
+            // recorded: ≈ 77-class through the raw ~31 ms steps.
+            expect(firstBurstDv).not.toBeNull();
+            expect(firstBurstDv).toBeGreaterThan(18);
+            expect(firstBurstDv).toBeLessThan(26);
+            // No 77-class warp anywhere in the replayed run (the tunneling
+            // guardrail: a re-entry faster than the ≈ 22 px overlap window of
+            // the 8 px platform + ball slips through).
+            expect(maxAbsVy).toBeLessThan(32);
+
+            // The replayed collision stream catches the re-entry: the 8 px
+            // spring-platform contacts the ball again AFTER the ceiling slam
+            // (recorded: never — one arming row, then tunnel-through).
+            const stream = replayed.events.filter((e) => e.topic === 'physics:collision');
+            const platformPair = (e) =>
+                [e.data.a.body, e.data.b.body].includes('spring-platform')
+                && [e.data.a.body, e.data.b.body].includes('ball-tennis');
+            expect(stream.length).toBeGreaterThan(0);
+            expect(stream.filter(platformPair).length).toBeGreaterThan(0);
+            const firstCeiling = stream.findIndex((e) =>
+                [e.data.a.body, e.data.b.body].includes('wall-ceiling'));
+            expect(firstCeiling).toBeGreaterThan(-1);
+            const reEntry = stream.findIndex((e, i) => i > firstCeiling && platformPair(e));
+            expect(reEntry).toBeGreaterThan(firstCeiling);
+
+            // Every recorded frame consumed; no pose row below the base
+            // (the per-tick guard above asserts it live; the stream echo).
+            expect(replayed.lastTick).toBe(ticks);
+            expect(replayed.poses.rows.every((row) =>
+                row[1].filter((c) => c[1] === 'ball-tennis').every((c) => c[3] < baseBottom))).toBe(true);
+        } finally {
+            unFrame();
+            loop.dispose();
+            observer.dispose();
+            physics.dispose();
+            vi.unstubAllGlobals();
+        }
     });
 });

@@ -1,0 +1,867 @@
+{
+  "schemaVersion": 1,
+  "fileId": "bug-20261027T151221Z-0txh",
+  "createdAtUtc": "2026-10-27T15:12:21Z",
+  "appVersion": "1.0.0",
+  "matterVersion": "0.20.0",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+  "playfield": {
+    "width": 1000,
+    "height": 600
+  },
+  "engine": {
+    "gravityX": 0,
+    "gravityY": 1,
+    "enableSleeping": true
+  },
+  "notes": "weird mechanics for tennis ball interacting with the spring .. it should not be that fast and the ball tunnels thru the spring",
+  "context": {
+    "mode": "SANDBOX",
+    "levelId": null,
+    "goal": null,
+    "dense": false
+  },
+  "build": [
+    {
+      "seq": 0,
+      "topic": "mode:changed",
+      "data": {
+        "oldMode": "MENU",
+        "newMode": "SANDBOX"
+      }
+    },
+    {
+      "seq": 1,
+      "topic": "object:placed",
+      "data": {
+        "ref": "spring#20",
+        "type": "spring",
+        "snapshot": {
+          "type": "spring",
+          "x": 182.4134653257089,
+          "y": 565.2963836056181,
+          "angle": 0,
+          "isFixed": false,
+          "options": {
+            "launchForce": 0.08
+          }
+        }
+      }
+    },
+    {
+      "seq": 2,
+      "topic": "object:placed",
+      "data": {
+        "ref": "tennis-ball#22",
+        "type": "tennis-ball",
+        "snapshot": {
+          "type": "tennis-ball",
+          "x": 185.2198263307198,
+          "y": 413.8623447706276,
+          "angle": 0,
+          "isFixed": false,
+          "options": {
+            "variant": "tennis"
+          }
+        }
+      }
+    },
+    {
+      "seq": 9,
+      "topic": "mode:changed",
+      "data": {
+        "oldMode": "PLAYING",
+        "newMode": "SANDBOX"
+      }
+    }
+  ],
+  "runs": [
+    {
+      "index": 0,
+      "refTable": [
+        {
+          "ref": "spring@0",
+          "type": "spring"
+        },
+        {
+          "ref": "tennis-ball@1",
+          "type": "tennis-ball"
+        }
+      ],
+      "boardSnapshot": [
+        {
+          "type": "spring",
+          "x": 182.4134653257089,
+          "y": 565.2963836056181,
+          "angle": 0,
+          "isFixed": false,
+          "options": {
+            "launchForce": 0.08
+          }
+        },
+        {
+          "type": "tennis-ball",
+          "x": 185.2198263307198,
+          "y": 413.8623447706276,
+          "angle": 0,
+          "isFixed": false,
+          "options": {
+            "variant": "tennis"
+          }
+        }
+      ],
+      "dt": {
+        "policy": "recorded",
+        "values": [
+          16.67,
+          31.100000000000364,
+          31.600000000000364,
+          30.799999999999272,
+          31.80000000000109,
+          30.899999999999636,
+          31.5,
+          31.200000000000728,
+          31.299999999999272,
+          30.799999999999272,
+          31.600000000000364,
+          31,
+          31.700000000000728,
+          31.299999999999272,
+          31,
+          31.399999999999636,
+          30.80000000000109,
+          31.399999999999636,
+          31.299999999999272,
+          31.100000000000364,
+          31.5,
+          31.30000000000109,
+          30.899999999999636,
+          31.5,
+          31.399999999999636,
+          31.100000000000364,
+          31,
+          31.5,
+          31,
+          31.600000000000364,
+          31.19999999999891,
+          31,
+          33.100000000000364,
+          29.600000000000364,
+          30.899999999999636,
+          31.399999999999636,
+          31.5,
+          31.200000000000728,
+          31.299999999999272,
+          31.399999999999636,
+          31.200000000000728,
+          31.299999999999272,
+          31,
+          31.200000000000728,
+          31.5,
+          31.200000000000728,
+          31.5,
+          30.899999999999636,
+          31.100000000000364,
+          31.099999999998545,
+          31.400000000001455,
+          31.5,
+          31.099999999998545,
+          31.100000000000364,
+          31.5,
+          31.5,
+          30.899999999999636,
+          31,
+          31.700000000000728,
+          31.100000000000364,
+          31.100000000000364,
+          31.599999999998545,
+          31.5,
+          31,
+          31.100000000000364,
+          31,
+          31.200000000000728,
+          31.600000000000364,
+          31.099999999998545,
+          31.700000000000728,
+          30.799999999999272,
+          31.100000000000364,
+          31.200000000000728,
+          31.399999999999636,
+          31.600000000000364,
+          31,
+          30.99999999999818,
+          31.400000000001455,
+          31,
+          31.400000000001455,
+          31.399999999997817,
+          31.200000000000728,
+          31.400000000001455,
+          31.399999999997817,
+          31,
+          31.299999999999272,
+          31.600000000002183,
+          30.899999999997817,
+          30.900000000001455,
+          31.400000000001455,
+          31.599999999998545,
+          31.099999999998545,
+          31.30000000000291,
+          31.299999999999272,
+          30.899999999997817,
+          31.700000000000728,
+          31.400000000001455,
+          31.200000000000728,
+          31,
+          31.099999999998545,
+          31.200000000000728,
+          31.299999999999272,
+          31.200000000000728,
+          31.399999999997817,
+          31.5,
+          31.100000000002183,
+          30.899999999997817
+        ]
+      },
+      "timeScale": [],
+      "events": [
+        {
+          "seq": 3,
+          "tick": 0,
+          "topic": "mode:changed",
+          "data": {
+            "oldMode": "SANDBOX",
+            "newMode": "PLAYING"
+          }
+        },
+        {
+          "seq": 4,
+          "tick": 15,
+          "topic": "physics:collision",
+          "data": {
+            "a": {
+              "ref": "spring@0",
+              "body": "spring-platform",
+              "stat": true
+            },
+            "b": {
+              "ref": "tennis-ball@1",
+              "body": "ball-tennis",
+              "stat": false
+            }
+          }
+        },
+        {
+          "seq": 5,
+          "tick": 34,
+          "topic": "physics:collision",
+          "data": {
+            "a": {
+              "ref": "tennis-ball@1",
+              "body": "ball-tennis",
+              "stat": false
+            },
+            "b": {
+              "ref": "wall-ceiling",
+              "body": "wall-ceiling",
+              "stat": true
+            }
+          }
+        },
+        {
+          "seq": 6,
+          "tick": 45,
+          "topic": "physics:collision",
+          "data": {
+            "a": {
+              "ref": "tennis-ball@1",
+              "body": "ball-tennis",
+              "stat": false
+            },
+            "b": {
+              "ref": "wall-floor",
+              "body": "wall-floor",
+              "stat": true
+            }
+          }
+        },
+        {
+          "seq": 7,
+          "tick": 45,
+          "topic": "physics:collision",
+          "data": {
+            "a": {
+              "ref": "spring@0",
+              "body": "spring-base",
+              "stat": true
+            },
+            "b": {
+              "ref": "tennis-ball@1",
+              "body": "ball-tennis",
+              "stat": false
+            }
+          }
+        },
+        {
+          "seq": 8,
+          "tick": 107,
+          "topic": "controls:reset",
+          "data": {}
+        }
+      ],
+      "poses": {
+        "interval": 6,
+        "rows": [
+          [
+            6,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                431.332,
+                0,
+                0,
+                2.869
+              ]
+            ]
+          ],
+          [
+            12,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                483.801,
+                0,
+                0,
+                5.945
+              ]
+            ]
+          ],
+          [
+            18,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                517.13,
+                0,
+                0,
+                -4.459
+              ]
+            ]
+          ],
+          [
+            24,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                487.732,
+                0,
+                0,
+                -1.297
+              ]
+            ]
+          ],
+          [
+            30,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                338.594,
+                0,
+                0,
+                -39.425
+              ]
+            ]
+          ],
+          [
+            36,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                59.898,
+                0,
+                0,
+                25.667
+              ]
+            ]
+          ],
+          [
+            42,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                367.904,
+                0,
+                0,
+                28.496
+              ]
+            ]
+          ],
+          [
+            48,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                0.114
+              ]
+            ]
+          ],
+          [
+            54,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                0
+              ]
+            ]
+          ],
+          [
+            60,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                -0.001
+              ]
+            ]
+          ],
+          [
+            66,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                0
+              ]
+            ]
+          ],
+          [
+            72,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                0
+              ]
+            ]
+          ],
+          [
+            78,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                0.001
+              ]
+            ]
+          ],
+          [
+            84,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                0
+              ]
+            ]
+          ],
+          [
+            90,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                0
+              ]
+            ]
+          ],
+          [
+            96,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                0
+              ]
+            ]
+          ],
+          [
+            102,
+            [
+              [
+                "spring@0",
+                "spring-base",
+                182.413,
+                580.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "spring@0",
+                "spring-platform",
+                182.413,
+                550.296,
+                0,
+                0,
+                0
+              ],
+              [
+                "tennis-ball@1",
+                "ball-tennis",
+                185.22,
+                592.648,
+                0,
+                0,
+                0
+              ]
+            ]
+          ]
+        ],
+        "posesTruncated": false
+      },
+      "goal": null,
+      "levelId": null,
+      "lastTick": 107,
+      "endedBy": "controls:reset"
+    }
+  ]
+}
