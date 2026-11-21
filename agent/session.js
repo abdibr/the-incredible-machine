@@ -7,27 +7,26 @@
  * independent deterministic trials and sidestepping the ADR 0003 restore
  * caveats (construction IS the restore).
  *
- * No DOM, no rAF, no GameLoop. Steps the engine manually and emits
- * `loop:frame` per step — exactly what GoalChecker listens to.
+ * No DOM, no rAF, no GameLoop of its own: steps the engine manually while
+ * publishing the run facts the loop seam owns (issue #78) in the loop's
+ * exact contract - `loop:play` opens each trial run, one `loop:frame`
+ * {dt, elapsed} follows each engine step (step -> elapsed -> emit, ADR
+ * 0008 decision 2), `loop:reset` ends the run - so GoalChecker (arm +
+ * off-world check) and the event narrator consume the same fact stream
+ * the sandbox sees.
  */
 
 import { eventBus } from '../js/EventBus.js';
 import { objectRegistry } from '../js/objects/ObjectRegistry.js';
 import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
+import { FIXED_STEP_MS } from '../js/engine/GameLoop.js';
 import { GoalChecker } from '../js/goals/GoalChecker.js';
+import { levelManager } from '../js/levels/LevelManager.js';
+
 import { levelObjectOptions } from '../js/ui/selectionHandles.js';
 import { EventRecorder } from './observe/events.js';
 import { createSeedRng, resolveSeed, SEED_ENV_VAR } from './rng.js';
-
-/** Validate a level document — mirrors LevelManager._validate(). @private */
-function validateLevelData(data) {
-    for (const field of ['id', 'name', 'goal', 'fixedObjects', 'availableParts']) {
-        if (!(field in data)) throw new Error(`[AgentSession] level missing field: "${field}"`);
-    }
-    if (!data.goal?.type) throw new Error('[AgentSession] level goal must have a "type" field');
-    if (!Array.isArray(data.fixedObjects)) throw new Error('[AgentSession] fixedObjects must be an array');
-}
 
 export class AgentSession {
     /**
@@ -91,7 +90,11 @@ export class AgentSession {
             const path = new URL(`../js/levels/puzzles/${idOrData}.json`, import.meta.url);
             data = JSON.parse(await fs.readFile(path, 'utf8'));
         }
-        validateLevelData(data);
+        // The level owner validates and publishes (issue #78): the same
+        // schema the campaign loader answers to (validateCustom), and the
+        // level:loaded fact emitted by the LevelManager seam in the rebuild
+        // below - never by hand here.
+        levelManager.validateCustom(data);
         this.levelData = data;
         this.placements = [];
         this._rebuild();
@@ -126,9 +129,15 @@ export class AgentSession {
         this._goalChecker.init({ physicsEngine: this.engine });
         this._outcome = null;
         this._failureReason = null;
-        // GoalChecker arms on these two events (same seam as the live app).
-        eventBus.emit('level:loaded', this.levelData);
-        eventBus.emit('mode:changed', { oldMode: 'EDITING', newMode: 'PLAYING' });
+        // The level fact arms GoalChecker (same seam as the live app) and
+        // comes from the LevelManager owner - loadCustom, the exact seam
+        // editor imports ride (the glossary owner rule: the browser/session
+        // surface never emits level:loaded by hand; the replay harness
+        // still hand-emits it for its checker wiring - the one known case
+        // left). The play-mode boundary row belongs to the run framing in
+        // trial(), not the build (issue #78: the run lifecycle is the loop
+        // seam's business).
+        levelManager.loadCustom(this.levelData);
         // Construction window (agent-side seeded determinism): object ctors are
         // the only Math.random consumers during a build (Balloon color/bob
         // phase, Candle flicker phase). With a seed configured, swap the global
@@ -160,18 +169,28 @@ export class AgentSession {
      * @returns {{ outcome: 'reached'|'failed'|'timeout', elapsed: number, events: object[],
      *            sentences: string[], snapshot: object[], distance: number }}
      */
-    trial({ seconds = 5, dt = 1000 / 60 } = {}) {
+    trial({ seconds = 5, dt = FIXED_STEP_MS } = {}) {
         this._rebuild();
         const recorder = new EventRecorder();
         recorder.start();
         const steps = Math.max(1, Math.round((seconds * 1000) / dt));
+        // The run lifecycle is the loop seam's contract (issue #78), not a
+        // private ordering: begin (`loop:play`, the packet GameLoop.play()
+        // publishes), the play boundary row after it - sandbox order - then
+        // one published step-to fact per engine step in the step -> elapsed
+        // -> emit order ADR 0008 decision 2 pins, and the owned end fact
+        // (`loop:reset`, the packet GameLoop.reset() publishes) closes it.
+        // GoalChecker sees post-step states exactly as it does live.
         let elapsed = 0;
+        eventBus.emit('loop:play', { elapsed: 0 });
+        eventBus.emit('mode:changed', { oldMode: 'EDITING', newMode: 'PLAYING' });
         for (let i = 0; i < steps; i++) {
-            eventBus.emit('loop:frame', { dt, t: elapsed });
             this.engine.step(dt);
             elapsed += dt;
+            eventBus.emit('loop:frame', { dt, elapsed });
             if (this._outcome) break; // GoalChecker latched a verdict
         }
+        eventBus.emit('loop:reset', { elapsed: 0 });
         const outcome = this._outcome ?? 'timeout';
         recorder.stop();
         const distance = this.distanceToZone();

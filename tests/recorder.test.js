@@ -6,6 +6,8 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { eventBus } from '../js/EventBus.js';
+import { PhysicsEngine } from '../js/engine/PhysicsEngine.js';
+import { GameLoop } from '../js/engine/GameLoop.js';
 import { objectRegistry } from '../js/objects/ObjectRegistry.js';
 import { registerAllObjects } from '../js/objects/registerAllObjects.js';
 import { SessionRecorder } from '../js/recorder/SessionRecorder.js';
@@ -212,6 +214,101 @@ describe('SessionRecorder run machinery', () => {
         recorder.dispose();
     });
 
+    it('opens a fresh run per play after a loop reset (two-run session)', () => {
+        // `loop:reset` is the run-ended fact GameLoop.reset() publishes on
+        // every reset path (issue #76): the overlay-retry resets never emit
+        // `controls:reset` (only the top-bar Reset does), so the loop's own
+        // event is what closes the stale run and lets the next play open a
+        // fresh one (ADR 0006 decision 7).
+        const recorder = makeRecorder({ board: realBoard() });
+        recorder.startSession();
+        eventBus.emit('loop:play', { elapsed: 0 });
+        for (let i = 0; i < 5; i++) eventBus.emit('loop:frame', { dt: 16.667, elapsed: 0 });
+        eventBus.emit('loop:reset');
+        eventBus.emit('loop:play', { elapsed: 0 });
+        for (let i = 0; i < 4; i++) eventBus.emit('loop:frame', { dt: 16.667, elapsed: 0 });
+        const doc = recorder.toJSON();
+        expect(doc.runs).toHaveLength(2);
+        expect(doc.runs[0].endedBy).toBe('loop:reset');
+        expect(doc.runs[0].lastTick).toBe(5);
+        expect(doc.runs[1].lastTick).toBe(4);
+        recorder.dispose();
+    });
+
+    it('pins the fail-overlay retry shape: the fresh run carries the current board snapshot', () => {
+        // Mirrors main.js's overlay:retry ordering (loop-stop first), which
+        // never emits `controls:reset`: GameLoop.reset() announces the
+        // run-ended fact (`loop:reset`), then _resetLevel rewinds the board
+        // and returns to SANDBOX inside the session's mode family. The next
+        // play must open a fresh run whose play-start board snapshot is
+        // CURRENT (ADR 0006 decision 1) - not an append to the stale run.
+        vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+        vi.stubGlobal('cancelAnimationFrame', vi.fn());
+        const physics = new PhysicsEngine(1000, 600);
+        const loop = new GameLoop(physics, () => {});
+        const board = realBoard();
+        const recorder = makeRecorder({ board });
+        recorder.startSession();
+
+        // The attempt the fail overlay ends.
+        loop.play();
+        let t = 1000;
+        loop._frame(t);
+        loop._frame(t += 16.667);
+        loop._frame(t += 16.667);
+
+        // Retry: the guarded reset, then the sandbox-return posture.
+        loop.reset();
+        eventBus.emit('mode:changed', { oldMode: 'PLAYING', newMode: 'SANDBOX' });
+        board.pop(); // the rewind gives the board a different shape
+
+        // The next play opens a fresh run on the rewound board.
+        loop.play();
+        loop._frame(t += 16.667);
+        loop._frame(t += 16.667);
+
+        try {
+            const doc = recorder.toJSON();
+            expect(doc.runs).toHaveLength(2);
+            expect(doc.runs[0].endedBy).toBe('loop:reset');
+            expect(doc.runs[0].lastTick).toBe(3);
+            expect(doc.runs[1].lastTick).toBe(2);
+            expect(doc.runs[1].dt.values).toHaveLength(2);
+            expect(doc.runs[1].boardSnapshot).toHaveLength(1);
+            expect(doc.runs[1].boardSnapshot[0].type).toBe('ramp');
+        } finally {
+            // unstubAllGlobals inside finally: a failed assertion must not
+            // leak the rAF stubs into the rest of the file.
+            recorder.dispose();
+            physics.dispose();
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('reopens recording when a play finds no open run (export leaves nothing stale)', () => {
+        // Issue #77: the recorder consumes the loop's published run facts -
+        // its run-open gate is the run state itself (an open run or none),
+        // not a private copy of the loop's stop/run state machine.
+        // exportSession() ends the run it had (open-at-export) while the
+        // session stays live; a later pause + resume play must not silently
+        // drop the recording - a resume that finds no open run opens a
+        // fresh one.
+        const recorder = makeRecorder({ board: realBoard() });
+        recorder.startSession();
+        eventBus.emit('loop:play', { elapsed: 0 });
+        for (let i = 0; i < 3; i++) eventBus.emit('loop:frame', { dt: 16.667, elapsed: 0 });
+        recorder.exportSession();
+        eventBus.emit('loop:pause', { elapsed: 50 });
+        eventBus.emit('loop:play', { elapsed: 50 });
+        for (let i = 0; i < 2; i++) eventBus.emit('loop:frame', { dt: 16.667, elapsed: 0 });
+
+        const doc = recorder.toJSON();
+        expect(doc.runs).toHaveLength(2);
+        expect(doc.runs[0].endedBy).toBe('open-at-export');
+        expect(doc.runs[0].lastTick).toBe(3);
+        expect(doc.runs[1].dt.values).toHaveLength(2);
+        recorder.dispose();
+    });
     it('honors the dense toggle for future runs', () => {
         const recorder = makeRecorder({ board: realBoard() });
         recorder.startSession();

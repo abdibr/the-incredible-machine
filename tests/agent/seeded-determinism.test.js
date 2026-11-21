@@ -40,6 +40,9 @@ const BALLOON_LEVEL = {
     goal: { type: 'object_in_zone', targetType: 'ball', zoneId: 'bucket-goal' },
     fixedObjects: [{ type: 'bucket', x: 700, y: 480, id: 'bucket-goal' }],
     availableParts: { balloon: 2, ball: 1 },
+    // Two-scene level document (ADR 0009): the session answers to the level
+    // owner's schema, so the fixtures carry a solvability scene too.
+    solution: { scene: [{ type: 'bucket', x: 700, y: 480, id: 'bucket-goal' }] },
 };
 
 // Candle-bearing world: the fixed candle is the only construction-random
@@ -51,6 +54,7 @@ const CANDLE_LEVEL = {
     goal: { type: 'object_in_zone', targetType: 'ball', zoneId: 'bucket-goal' },
     fixedObjects: [{ type: 'bucket', x: 200, y: 480, id: 'bucket-goal' }, { type: 'candle', x: 500, y: 470 }],
     availableParts: { balloon: 1 },
+    solution: { scene: [{ type: 'bucket', x: 200, y: 480, id: 'bucket-goal' }, { type: 'candle', x: 500, y: 470 }] },
 };
 
 // Instance ids (`balloon-3`) are process-lifetime counters (BaseObject

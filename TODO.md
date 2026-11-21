@@ -54,7 +54,7 @@ Legend: [ ] = todo, [~] = in progress, [x] = done.
 - [x] `physics:collision` (PhysicsEngine) - PRUNED: its only consumer was the balloon ghost test, which now observes Matter `collisionStart` directly.
 - [x] `physics:object-added` / `physics:object-removed` (`js/engine/PhysicsEngine.js:75,99`) - PRUNED: no listener anywhere.
 - [x] `canvas:resized` (`js/main.js:88`) - PRUNED: renderer reads canvas dimensions per frame.
-- [x] `loop:reset` (`js/engine/GameLoop.js:121`) - PRUNED: no listener; reset side-effects happen inline.
+- [x] `loop:reset` (`js/engine/GameLoop.js:160`) - RESTORED (issue #76): the run-ended fact; SessionRecorder closes its open run on it (ADR 0006 decision 7).
 - [x] `bucket:caught` - WIRED in 1.1 (GoalChecker).
 - [x] `balloon:popped` - WIRED in 1.4 (PhysicsEngine removes the body).
 - [x] `rope:severed` - WIRED in 1.3 (PhysicsEngine detaches constraints).
