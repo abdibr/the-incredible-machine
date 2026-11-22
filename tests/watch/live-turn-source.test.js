@@ -53,7 +53,7 @@ describe('agent/driver-protocol.js - the one protocol leaf (issue #65)', () => {
         try {
             const transport = protocol.createHttpTurnTransport(service.url, 'level-01');
             const opening = await transport.turn({ action: 'observe' });
-            expect(opening.observation).toContain('level-01 - First Steps');
+            expect(opening.observation).toContain('level-01 — First Steps');
             expect(opening.result).toBeTypeOf('object');
 
             const placed = await transport.turn({ action: 'place', type: 'ball', x: 700, y: 100 });
@@ -67,7 +67,7 @@ describe('agent/driver-protocol.js - the one protocol leaf (issue #65)', () => {
     it('runTurn stays the turn boundary the protocol feeds (the never-throw envelope is unchanged)', () => {
         const session = new AgentSession({ seed: null });
         try {
-            const turn = runTurn({ action: 'place' }, session); // malformed action - structurally refused
+            const turn = runTurn({}, session); // not an action object - structurally refused
             expect(turn.result.ok).toBe(false);
             expect(turn.result.error).toMatch(/malformed request/);
             expect(turn.observation).toBeTypeOf('string');
@@ -76,3 +76,4 @@ describe('agent/driver-protocol.js - the one protocol leaf (issue #65)', () => {
         }
     });
 });
+
