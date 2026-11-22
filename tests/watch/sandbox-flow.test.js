@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { AgentSession } from '../../agent/session.js';
-import { place } from '../../agent/actions.js';
+import { place, trial } from '../../agent/actions.js';
 import { applyBuildBeat, SANDBOX_BUILD_SCRIPT, beatLabel } from '../../js/watch/sandboxScript.js';
-import { SandboxFlow, SANDBOX_BOARD } from '../../js/watch/sandboxFlow.js';
+import { SandboxFlow, SANDBOX_BOARD, bannerForSandboxResult, SANDBOX_RUN_SECONDS } from '../../js/watch/sandboxFlow.js';
 
 /**
  * The sandbox view's controller (issue #64).
@@ -180,4 +180,164 @@ describe('AgentSession.materializeBoard - the build phase board (issue #64)', ()
         expect(session.materializeBoard()).toEqual([]);
         session.dispose();
     });
+});
+
+describe('the sandbox run (issue #64)', () => {
+    /** Drive one flow to 'built' (the scripted build, one beat per pump). */
+    async function buildToBuilt(ticker, options = {}) {
+        const session = new AgentSession({ seed: null, sandbox: true });
+        flow = new SandboxFlow({ session, schedule: ticker.schedule, buildBeatMs: 0, ...options });
+        await flow.start();
+        let guard = 0;
+        while (flow.status === 'building' && guard++ < 20) ticker.pump();
+        expect(flow.status).toBe('built');
+        return { session, flow: () => flow };
+    }
+
+    it(
+        'plays the built contraption over the steppable seam in capped batches, streams the event HUD, and ends by its budget with a no-goal banner',
+        { timeout: 60000 },
+        async () => {
+            const ticker = makeTicker();
+            const events = [];
+            const outcomes = [];
+            const order = [];
+            let frames = 0;
+            await buildToBuilt(ticker, {
+                listeners: {
+                    onStatus: () => {},
+                    onEvent: (rows) => {
+                        events.push(...rows);
+                        order.push(...rows.map(() => 'event'));
+                    },
+                    onFrame: () => frames++,
+                    onSandboxRunEnded: (result, meta) => {
+                        outcomes.push({ result, meta });
+                        order.push('outcome');
+                    },
+                    onError: () => {},
+                },
+            });
+
+            // Run opens the steppable trial over the built placements (#61).
+            flow.run();
+            expect(flow.status).toBe('running');
+            expect(session.trialRun).not.toBeNull(); // the run view is open between ticks
+            expect(session.trialRun.open).toBe(true);
+
+            // The trial unwraps on ticks in small capped batches - never a
+            // whole trial in one call (the WatchFlow discipline).
+            const batches = [];
+            let now = 0;
+            let guard = 0;
+            while (flow.status === 'running' && guard++ < 3000) {
+                const before = session.trialRun.stepped;
+                now += 17;
+                ticker.pump(now);
+                if (flow.status === 'running') {
+                    batches.push(session.trialRun.stepped - before);
+                    expect(session.trialRun.done).toBe(false);
+                }
+            }
+            expect(guard).toBeLessThan(3000);
+            expect(flow.status).toBe('ended');
+            expect(session.trialRun).toBeNull(); // finalized cleanly
+            expect(batches.length).toBeGreaterThan(20); // ~5s of sim unwrapped over dozens of ticks
+            expect(Math.max(...batches)).toBeLessThanOrEqual(3);
+
+            // The result: the sandbox posture judges NOTHING - a timeout,
+            // the whole budget stepped, no failure reason, no reachable zone.
+            expect(flow.result.outcome).toBe('timeout');
+            expect(flow.result.elapsed).toBeCloseTo(5000, 6); // the whole budget, whole quanta
+            expect(flow.result.distance).toBe(Infinity);
+            expect(flow.result.failureReason).toBeNull();
+            expect(flow.stoppedHow).toBe('budget');
+            expect(frames).toBeGreaterThan(20); // the run painted live
+
+            // The event log told the story, streamed as it happened: the
+            // two catches with their timestamps - and NEVER a goal verdict.
+            expect(events.map((r) => r.text)).toEqual(['ball caught by bucket', 'ball caught by bucket']);
+            expect(events.map((r) => r.t)).toEqual(['0.95', '1.57']);
+            events.forEach((r) => expect(r.t).toMatch(/^\d+\.\d{2}$/));
+            expect(events.every((r) => !r.landmark)).toBe(true); // landmark rows are goal verdicts - none here
+            expect(order.lastIndexOf('event')).toBe(order.indexOf('outcome') - 1); // rows before the banner
+            expect(outcomes).toHaveLength(1);
+            expect(outcomes[0].result).toEqual(flow.result);
+            expect(outcomes[0].meta).toEqual({ stopped: false, seconds: 5 });
+
+            // The payload the page composes is NOT a goal banner - ever.
+            const banner = bannerForSandboxResult(outcomes[0].result, outcomes[0].meta);
+            expect(banner.label).toMatch(/timeout/i);
+            expect(banner.label).not.toMatch(/goal|reached|failed/i);
+            expect(banner.text).toMatch(/no goal/);
+            expect(banner.kind).toBe('timeout');
+        },
+    );
+
+    it(
+        'the watched run IS trial() over the scripted placements, and repeated cycles land identically',
+        { timeout: 90000 },
+        async () => {
+            const poses = (snapshot) => snapshot.map((row, i) => ({ ...row, id: /^([a-z0-9-]+)-(\d+)$/.test(row.id) ? `${row.type}@${i}` : row.id }));
+            const view = (result) => ({
+                outcome: result.outcome,
+                elapsed: result.elapsed,
+                distance: result.distance,
+                events: result.events.map((r) => [r.t, r.text]),
+                snapshot: poses(result.snapshot),
+            });
+
+            async function driveCycle() {
+                const ticker = makeTicker();
+                await buildToBuilt(ticker);
+                flow.run();
+                let now = 0;
+                let guard = 0;
+                while (flow.status === 'running' && guard++ < 3000) ticker.pump((now += 17));
+                expect(flow.status).toBe('ended');
+                const result = flow.result;
+                flow.cancel(); // the live session's listeners must not co-fire on the shared bus
+                return result;
+            }
+
+            const resultA = await driveCycle();
+            const resultB = await driveCycle();
+
+            // Deterministic trials: two identical cycles, identical stories.
+            expect(view(resultB)).toEqual(view(resultA));
+
+            // And the reference: trial() over the same board + script, a
+            // fresh session - what the watched run judges is what the
+            // all-at-once trial judges (the stepping parity, #61).
+            const refSession = new AgentSession({ seed: null, sandbox: true });
+            await refSession.loadLevel({ ...SANDBOX_BOARD });
+            for (const beat of SANDBOX_BUILD_SCRIPT) expect(applyBuildBeat(refSession, beat).ok).toBe(true);
+            const refResult = trial(refSession, { seconds: 5 });
+            refSession.dispose();
+
+            expect(view(refResult)).toEqual(view(resultA));
+            expect(SANDBOX_RUN_SECONDS).toBe(5); // the run budget rides the module constant
+        },
+    );
+
+    it(
+        'bannerForSandboxResult only ever composes stop and timeout labels - the goal banner vocabulary cannot come out of it',
+        () => {
+            const timeout = bannerForSandboxResult({ outcome: 'timeout', elapsed: 5000 }, { seconds: 5 });
+            expect(timeout.label).toMatch(/timeout/i);
+            expect(timeout.label).not.toMatch(/goal|reached|failed/i);
+            expect(timeout.text).toMatch(/no goal/);
+            expect(timeout.kind).toBe('timeout');
+            const stopped = bannerForSandboxResult({ outcome: 'timeout', elapsed: 2312 }, { stopped: true, seconds: 5 });
+            expect(stopped.label).toMatch(/stopped/i);
+            expect(stopped.label).not.toMatch(/goal|reached|failed/i);
+            expect(stopped.text).toMatch(/2\.31s of its 5\.00s budget/);
+            expect(stopped.kind).toBe('stopped');
+            // Even an impossible verdict shape lands on the neutral spellings.
+            for (const outcome of ['reached', 'failed']) {
+                const neutral = bannerForSandboxResult({ outcome, elapsed: 100 }, {});
+                expect(neutral.label).not.toMatch(/goal|reached|failed/i);
+            }
+        },
+    );
 });
