@@ -1,5 +1,33 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-21 - Agent Watch 2/5: reconciliation finished - committed-suite text repairs + the two-toolchain entries suite (issue #62)
+
+The #62 content was in place; four finishing commits reconcile what the interrupted session had committed mangled and what it never verified:
+
+- **`agent/session.js` (1d54068)** - the `loadLevel` JSDoc had two interleaved half-sentences
+  from the interruption; restored to the coherent Node-only-branch doc.
+- **`agent/server.js` (65b0241)** - the header import rule ("nothing under js/ imports agent/")
+  still read pre-ADR-0010; it now excludes the watch sidecar by name.
+- **`tests/watch/watch-flow.test.js` (4ec2367)** - the solver progress-streaming assertion was
+  flattened into ONE comment line with literal backslash-n sequences in 89d88a6, silently muting
+  it; the four real lines run again.
+- **`tests/watch/entries.test.js` (8ea30de)** - the second browser entry is verified in BOTH
+  toolchains, beyond the vite-config structure pin: the dev server is actually run
+  (vite createServer) and serves the watch page, its entry module through the dev transform
+  chain, and the level JSON URL fetchLevelDocument points at; the production build is actually
+  run (vite build), dist carries index.html (main bundle) + watch.html (watch bundle with its
+  stylesheet), and the agent layer code (ADR 0010 browser-refusal sentence) is in the watch
+  bundle and absent from the game own chunk. Red->green: with watch.html moved aside BOTH
+  tests fail (page 404 / RollupError could-not-resolve watch.html); restored, green.
+- A one-off dev-chain probe (`.scratch/t62-probe/probe-dev-chain.mjs`, uncommitted) walked the
+  dev-served import graph of the sidecar page: 45 URLs, 0 failures - the agent layer, the engine
+  and matter-js all serve through the dev server.
+- Provenance note: mid-ticket, further commits (1dffd61, c51fa07) landed on this branch while the
+  dispatched implementer was reconciling the inherited WIP; the reconciliation builds on top of
+  them - nothing was reverted, the two writers plans were materially the same.
+- Full suite: **81 files / 911 tests, all green** (`cmd /c npm test`; the watch suites now count
+  27 across four files).
+
 ## 2026-11-21 - Agent Watch 2/5: the watch sidecar lands - the browser watches a solved level play out (issue #62)
 
 The second browser entry is real in both toolchains, the phase-1 surface is now a UI contract, and
