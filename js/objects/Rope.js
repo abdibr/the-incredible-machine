@@ -209,6 +209,35 @@ export function isSeveredRope(obj) {
 }
 
 /**
+ * The rope family's whole-roster query (issue #83): one family-sized
+ * answer for the consumers that need the WHOLE roster - the scissors
+ * blade-fan cut scan and the observe state scan - instead of each fanning
+ * `queryObjectsByType` over type keys. Implemented as a flatMap over
+ * `ROPE_FAMILY_TYPES`, so a new family member is one roster append every
+ * roster consumer inherits - the same single definition point the
+ * predicates above read (ADR 0007 decision 1). Members land grouped in
+ * roster order, discovery order within each member's type: the union the
+ * two-query sites spelled by hand.
+ *
+ * The engine stays family-agnostic (ADR 0002): membership lives HERE, on
+ * the module that owns the roster, and the helper rides the engine's own
+ * per-type query - same read policy (pure, order-stable, never wakes,
+ * empty for unknown types). `opts` ride every member query unchanged - the
+ * same options queryObjectsByType takes (`excludeOwner`).
+ *
+ * NOT for the gate sites or the capability-first knot walks (they gate on
+ * "offers attachment refs" and never ask the roster); this helper exists
+ * only where the roster itself is the question.
+ *
+ * @param {{ queryObjectsByType: (type: string, opts?: object) => import('./BaseObject.js').default[] }} engine
+ * @param {object} [opts] - forwarded to every member's queryObjectsByType
+ * @returns {import('./BaseObject.js').default[]}
+ */
+export function queryRopeFamily(engine, opts = {}) {
+    return ROPE_FAMILY_TYPES.flatMap((type) => engine.queryObjectsByType(type, opts));
+}
+
+/**
  * Where a tie seat sits as a fraction of the rope's span (issue #56, the
  * one spelling of the seat arithmetic; role-keyed since #90 — no seat
  * answers an index): the chain END seat covers (count − 0.5)/count — the

@@ -6,6 +6,8 @@
  * read (ADR 0003 lifecycle contract) — no reach-ins, no invented fields.
  */
 
+import { isRopeFamily } from '../../js/objects/Rope.js';
+
 const DEG = 180 / Math.PI;
 
 /** Stable display id: named level id when present, else `type-<instanceId>`. */
@@ -40,8 +42,17 @@ function extrasOf(obj, goal) {
     if (goal?.zoneId && obj.type === goal.targetType) extras.push('target-type');
     if (obj.type === 'bucket' && obj.customId === goal?.zoneId) extras.push('goal-zone');
     if (obj.type === 'bucket') extras.push(`caught:${obj.caughtCount ?? 0}`);
-    if (obj.type === 'rope') extras.push(obj.isSevered ? 'SEVERED' : 'intact');
-    if (obj.type === 'free-rope') extras.push(obj.isSevered ? 'SEVERED' : obj.isFreeBundle ? 'BUNDLED' : 'TIED');
+    // The rope family (issue #83) gates through membership, not a per-type
+    // fan: SEVERED / intact is the family-wide fact every member gets free
+    // with the roster - a third family member joins the table with the
+    // roster append alone - and the free member's own line stays explicit
+    // through its public flags: isFree splits the member off, BUNDLED
+    // names the coil, TIED names a hanging chain.
+    if (isRopeFamily(obj)) {
+        if (obj.isSevered) extras.push('SEVERED');
+        else if (obj.isFree) extras.push(obj.isFreeBundle ? 'BUNDLED' : 'TIED');
+        else extras.push('intact');
+    }
     if (obj.type === 'balloon') extras.push(obj.isPopped ? 'POPPED' : 'intact');
     if (obj.type === 'scissors') extras.push(obj.isClosed ? 'closed' : 'open');
     return extras;
