@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { AgentSession } from '../../agent/session.js';
+import { place, trial } from '../../agent/actions.js';
 import { levelManager } from '../../js/levels/LevelManager.js';
+import { eventBus } from '../../js/EventBus.js';
 
 /**
  * The sandbox posture (issue #63).
@@ -75,5 +77,72 @@ describe('the sandbox gate - goal-less documents (issue #63)', () => {
             /\[LevelManager\] Level missing required field: "goal"/,
         );
         puzzle.dispose();
+    });
+});
+
+
+/**
+ * Tap the bus for the duration of one run: the loop facts the run seam
+ * publishes plus the goal family the posture must keep silent. Every
+ * subscription is drained by stop().
+ */
+function tapEvents(topics) {
+    const rows = [];
+    const unsubs = topics.map((topic) => {
+        const listener = (packet) => rows.push({ topic, packet });
+        eventBus.on(topic, listener);
+        return () => eventBus.off(topic, listener);
+    });
+    return { rows, stop: () => unsubs.forEach((unsub) => unsub()) };
+}
+
+// A sandbox document that carries a goal shape (the sandbox gate tolerates
+// the ride-along) and a reachable catch: the level-01 geometry - the named
+// bucket at (700, 480), the known drop at (700, 100). The carried
+// availableParts count is large enough that the placement law of BOTH
+// postures (level budget before the palette cycle, roster palette after)
+// admits it, so this test never hinges on the budget source.
+const JUDGED_BOARD = {
+    id: 'sandbox-judged-fixture',
+    name: 'sandbox posture fixture - a goal rides along',
+    goal: { type: 'object_in_zone', targetType: 'ball', zoneId: 'bucket-goal' },
+    fixedObjects: [{ type: 'bucket', x: 700, y: 480, id: 'bucket-goal' }],
+    availableParts: { ball: 10 },
+};
+
+describe('sandbox runs never judge a goal (issue #63)', () => {
+    it('judge no goal even when the document carries one - a catch is recorded, the run still times out', async () => {
+        session = new AgentSession({ sandbox: true });
+        await session.loadLevel(JUDGED_BOARD);
+        const tap = tapEvents(['goal:reached', 'goal:failed']);
+        // The known-winning drop (level-01 geometry): the ball falls into
+        // the named bucket. The catch is real; the verdict must not be.
+        expect(place(session, 'ball', 700, 100).ok).toBe(true);
+        const result = trial(session, { seconds: 5 });
+        tap.stop();
+        // The catch is real physics - the recorder row says so - but the
+        // posture never turns it into a verdict: no goal:* row ever hits the
+        // bus, the run rides to its budget and times out.
+        expect(result.outcome).toBe('timeout');
+        expect(result.events.some((row) => /caught by bucket-goal/.test(row.text))).toBe(true);
+        expect(tap.rows).toEqual([]);
+    });
+
+    it('goal-less trials ride the same loop facts to a timeout (the #78 stream, zero goal rows)', async () => {
+        session = new AgentSession({ sandbox: true });
+        await session.loadLevel(EMPTY_SANDBOX);
+        const tap = tapEvents(['loop:play', 'loop:frame', 'loop:reset', 'mode:changed', 'goal:reached', 'goal:failed']);
+        const result = trial(session, { seconds: 1 });
+        tap.stop();
+        expect(result.outcome).toBe('timeout');
+        expect(result.events).toEqual([]);
+        expect(result.distance).toBe(Infinity);
+        expect(tap.rows.filter((r) => r.topic === 'goal:reached' || r.topic === 'goal:failed')).toEqual([]);
+        const frames = tap.rows.filter((r) => r.topic === 'loop:frame');
+        expect(frames.length).toBe(60);
+        expect(tap.rows[0].topic).toBe('loop:play');
+        expect(tap.rows[tap.rows.length - 1].topic).toBe('loop:reset');
+        expect(tap.rows.filter((r) => r.topic === 'loop:play').length).toBe(1);
+        expect(tap.rows.filter((r) => r.topic === 'loop:reset').length).toBe(1);
     });
 });

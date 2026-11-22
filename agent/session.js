@@ -250,8 +250,16 @@ export class AgentSession {
     _rebuild() {
         this._teardown();
         this.engine = new PhysicsEngine(this.width, this.height);
-        this._goalChecker = new GoalChecker();
-        this._goalChecker.init({ physicsEngine: this.engine });
+        // The sandbox posture (issue #63): runs are goal-less BY POSTURE -
+        // no checker is installed, so no verdict can latch and no goal
+        // event can fire, even when a document carries a goal shape. The
+        // run rides its budget to 'timeout'; distanceToZone() reads
+        // Infinity on a goal-less board. The puzzle posture arms the same
+        // private checker exactly as before.
+        if (!this._sandbox) {
+            this._goalChecker = new GoalChecker();
+            this._goalChecker.init({ physicsEngine: this.engine });
+        }
         this._outcome = null;
         this._failureReason = null;
         // The level fact arms GoalChecker (same seam as the live app) and
