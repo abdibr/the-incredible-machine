@@ -146,3 +146,48 @@ describe('sandbox runs never judge a goal (issue #63)', () => {
         expect(tap.rows.filter((r) => r.topic === 'loop:reset').length).toBe(1);
     });
 });
+
+
+describe('sandbox placements draw from the parts palette (issue #63)', () => {
+    it('the palette is the registered roster at the default count: ten place, the eleventh is over-palette', async () => {
+        session = new AgentSession({ sandbox: true });
+        await session.loadLevel(EMPTY_SANDBOX);
+        for (let i = 0; i < 10; i++) {
+            const result = place(session, 'ball', 100 + i * 40, 100);
+            expect(result.ok).toBe(true);
+            expect(result.budgetLeft).toBe(9 - i);
+        }
+        const refused = place(session, 'ball', 100, 100);
+        // The same never-throw refusal shape a puzzle session's exhausted
+        // budget returns - wording, error key and remaining map alike.
+        expect(refused.ok).toBe(false);
+        expect(refused.error).toBe('no budget left for ball');
+        expect(refused.remaining.ball).toBe(0);
+    });
+
+    it('a type outside the roster is refused as unknown - the roster is the palette', async () => {
+        session = new AgentSession({ sandbox: true });
+        await session.loadLevel(EMPTY_SANDBOX);
+        expect(place(session, 'unregistered-widget', 500, 300)).toEqual({
+            ok: false,
+            error: 'unknown type: unregistered-widget',
+        });
+    });
+
+    it('the level document carries no budget - a scarce availableParts map cannot constrain the sandbox', async () => {
+        session = new AgentSession({ sandbox: true });
+        await session.loadLevel({ ...EMPTY_SANDBOX, availableParts: { ball: 1 } });
+        expect(place(session, 'ball', 100, 100).ok).toBe(true);
+        // A puzzle budget would refuse here (ball: 1) - the palette answers.
+        expect(place(session, 'ball', 140, 100).ok).toBe(true);
+    });
+
+    it('the off-playfield refusal keeps the puzzle shape', async () => {
+        session = new AgentSession({ sandbox: true });
+        await session.loadLevel(EMPTY_SANDBOX);
+        const result = place(session, 'ball', 2000, 300);
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(/off-playfield/);
+        expect(result.clampedTo.x).toBeLessThanOrEqual(1000);
+    });
+});

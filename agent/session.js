@@ -36,6 +36,16 @@ import { EventRecorder } from './observe/events.js';
 import { createSeedRng, resolveSeed, SEED_ENV_VAR } from './rng.js';
 
 /**
+ * The sandbox palette's per-type count (issue #63): every registered part,
+ * at the count the game's unauthored sandbox posture writes on Save (the
+ * default palette - js/ui/PalettePanel.js DEFAULT_PALETTE_COUNT, issue #69,
+ * "every type x10"). The parity is deliberate: if the game's default
+ * palette count ever changes, this constant and the agent-side sandbox
+ * posture documentation follow it.
+ */
+const SANDBOX_PALETTE_COUNT = 10;
+
+/**
  * TrialRun - one live steppable trial run (issue #61).
  *
  * Created ONLY by AgentSession.beginTrial (the world it watches belongs
@@ -226,10 +236,28 @@ export class AgentSession {
         return this;
     }
 
-    /** Remaining parts budget per type: availableParts minus placed. */
+    /**
+     * The placement budget per type.
+     * Puzzle posture: the level's availableParts counts minus placed.
+     * Sandbox posture (issue #63): the parts palette - every registered
+     * type at the unauthored sandbox posture's default count (the game's
+     * DEFAULT_PALETTE_COUNT of 10, the palette an untweaked sandbox Save
+     * writes - PalettePanel, issue #69) minus placed. The level document
+     * carries no budget in the sandbox: its availableParts, when present,
+     * is carry-through save data, never the constraint.
+     */
     budget() {
         const placed = {};
         for (const p of this.placements) placed[p.type] = (placed[p.type] ?? 0) + 1;
+        if (this._sandbox) {
+            // The palette is the registered roster, not the document -
+            // `place` keeps refusing its way through this same shape.
+            const remaining = {};
+            for (const { type } of objectRegistry.getAll()) {
+                remaining[type] = SANDBOX_PALETTE_COUNT - (placed[type] ?? 0);
+            }
+            return remaining;
+        }
         return Object.fromEntries(
             Object.entries(this.levelData?.availableParts ?? {}).map(([type, n]) => [type, n - (placed[type] ?? 0)]),
         );
