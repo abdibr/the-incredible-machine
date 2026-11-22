@@ -272,7 +272,7 @@ export class LiveFlow {
         this._turns = turns;
         this._maxTurns = Number(maxTurns) === maxTurns && Number.isFinite(maxTurns) && maxTurns >= 1 ? maxTurns : LIVE_DEFAULT_MAX_TURNS;
         this._maxBatchFrames = maxBatchFrames;
-        this._accCapMs = 50; // the wall-clock accumulator cap, ADR 0008's spiral bound
+        this._accCapMs = 50; // placeholder - the cap rides the open run (set in _playTrial)
         this._listeners = listeners;
         // Seed: null keeps the browser-safe unseeded posture (no `process` is
         // consulted); sandbox: true is the goal-less posture (ADR 0011).
@@ -562,6 +562,12 @@ export class LiveFlow {
     _playTrial({ seconds, dt } = {}) {
         this.status = 'watching';
         this._run = this.session.beginTrial({ seconds, dt });
+        // The accumulator cap rides the run (the dt-bound): one tick may
+        // spend at most a full batch's worth of the run's own dt, so a
+        // coarse custom-dt trial (the model's mirror quanta) still moves a
+        // whole batch per paced tick instead of starving under the default
+        // wall-clock cap - ADR 0008's cadence discipline stays whole.
+        this._accCapMs = this._maxBatchFrames * this._run.dt;
         this._accMs = 0;
         this._lastNow = null;
         this._eventCursor = 0;
