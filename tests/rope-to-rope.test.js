@@ -221,13 +221,14 @@ describe('Rope as a tie target (issue #57) — the click flow', () => {
             { seat: 'end', target: balloonB, pointId: 'knot' },
         ]);
 
-        // The same-seat refusal is the rope's OWN seat gate (issue #85):
-        // a rope's seek ties the balloon once, and its second tie aim at
-        // the seat that now holds the knot refuses (no knot created).
-        // The same-seat refusal is the rope's OWN seat gate (issue #85),
-        // seen from the flow: a FREE rope's seek stays armed after its
-        // tie (issue #56), so the second tie aim into any knot refuses —
-        // "seat already tied" — and no second knot is created.
+        // The per-seat refusal is the rope's OWN seat gate (issue #85):
+        // what refuses is a SEAT that already holds its knot — the seat it
+        // armed, not the aim it clicked. Issue #103 (the group spec's
+        // decision 7): the armed free-rope seek stays armed after its tie
+        // (issue #56) ON THE NEXT FREE seat, so the second aim at this
+        // same knot is the ADVANCED seat's own tie — it lands (one knot
+        // per SEAT: the anchor seat's knot stays) and the flow arms the
+        // end seat after it.
         const ropeD = objectRegistry.create('free-rope', 400, 480); // the coil square
         const dKnot = balloonB.getAttachmentWorldPoint('knot');
         flow.handlePointerDown(400, 480, [ropeD, balloonB]); // the coil square seeks
@@ -235,8 +236,10 @@ describe('Rope as a tie target (issue #57) — the click flow', () => {
         expect(ropeD.getAttachmentRefs()).toEqual([
             { seat: 'anchor', target: balloonB, pointId: 'knot' },
         ]);
-        flow.handlePointerDown(dKnot.x, dKnot.y, [ropeD, balloonB]); // the armed seek aims again
-        expect(ropeD.getAttachmentRefs()).toHaveLength(1); // the occupied seat refuses (no second knot)
+        flow.handlePointerDown(dKnot.x, dKnot.y, [ropeD, balloonB]); // the advanced mid seat ties the same aim
+        expect(ropeD.getAttachmentRefs()).toHaveLength(2); // the new seat took the aim (one per SEAT)
+        expect(ropeD.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid']);
+        expect(flow.seek).toEqual({ rope: ropeD, role: 'end' }); // the advance continues (issue #103)
         ropeA.dispose();
         ropeB.dispose();
         ropeD.dispose();
@@ -310,7 +313,10 @@ describe('Rope as a tie target (issue #57) — the click flow', () => {
         // The spawn hangs the newborn chain FROM the clicked rope square.
         expect(bundle.bodies[0].position.x).toBeCloseTo(anchorSquareB.x, 5);
         expect(bundle.bodies[0].position.y).toBeCloseTo(anchorSquareB.y, 5);
-        expect(flow.seek).toEqual({ rope: bundle, role: 'anchor' }); // the free family keeps its seek armed
+        // The free family keeps its seek armed after the spawn tie (issue
+        // #56), armed on the NEXT free seat — the newborn chain's mid
+        // square (issue #103): the seat it just tied never re-arms.
+        expect(flow.seek).toEqual({ rope: bundle, role: 'mid' });
         bundle.dispose();
         ropeB.dispose();
     });

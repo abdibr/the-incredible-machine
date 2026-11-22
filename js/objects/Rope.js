@@ -209,6 +209,35 @@ export function isSeveredRope(obj) {
 }
 
 /**
+ * The rope family's whole-roster query (issue #83): one family-sized
+ * answer for the consumers that need the WHOLE roster - the scissors
+ * blade-fan cut scan and the observe state scan - instead of each fanning
+ * `queryObjectsByType` over type keys. Implemented as a flatMap over
+ * `ROPE_FAMILY_TYPES`, so a new family member is one roster append every
+ * roster consumer inherits - the same single definition point the
+ * predicates above read (ADR 0007 decision 1). Members land grouped in
+ * roster order, discovery order within each member's type: the union the
+ * two-query sites spelled by hand.
+ *
+ * The engine stays family-agnostic (ADR 0002): membership lives HERE, on
+ * the module that owns the roster, and the helper rides the engine's own
+ * per-type query - same read policy (pure, order-stable, never wakes,
+ * empty for unknown types). `opts` ride every member query unchanged - the
+ * same options queryObjectsByType takes (`excludeOwner`).
+ *
+ * NOT for the gate sites or the capability-first knot walks (they gate on
+ * "offers attachment refs" and never ask the roster); this helper exists
+ * only where the roster itself is the question.
+ *
+ * @param {{ queryObjectsByType: (type: string, opts?: object) => import('./BaseObject.js').default[] }} engine
+ * @param {object} [opts] - forwarded to every member's queryObjectsByType
+ * @returns {import('./BaseObject.js').default[]}
+ */
+export function queryRopeFamily(engine, opts = {}) {
+    return ROPE_FAMILY_TYPES.flatMap((type) => engine.queryObjectsByType(type, opts));
+}
+
+/**
  * Where a tie seat sits as a fraction of the rope's span (issue #56, the
  * one spelling of the seat arithmetic; role-keyed since #90 — no seat
  * answers an index): the chain END seat covers (count − 0.5)/count — the
@@ -242,6 +271,128 @@ function seatFraction(seat, count) {
  */
 function midSeatSegment(count) {
     return Math.floor((count - 1) / 2);
+}
+
+/**
+ * The two-pass seal (issue #99) - the ONE spelling of the post-re-lay seal
+ * arithmetic (ADR 0007's 2026-11-22 amendment, point 2): the demand divided by
+ * the PRE-lay count's seat fraction (`demand / seatFraction(seat, count0)`)
+ * names the count the re-lay will actually end with (`segmentsForSpan`), and
+ * the answer re-divides the demand by THAT count's own seat fraction - so a
+ * grow whose re-count crosses a segmentsForSpan band lays its seat ON the
+ * knot instead of past it (the +22% measured inflation class), and a
+ * free-end re-lay's appended tail sits on the cursor on the very frame the
+ * chain grows (the +22.7px reel class). A non-crossing lay re-derives the
+ * same count and answers the single-pass span.
+ *
+ * One spelling, two consumers: attachEndpoint's covering grow seals the
+ * tie's grow through it, and relayFreeEnd seals the hand's re-lay through
+ * it.
+ *
+ * @param {number} demand - the span the knot point/the hand demands
+ * @param {'anchor'|'mid'|'end'} seat - the seat whose fraction seals
+ * @param {number} count0 - the chain count the lay starts from
+ * @returns {number} the sealed span
+ */
+function twoPassSealSpan(demand, seat, count0) {
+    const span1 = demand / seatFraction(seat, count0);
+    const count1 = Rope.segmentsForSpan(span1);
+    return demand / seatFraction(seat, count1);
+}
+
+/**
+ * The float-dust allowance in the re-seat pass (issue #98): a leg's
+ * crow-fly distance may exceed its arclength budget by this much and
+ * still lay as its leg's straight answer, and station/waypoint
+ * arclengths compare with this much fuzz (the seat fractions and the
+ * station arithmetic are the same numbers taken through different
+ * float orders).
+ * @type {number}
+ */
+const RESEAT_EPS_PX = 0.5;
+
+/**
+ * Wrap an angle into (-PI, PI] - the re-seat lay's sweep bookkeeping.
+ * @param {number} a
+ * @returns {number}
+ */
+function wrapHalfAngle(a) {
+    return a - Math.PI * 2 * Math.floor((a + Math.PI) / (Math.PI * 2));
+}
+
+/**
+ * One bowed leg of the re-seat lay (issue #98): the circular arc that
+ * starts at `from`, ends at `to`, and runs exactly the leg's arclength
+ * budget long - the uniform-curvature lay that keeps every station of the
+ * leg at its own arc-length position (each link's rest length still
+ * equals the laid distance along the path, ADR 0005 decision 12) while
+ * the leg ENDS on its knot instead of straightening to it. A straight lay
+ * to a knot inside the leg's budget would lay the chain shorter than its
+ * span - the tie never shortens the rope (ADR 0007 decision 4) - so the
+ * slack bows instead. A taut leg (the knot sitting at the budget, float
+ * dust aside) lays straight; the bulge of a bowed one leans downward
+ * where the geometry allows (canvas down - the settled sag direction),
+ * rightward otherwise, so the same tie always lays the same shape.
+ *
+ * @param {{arc: number, x: number, y: number}} from
+ * @param {{arc: number, x: number, y: number}} to
+ * @returns {{from: object, to: object, pointAt: (t: number) => {x: number, y: number},
+ *   endTangent: {x: number, y: number}}} pointAt over t in [0, budget];
+ *   endTangent is the arrival direction, feeding an open tail's straight
+ *   continuation (a chain whose last tied seat is the mid one).
+ */
+function bowedLeg(from, to) {
+    const budget = to.arc - from.arc;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const d = Math.hypot(dx, dy);
+    const ux = d ? dx / d : 0;
+    const uy = d ? dy / d : 1; // a degenerate chord points down by convention
+    if (budget - d <= RESEAT_EPS_PX) {
+        return {
+            from, to,
+            pointAt: (t) => ({ x: from.x + ux * t, y: from.y + uy * t }),
+            endTangent: { x: ux, y: uy },
+        };
+    }
+    // The uniform arc: half-sweep a roots sin(a)/a = d/budget on (0, PI]
+    // (that ratio falls monotonically from 1 to 0 over the range;
+    // bisection). radius = budget / (2a) closes the circle.
+    let lo = 1e-9;
+    let hi = Math.PI;
+    for (let k = 0; k < 80; k++) {
+        const mid = (lo + hi) / 2;
+        if (Math.sin(mid) / mid > d / budget) lo = mid;
+        else hi = mid;
+    }
+    const alpha = (lo + hi) / 2;
+    const radius = budget / (2 * alpha);
+    // Chord geometry: perpendicular v bulges downward when it can, else
+    // rightward; the centre rides the back side of the bulge.
+    const v1 = { x: -uy, y: ux };
+    const v = (v1.y > 0 || (v1.y === 0 && v1.x > 0)) ? v1 : { x: uy, y: -ux };
+    const cx = from.x + ux * (d / 2) - v.x * radius * Math.cos(alpha);
+    const cy = from.y + uy * (d / 2) - v.y * radius * Math.cos(alpha);
+    // The sweep spends the whole budget turning from the start radius to
+    // the end one; the sign is whichever way round the centre lands the
+    // end point (long-way-round legs turn against the minor delta).
+    const a0 = Math.atan2(from.y - cy, from.x - cx);
+    const sweep = budget / radius;
+    const delta = wrapHalfAngle(Math.atan2(to.y - cy, to.x - cx) - a0);
+    // The turn starts toward the minor delta; long-way-round legs (a
+    // sweep past PI) turn the other way - lands() below is the authority
+    // and flips the guess when the geometry says so.
+    let sign = delta >= 0 ? 1 : -1;
+    const angleAt = (t) => a0 + sign * (t / radius);
+    const lands = (ang) => Math.hypot(cx + radius * Math.cos(ang) - to.x, cy + radius * Math.sin(ang) - to.y) <= RESEAT_EPS_PX;
+    if (!lands(a0 + sign * sweep)) sign = -sign; // the other way round
+    const eQx = (to.x - cx) / radius;
+    const eQy = (to.y - cy) / radius;
+    return {
+        from, to,
+        pointAt: (t) => ({ x: cx + radius * Math.cos(angleAt(t)), y: cy + radius * Math.sin(angleAt(t)) }),
+        endTangent: { x: -eQy * sign, y: eQx * sign },
+    };
 }
 
 /**
@@ -674,8 +825,16 @@ export default class Rope extends BaseObject {
      * @param {'anchor'|'mid'|'end'} seat
      * @param {import('./BaseObject.js').default} target
      * @param {string} pointId
+     * @param {{reseat?: boolean}} [opts] - `reseat: false` keeps the
+     *   restore contract: the caller ties from a ROW (the token bind), and
+     *   the board the row describes must re-lay exactly as recorded - the
+     *   chain keeps the row's own shape instead of taking the seat policy
+     *   (ADR 0006 decision 1's snapshot-authoritative replay, and the same
+     *   boundary the anchor-seat pull keeps in ConnectFlow when it leaves
+     *   the restore paths alone). Live ties - the flow's, the hand's, a
+     *   tie made after the target moved - default to the re-seat.
      */
-    attachEndpoint(seat, target, pointId) {
+    attachEndpoint(seat, target, pointId, opts = {}) {
         if (!SEAT_ROLES.includes(seat)) {
             throw new Error(`[Rope] attachEndpoint: seat must be 'anchor', 'mid' or 'end', got ${String(seat)}`);
         }
@@ -757,8 +916,16 @@ export default class Rope extends BaseObject {
         // setEndpoints (bodies re-line, the chain rebuilds for the grown
         // span, and rope:chain-converge lets an in-world rope swap its
         // chain — the registration guard keeps the event a no-op out of
-        // world), then seals _length exact against setEndpoints'
-        // float-dust re-derivation, the same seal relayFreeEnd uses. Grown
+        // float-dust re-derivation, the same seal relayFreeEnd uses.
+        // The seal is the two-pass form (issue #99): a grown span whose
+        // segmentsForSpan answer crosses a count band changes the tied
+        // seat's own fraction, so dividing by the PRE-re-lay count's
+        // fraction landed the laid seat past the knot and inflated the
+        // span past it (the +22% measured class). span1 = tied /
+        // frac(seat, count0) names count1 = segmentsForSpan(span1), and
+        // the seal divides tied by count1's own fraction - the laid chain
+        // rests with its tied seat on the knot, and a tie never inflates
+        // the rope past the knot's own seat fraction.
         // capacity = tied span / seat inboard-ness.
         // The grow's count re-derives from the grown span (issue #89 — ONE
         // covering rule for both families): the tie that needs more reach
@@ -785,9 +952,13 @@ export default class Rope extends BaseObject {
                     world.y - this._anchor.position.y
                 );
                 const oldCount = this._segments.length;
-                const frac = seatFraction(seat, oldCount);
-                if (tied > this._length * frac) {
-                    const grown = tied / frac;
+                const frac0 = seatFraction(seat, oldCount);
+                if (tied > this._length * frac0) {
+                    // Two-pass seal (issue #99): the covering grow is
+                    // sealed against the count the re-lay will actually
+                    // end with - the one spelling, in twoPassSealSpan
+                    // (the same shape the hand's re-lay seals with).
+                    const grown = twoPassSealSpan(tied, seat, oldCount);
                     if (!this._severed && oldCount) {
                         const anchor = this._anchor.position;
                         const ux = (world.x - anchor.x) / tied;
@@ -802,8 +973,103 @@ export default class Rope extends BaseObject {
                     } else {
                         this._length = grown; // severed: reconcile skips it — accounting only
                     }
+                } else if (opts.reseat !== false) {
+                    // The in-reach half (issue #98): the knot sits inside
+                    // the seat's covering circle, so the covering grow has
+                    // nothing to cover - and moving nothing left the seat
+                    // a reach-gap off the knot until play, where the
+                    // length-0 knot link hauled it in with a violent
+                    // single-beat yank. The re-seat lays the chain ONTO the
+                    // knot instead: seats move, never knots - fixed targets
+                    // and rope targets need no gate here, because only this
+                    // rope's own segment bodies reposition (the anchor seat
+                    // keeps its pull gates in ConnectFlow).
+                    this._reseatSeatsToKnots();
                 }
             }
+        }
+    }
+
+    /**
+     * Re-seat pass (issue #98): lay the chain so every tied chain seat's
+     * body stands exactly on its knot point, at that seat's own arclength
+     * fraction of the span along the chain path (the number seatFraction
+     * answers - the same fraction the reach gate and the covering grow
+     * use). The knots sit inside their seats' windows (the reach gate let
+     * their ties through), so the path bows instead of straightening:
+     * each waypoint-to-waypoint leg spends exactly its arclength budget on
+     * the arc bowedLeg lays, so every link's rest length still equals the
+     * laid distance between its stations - nothing is over-tensioned, and
+     * play start has nothing to yank (the length-0 knot links find their
+     * seats already seated). An open tail (a chain whose last tied seat is
+     * the mid one) continues the arrival tangent past the last knot. Only
+     * segment bodies move - the anchor stays, and the span, count,
+     * constraints and every other rope record are untouched - so fixed
+     * targets and rope targets need no gate: the ROPE re-seats, never the
+     * knots (issue #98's one policy), and the tie never shortens the rope
+     * (ADR 0007 decision 4). A leg the knots overshoot cannot be laid
+     * without stretching or shrinking - the pass refuses whole and no body
+     * moves; the seat stays where it is and the next reconcile step closes
+     * the residual gap at play (the shipped anchor behavior).
+     *
+     * @private
+     */
+    _reseatSeatsToKnots() {
+        const span = this._length;
+        const count = this._segments.length;
+        if (!this._anchor || count === 0 || this._severed || !(span > 0)) return;
+        const pitch = span / count;
+        const midArc = seatFraction('mid', count) * span;
+        const tailArc = seatFraction('end', count) * span; // the tail's own station
+
+        // Waypoints along the chain: the anchor body at arclength 0 (the
+        // path always starts at the body the chain hangs from), then every
+        // tied chain seat's fresh knot point at its seat role's own
+        // arclength. One knot per seat keeps these strictly in arc order.
+        // A knot whose point does not resolve (a dead target the reconcile
+        // has not pruned yet) aborts the pass - the lay stays as it is and
+        // the reconcile prunes on its next step.
+        const waypoints = [{ arc: 0, x: this._anchor.position.x, y: this._anchor.position.y }];
+        for (const ref of this.getAttachmentRefs()) {
+            if (ref.seat === 'anchor') continue;
+            const point = ref.target?.getAttachmentWorldPoint?.(ref.pointId) ?? null;
+            if (!point) return;
+            waypoints.push({ arc: ref.seat === 'mid' ? midArc : tailArc, x: point.x, y: point.y });
+        }
+
+        // Feasibility (the never-shorten guard): a leg lays at exactly its
+        // arclength budget, so the leg's crow-fly distance must fit the
+        // budget. An overshoot would mean stretching the chain or
+        // shortening the rope - both refused; nothing moves.
+        for (let k = 1; k < waypoints.length; k++) {
+            const budget = waypoints[k].arc - waypoints[k - 1].arc;
+            const crowFly = Math.hypot(waypoints[k].x - waypoints[k - 1].x, waypoints[k].y - waypoints[k - 1].y);
+            if (crowFly > budget + RESEAT_EPS_PX) return;
+        }
+
+        // One arc per leg (bowedLeg precomputes the circle), then every
+        // segment takes its station: arclength (i + 0.5) * pitch from the
+        // anchor - the seat roles' own arclengths land their bodies
+        // exactly on their waypoints. An open tail rides the arrival
+        // tangent; no station ever lacks a leg or tail to ride.
+        const legs = [];
+        for (let k = 0; k < waypoints.length - 1; k++) legs.push(bowedLeg(waypoints[k], waypoints[k + 1]));
+        const last = legs[legs.length - 1];
+        const openTail = last.to.arc < tailArc;
+        for (let i = 0; i < count; i++) {
+            const station = (i + 0.5) * pitch;
+            let point = null;
+            for (const leg of legs) {
+                if (station <= leg.to.arc + RESEAT_EPS_PX) {
+                    point = leg.pointAt(station - leg.from.arc);
+                    break;
+                }
+            }
+            if (!point && openTail) {
+                const tailT = station - last.to.arc;
+                point = { x: last.to.x + last.endTangent.x * tailT, y: last.to.y + last.endTangent.y * tailT };
+            }
+            if (point) Body.setPosition(this._segments[i], point);
         }
     }
 
@@ -943,7 +1209,11 @@ export default class Rope extends BaseObject {
                 continue;
             }
             try {
-                this.attachEndpoint(token.seat, target, token.pointId);
+                // reseat: false (issue #98): the restore contract - the
+                // token binds the row's knot over the row's own chain lay,
+                // whatever seat policy now ships at tie time, so a bug
+                // file's recorded board keeps replaying bit-exactly.
+                this.attachEndpoint(token.seat, target, token.pointId, { reseat: false });
                 bound = true;
             } catch (e) {
                 // The rope-target deferral (issue #57): a target rope whose
@@ -1648,9 +1918,20 @@ export default class Rope extends BaseObject {
         // A free rope's span is the hand's at all times (issue #56): the
         // frozen-circle clamp is pinned-rope bookkeeping only.
         const frozen = !this._isFree && this.lengthFrozen;
+        // Two-pass seal (issue #99): the hand's span re-derives the chain
+        // count on lay, so across a segmentsForSpan band the end seat's own
+        // fraction changes under it - dividing by the PRE-re-lay count's
+        // fraction laid the appended tail past the cursor on the growth
+        // frame (+22.7px on the measured 250px reel across 6 -> 7, probe
+        // scenario 4's class). The same post-re-lay shape attachEndpoint's
+        // tie-grow seals with - the one spelling, in twoPassSealSpan. The
+        // laid chain's tail rides the fraction the seal used
+        // (setEndpoints), so the free-end tie square sits on the cursor on
+        // the very frame the chain grows. A non-crossing re-lay re-derives
+        // the same count and answers the single-pass span.
         const span = frozen
             ? this._length
-            : Math.max(demanded / seatFraction('end', count), MIN_ROPE_SPAN);
+            : Math.max(twoPassSealSpan(demanded, 'end', count), MIN_ROPE_SPAN);
         this.setEndpoints(
             { x: anchor.x, y: anchor.y },
             { x: anchor.x + ux * span, y: anchor.y + uy * span }
@@ -1704,14 +1985,19 @@ export default class Rope extends BaseObject {
             // by #90's roles): knots address roles, and the roles re-derive
             // their bodies from the live chain — nothing to re-seat, no
             // knot can land on a traded-away body.
-            // The appended tail lands ON the end point (issue #56, handoff
-            // fix 4): a re-lay that GREW the chain puts its new last body
-            // exactly where the endpoints say, instead of half a pitch
-            // inboard like a centre-laid seat. Every other re-lay — a
-            // same-count re-lay, a prune — keeps the centre lay, so every
-            // seat that already had a body keeps today's geometry.
-            const laid = added.length > 0;
-            const pitch = this._length / targetCount;
+            // The appended tail lands at the END seat's own fraction (issue
+            // #99): the centre lay puts it half a pitch inboard of the
+            // layout end - the ONE geometry birth, same-count re-lays and
+            // prunes already share. The #56 handoff placement put it ON the
+            // end point, which is exactly what a free-end re-lay that grew
+            // across a segmentsForSpan band sealed past the hand (the span
+            // answered the PRE-band count's fraction, the tail rode the
+            // layout end). The re-lay seal now answers the post-band count's
+            // fraction (relayFreeEnd's two-pass), and the tail riding its
+            // own seat fraction puts the tie square on the cursor on the
+            // very frame the chain grows. An appended tail is the birth of
+            // the new tail body, not a re-lay of the end point: the re-lay
+            // lays what a birth of the same span would lay.
             const dx = (end.x - start.x) / targetCount;
             const dy = (end.y - start.y) / targetCount;
             for (let i = 0; i < targetCount; i++) {
@@ -1720,19 +2006,13 @@ export default class Rope extends BaseObject {
                     y: start.y + dy * (i + 0.5),
                 });
             }
-            if (laid) {
-                Body.setPosition(this._segments[targetCount - 1], { x: end.x, y: end.y });
-            }
             const previous = this._constraints;
             this._constraints = this._buildChainConstraints(this._length);
-            // …and the last link's rest length follows the laid distance (1½
-            // pitches: centred seat count−1 out to the tail on `end`), or the
-            // chain would be half a pitch over-stretched and the first step
-            // would snap the tail back to the centre. Rest lengths still
-            // equal laid distances, so the grown chain rests taut at `end`.
-            if (laid && targetCount > 1) {
-                this._constraints[this._constraints.length - 1].length = pitch * 1.5;
-            }
+            // Rest lengths equal laid distances for the WHOLE chain (ADR 0007
+            // amendment 2's appended-tail override rides out with the ON-end
+            // placement): the centre-laid tail needs no special link - the
+            // re-lay lays exactly the chain a birth of the same span would,
+            // so growth and birth share one chain shape.
             // The re-lay replaced the chain: announce the swap so the
             // physics engine drops the old chain for the rebuilt one when
             // this rope lives in a world (the usual edit-stage case is

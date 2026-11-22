@@ -640,6 +640,47 @@ function boundsLike(b) {
     return { x: b.x, y: b.y, width: b.width, height: b.height };
 }
 
+describe('The connect-flow squares on the renderer — the tied seat keeps gold (issue #103)', () => {
+    it('a tied seat under an armed seek paints gold, never the seeking blue, and the dashed preview points nowhere', () => {
+        const rope = objectRegistry.create('free-rope', 300, 300); // bodyless coil: one anchor seat
+        const spawnBall = new Balloon(360, 240);  // the coil tie's target: spawn hangs from its knot
+        const otherBall = new Balloon(320, 380);  // the out-of-band mid tie's target
+        const flow = new ConnectFlow();
+        flow._mode = 'EDITING';
+
+        flow.handlePointerDown(300, 300, [rope, spawnBall]); // the coil square seeks
+        const knot1 = spawnBall.getAttachmentWorldPoint('knot');
+        flow.handlePointerDown(knot1.x, knot1.y, [rope, spawnBall]); // the spawn tie; the flow armed the MID seat (issue #103)
+        expect(flow.seek.role).toBe('mid');
+
+        // The armed seat gets tied OUT OF BAND — the restore path binds
+        // its tokens straight into the rope — so the armed square's truth
+        // is now occupied while the flow still reports the seek on it.
+        rope.attachEndpoint('mid', otherBall, 'knot');
+        flow.setPreview(500, 400); // the aim the armed seek keeps reporting
+
+        const r = new Renderer();
+        r._mode = 'EDITING';
+        r.setConnectFlow(flow);
+        r.hoverPoint = null;
+        const ctx = makeDrawCtx();
+        r._drawConnectSquares(ctx, [rope, spawnBall, otherBall]);
+
+        // The tied square paints gold — the seeking blue LOSES the
+        // priority fight (issue #103): an occupied seat is never painted
+        // as a live blue aiming square.
+        expect(ctx.fillStyles).toContainEqual('rgba(184, 134, 11, 0.85)');
+        expect(ctx.fillStyles).not.toContainEqual('rgba(64, 128, 255, 0.9)');
+        // And the dashed preview never points at the cursor while the
+        // armed seat is occupied: no line leaves the armed square.
+        expect(ctx.lineTo).not.toHaveBeenCalled();
+
+        rope.dispose();
+        spawnBall.dispose();
+        otherBall.dispose();
+    });
+});
+
 /** Minimal canvas 2D-context stub that records calls (no DOM/canvas in Node). */
 function makeDrawCtx() {
     const ctx = {};

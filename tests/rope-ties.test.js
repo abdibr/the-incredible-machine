@@ -96,10 +96,13 @@ describe('Rope role ties (issues #56/#90) — the seat gate', () => {
 
         const link = physics.getAttachedConstraints()[0];
         // The mid-seat tie sits beyond its covering circle (246.8px vs 25),
-        // so the covering grow re-counted 6 → 15 and the knot IS the mid
-        // seat's — its link realizes from whatever body the role names now
-        // (mid of 15 = bodies[8]), not the anchor.
-        expect(link.bodyA).toBe(rope.bodies[8]); // the re-counted chain's middle body
+        // so the covering grow re-counts through the two-pass seal (issue
+        // #99): the provisional ~592 names count 15, and the seal re-divides
+        // by count 15's own mid fraction (0.5) to ~494, whose own answer is
+        // count 13 (whose mid fraction 6.5/13 is the same 0.5, so the laid
+        // middle still rests exactly on the knot). Its link realizes from
+        // whatever body the role names now (mid of 13 = bodies[7]).
+        expect(link.bodyA).toBe(rope.bodies[7]); // the re-counted chain's middle body
         expect(link.bodyB).toBe(balloon.bodies[0]);
         expect(rope.lengthFrozen).toBe(true); // any tie freezes the pinned length
 

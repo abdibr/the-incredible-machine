@@ -69,12 +69,12 @@ Narrows § decision 4 and the previous amendment's point 3: with named tie seats
 
 - The proximity surface disappears from the public rope API: `ROPE_SNAP_RADIUS`/`ROPE_ATTRACT_RADIUS`, DragDrop's placement snap (`_snapObjectToRopes`) and pull-to-tie translation, and the snap/attract hint renderers (`_drawRopeSnapHints`/`_drawRopeEndpointHints`) die with their guesswork contracts; the proximity test contracts are rewritten as click-flow contracts (tie / cancel / untie / beyond-reach refusal).
 - Two registered types double the matrix bookkeeping: every row that must catch a rope (scissors blades, candle flame) is declared for `rope` and `free-rope`, or matched by body label.
-- The snapshot/token seam keeps its shape: `serializePlacedBoard` emits `segment` tokens and restore binds two-phase as before; boards and bug files written with `endpoint` tokens restore through the degenerate mapping (endpoint 0 → first segment, 1 → last), pinned down with regression tests in the mid-chain ticket.
+- The snapshot/token seam keeps its shape: `serializePlacedBoard` emits knot tokens and restore binds two-phase as before. (The acceptance-era shape emitted the `segment` token and restored `endpoint`-legacy boards through the degenerate index mapping - endpoint 0 as the first segment, 1 as the last; superseded by the seat-role tokens - the token names its seat ROLE since issues #88/#90, and a legacy numeric token refuses at load with a warning. Recorded in the 2026-11-22 amendment.)
 - The engine sever consumer (`_detachRopeConstraints` with co-termination, ADR 0005 decision 4) becomes piece-aware: links at surviving segments must survive a cut rather than die with it.
 - The bundle is the one rope state with zero engine presence; board snapshots carry it as a plain row until its first tie, and the recorder's refIds/token narration need no change (its build-trace knot tokens stay narrative).
 - Edit-only affordances add a UI interaction mode (seek) gated by stage, cancelled cleanly on every stage change; PLAY boards show no rope UI.
-- Debugging gains new surfaces: per-square knot tooltips (segment, target type + id, pointId, realized/pending, severed) and a live overlay of segment outlines + realized links + bind warnings — for humans and AFK agents alike.
-- Fixed-end knots (segment 0, the pinned anchor) must realize with **zero gap**: the anchor stays pinned at the rope's spawn point, so the connect flow pulls a movable target to the anchor at tie time (a rigid translate) before realizing the knot. Level-fixed targets are immovable and are excluded; the direct rope API and restore paths tie in place and keep their no-move contract. The pull clamps with the same `clampObjectToPlayfield` placement invariant — a pull must never park the tied target inside a boundary wall, where the knot would accept a residual gap (a gentle settle at play start) instead.
+- Debugging gains new surfaces: per-square knot tooltips (the seat's ROLE, target type + id, pointId, realized/pending, severed - the acceptance-era wording indexed the address as `segment`; roles since issue #90) and a live overlay of segment outlines + realized links + bind warnings — for humans and AFK agents alike.
+- Fixed-end knots (the anchor seat - the acceptance-era wording indexed it as segment 0; the pinned anchor) must realize with **zero gap**: the anchor stays pinned at the rope's spawn point, so the connect flow pulls a movable target to the anchor at tie time (a rigid translate) before realizing the knot. Level-fixed targets are immovable and are excluded; the direct rope API and restore paths tie in place and keep their no-move contract. The pull clamps with the same `clampObjectToPlayfield` placement invariant — a pull must never park the tied target inside a boundary wall, where the knot would accept a residual gap (a gentle settle at play start) instead.
 
 ## Related
 
@@ -161,3 +161,155 @@ Glossary terms: **Rope as a tie target**, **Severed-target refusal**,
 policy — 17 tests) is the executable contract; `tests/connect-flow.test.js` and
 `tests/rope-ties.test.js` follow the additive target-square reality. Full suite:
 59 files / 662 tests, all green.
+
+## Amendment (2026-11-22) - the whole chain is three seats (issues #91, #99, #103, #102, #83)
+
+The rope program's docs pass, dispatched last so it records what landed. It adds no code: the behavior
+below is read off the landed commits (issues #100/#98, #102, #99, #101, #103 and #83), this record's
+text is checked by reading, not by a test (the group spec's testing decision), and the glossary pass
+rides this same amendment. What it does:
+
+1. **Supersedes decision 3's "the whole chain is tieable" and decision 6's segment-indexed token
+schema - the three-seat rope.** A rope answers exactly three tie seats - two ends and one mid - one
+knot per seat, three knots per rope, and the mid seat is a role over the live chain: it IS the middle
+of whatever count the chain holds, not a body at a fixed address. Both supersessions have the same
+two reasons. Three seats are enough to place a payload: the anchor secures the rope, the end works
+the tail, the mid seat picks the middle - nothing a puzzle asks of a rope falls between them, so a
+knot no longer has to be tieable at the count-dependent address no placement needs. And index-free
+seats delete a whole class of bookkeeping the chain-index addressing had to carry: no schema range to
+validate (`Rope.validSegment` was deleted with issue #90), no seat index to re-seat when a re-lay
+trades the tail (the roles re-derive their own bodies - issue #87's keeps riding #90), no frozen
+chain count kept only so a seat index stayed put (the 2026-11-01 amendment's point 1 rider, retired
+by issue #89), and no numeric migration to carry - a legacy `segment`/`endpoint` token refuses at
+bind and drops with a warning (issue #90). Decision 6 dies entire with it: the token schema is the
+role form `{ seat: 'anchor'|'mid'|'end', targetType, targetOrdinal, pointId }` (the #88 amendment
+introduced it, #90 deleted the segment index beneath it, this amendment retires the decision's own
+`segment` generalization), live refs carry the same role (`_attachments` holds
+`{ seat, target, pointId }`), and the base text of decisions 3 and 6 stays above as superseded
+history only - no live prose in this record, and no glossary entry, still promises a knot on any
+segment. What decision 3 kept is kept: the chain of segment bodies, the span-derived count at every
+seam (`segmentsForSpan`), the capped density, and the tie squares - which now stand exactly on the
+three named seats, so "mid-chain segments show their own square handles" reads true only through the
+mid seat.
+
+2. **The tie-grow rule: a tie never shortens the rope, and a tie grows only through its seat's
+fraction.** The never-shortens half is decision 4's rider, unchanged; the grow is capped at the
+seat's own reach. The covering grow fires only when the demand passes the tied seat's covering
+circle (`tied > length x seatFraction(seat, count)`) - a demand inside it never re-lays, so a tie
+cannot shrink - and the grown span is the demand divided by the tied seat's fraction of the count
+the re-lay will actually lay: the two-pass seal (issue #99) `span1 = tied / frac(seat, count0)`
+names `count1 = segmentsForSpan(span1)`, and the seal re-divides by `frac(seat, count1)`, so a grow
+whose re-count crosses a count band lays its seat ON the knot instead of past it (the +22% measured
+inflation class), and a free-end re-lay's appended tail sits on the cursor on the very frame the
+chain grows (the +22.7px reel class). The count stays the span's rule at every seam (issue #89): a
+tie's only freedom is to grow, and only through its own seat's fraction.
+
+3. **Supersedes the 2026-11-01 amendment's point 2 (appended tails ride their seat fraction).**
+That point ruled an appended tail body lands ON the end point - "a re-lay that grew has to reach the
+point it was given" - which forced its last link to a 1.5-pitch rest length. Point retired: the
+appended tail is laid at its END seat's own fraction, a centre-lay body like any other (issue #99),
+so the ON-end placement and the 1.5-pitch override go together, and a re-lay lays exactly the chain
+a birth of the same span lays - one chain shape across birth, re-lay and grow, the same
+`makeSegmentBody` factory (ADR 0005 decision 12's rest-lengths-equal-laid-spacing invariant holds
+for the whole chain again, unamended).
+
+4. **Extends the 2026-11-01 amendment's point 3 (the armed free-rope seek advances to the next free
+seat, issue #103).** Point 3's one-handed multi-tie flow stands exactly as written: a free rope's
+tie keeps the flow armed, the pinned side's tie still ends the seek at a settled state, and the
+reach split (free answers true everywhere; pinned gates per seat) is unchanged. The extension is
+where an armed seek points: after its tie the flow re-reads `getTieSeats()` and advances anchor,
+then mid, then end - the mid role re-derived wherever the live count puts its body - and cancels
+when no free seat remains, so no armed square is ever the seat it just tied, no click bounces "seat
+already tied" there, and the end seat's tie ends the flow. The renderer holds the same truth from
+its side: a tied seat always paints gold; only the timed refusal flash outranks it. An extension,
+not a supersession.
+
+5. **Rope-roster queries get one seam (issue #83).** The consumers that need the rope ROSTER ask the
+rope module: `Rope.js` exports `queryRopeFamily(engine, opts)` over `ROPE_FAMILY_TYPES`, querying
+each member through the engine's own `queryObjectsByType` (same read policy, `opts` forwarded -
+`excludeOwner`), so membership stays in the rope module and `PhysicsEngine` stays untouched - no
+engine-level family API, and ADR 0002's family-agnostic object/discovery seam is preserved.
+Scissors's cut scan asks the seam and `agent/observe/state.js`'s extras gate on the `isRopeFamily`
+predicate, so a third family member is one roster append: the cut scan and the extras inherit it
+with no consumer edit. The membership gate sites and the capability-first knot walks remain outside
+its job.
+
+6. **Tie compliance under sustained load is kept and bounded (issue #102; reconciled here from the
+standalone 2026-11-21 amendment that decision carried - one record, not two).** The knot link's
+realize values are kept, with the measured bound recorded - a decision with a number, not a tuning
+change. The length-0 knot link realizes at `stiffness 0.9` against the chain's `0.8` links, and
+raising the pin toward rigidity re-introduces the solver instability those values were chosen for;
+some compliance is what keeps the settle stable. What ticket #102 recorded as visible drift (a mid
+seat resting 77.3px from its rim knot after the probe's 230-beat settle, a dynamic bucket dragging
+the chain) was measured before issue #98's re-seat landed; at this amendment's tip the covering
+re-lay and the re-seat put the seat onto its knot at tie time (issue #87's ride, issue #98's lay),
+and the settled read of the probe scenario verbatim (the covered mid tie grows the span to ~746,
+then 230 beats at 60Hz) is the tight story: **static targets settle at ~0.4px** seat-to-knot (the
+scenario's payload bucket held fixed; never above ~0.5px in the late window), and **a heavy payload
+dragged under sustained load settles at ~0.25px** (the falling bucket carried through the settle; no
+sampled beat above ~1.4px). The recorded bound is the ceiling, deliberately loose: **the probe
+scenario's settled seat-to-knot distance stays at or under 80px** - pinned by
+`tests/rope-tie-compliance.test.js` so a future tuning change cannot silently worsen the drift;
+softening or stiffening the knot link reopens this decision deliberately, with a new stability
+measurement, never by edit.
+
+The glossary pass: the **seat**, **knot**, **seat token (the knot token)** and **tie-grow** entries
+are rewritten in the three-seat model; the connect-flow entry notes what issue #103's advance makes
+true and the rope-family entry notes issue #83's seam; the endpoint-era prose that still named live
+truth is corrected in place. No glossary entry promises a knot on any segment.
+
+Test surface at amendment time: none added - docs only. The behavior named above is pinned by the
+suites that landed it: `tests/rope-seats.test.js`, `rope-ties.test.js`, `rope-seat-keeps.test.js`,
+`rope-seat-tokens.test.js`, `rope-span.test.js`, `rope-tie-compliance.test.js` (the 80px ceiling),
+`rope-family.test.js` (the roster seam) and `connect-flow.test.js` (the armed-seek advance). Full
+suite: 76 files / 877 tests, all green.
+
+## Amendment (2026-11-21) - the review-fix records: what the docs pass listed but never wrote (issues #100, #101)
+
+The 2026-11-22 amendment's preamble read issues #100 and #101 off the landed commits, and the
+rope-ties spec carried lines the code answers differently; both reviews surfaced the gaps. This
+amendment records them where the code's own doc lives — zero lines of behavior change.
+
+1. **The tie point answers the body's rotation (issue #100) — superseding ADR 0005 decision 7 as
+first written.** `BaseObject.getAttachmentWorldPoint` resolves an attachment point from
+body-local terms: the offset rides its own body's angle (`position + rotate(offset,
+body.angle)`), so the tie square, knot ring, knot tooltip and the drawn knots sit on the same
+point the realized engine link pins at every body angle — Matter re-rotates the knot link's
+stored pointB in place as the bearer body turns (ADR 0005's "Matter pins worth knowing"), so a
+tie must answer the body's frame or the square and the pin drift apart while a balloon spins or
+a bucket tips (the 10.8-17.7px growing wedge the ticket's probe measured;
+`tests/rope-tie-frame.test.js` holds the frame-coincidence probe). ADR 0005 decision 7's
+parenthetical — "world space (position + offset, unrotated)" — was the angle-0 spelling, true
+only while every attachment-bearing object rendered upright; it is amended in place there (the
+domain rule: ADR conflicts are surfaced, never silently overridden), and the glossary's
+attachment-point entry carries the same correction. This pass also corrected the probe suite's
+own name, which said the opposite of what it ships: "Tie points ignore body rotation" is now
+"Tie points answer the body's rotation".
+2. **The balloon paints no decorative string (issue #101).** The tie preamble listed it, and no
+point recorded it: a balloon paints never a string of its own, tied or untied — the rope's
+drawn tail is the only string on the board; the knot triangle and the realized pin are the
+balloon's tie truth.
+3. **A beyond-reach tie grows the rope; the target never moves.** The spec's decision 2 ("the
+target is pulled onto the seat when the knot is beyond it") is deliberately not implemented and
+superseded as written: an end/mid tie aimed past the seat's covering circle answers with the
+tie-grow covering re-lay (issue #98) — the chain re-lays ONTO the knot, and nothing of the tie
+ever translates the target (the same target immobility the #98 triage states). The only pull
+that lives is the anchor seat's connect-flow pull of a movable non-rope target onto the anchor
+(Consequences, above), where the knot consumes no chain and no beyond-it exists.
+4. **Restore ties re-seat nothing.** `attachEndpoint` carries an `opts` flag (`reseat: false`)
+and the token-bind paths pass it: a restored row binds its knot over the lay the row itself
+records, because the in-reach re-seat would reshape a replayed board before its first step and
+break ADR 0006 decision 1's snapshot-authoritative replay (bit-exact bug-file replay). The
+covering grow still answers a knot recorded past its cover; the re-seat is live-tie policy
+only. The restore paths keep their no-move contract — unasked by the feature spec, recorded
+because the code depends on it.
+5. **A free-rope tie's advance sweeps the refusal flash (issue #103's rider).** The seek-advance
+(the 2026-11-22 amendment's point 4) clears any standing refusal flash at the exact moment it
+re-arms the seat: the newest click's outcome — a landed tie — replaces the last refusal's red
+paint, so a timed flash never points at a seat the flow has just left (the pinned family's
+settled tie sweeps the same way; `flow.refusal` answers null after either, pinned by
+`tests/connect-flow.test.js`'s refusal tests). Nothing of decision-level tie behavior changes;
+recorded because the sweep ships with the advance and decision-level text never said so.
+
+Test surface at amendment time: none added — records, the #100 rename and the two-pass seal's
+one-spelling dedup only. Full suite: 76 files / 877 tests, all green.

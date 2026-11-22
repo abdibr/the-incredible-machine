@@ -208,9 +208,13 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
 
         physics.step(16.67); // the lazy per-step reconcile (ADR 0004 seam)
         expect(physics.getAttachedConstraints()).toHaveLength(1);
-        // The tie covers its own knot: the length grew from 40 to the
-        // tied span times the 6/5.5 chain-rest factor.
-        expect(rope._length).toBeCloseTo(Math.hypot(200, 225.6) * 6 / 5.5, 3);
+        // The tie covers its own knot … through the two-pass seal of
+        // issue #99: the reel's provisional grown span (tied times the
+        // 6/5.5 chain-rest factor = 328.9) names count 9, and the hand's
+        // span re-divides by THAT count's own end fraction (8.5/9); the
+        // click's tie re-seals the same span, so the length rests at the
+        // post-re-lay seal, not the single-pass one.
+        expect(rope._length).toBeCloseTo(Math.hypot(200, 225.6) * 9 / 8.5, 3);
 
         physics.dispose();
         rope.dispose();
@@ -454,14 +458,18 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
         flow.setPreview(knot.x, knot.y);
         expect(flow.handlePointerDown(knot.x, knot.y, [rope, balloon])).toBe(true);
         // The tie lands on the END seat (issue #90: the seek is a role) —
-        // the reel laid span = hypot(400, 225.6) · 6/5.5 = 500.98px, so the
-        // chain re-counted to ceil(500.98 / 40) = 13, and the end seat's
-        // capacity (500.98 · 12.5/13 = 481.7px) covers the 459.06px knot —
-        // hence the untouched `_length` pinned two lines below.
+        // and it covers its own knot through the two-pass seal of issue #99:
+        // the reel's provisional span (tied · 6/5.5 = 501.0) names count 13,
+        // the reel re-divides by THAT count's end fraction (12.5/13) and
+        // lays 12 bodies whose tail rides 457.7 - 1.5px shy of the knot,
+        // which sits in the end seat's uncoverable 12/13-band gap; the
+        // click's tie-grow then re-seals against the laid count's OWN
+        // fraction (12/11.5) - a fixed point - and the tail square lands
+        // exactly on the knot (the tie covers its own seat 1:1).
         expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'end', target: balloon, pointId: 'knot' });
         expect(flow.seek).toBe(null);
         expect(flow.refusal).toBe(null); // a settled tie sweeps the flash
-        expect(rope._length).toBeCloseTo(Math.hypot(400, 225.6) * 6 / 5.5, 3);
+        expect(rope._length).toBeCloseTo(Math.hypot(400, 225.6) * 12 / 11.5, 3);
         rope.dispose();
         balloon.dispose();
     });
@@ -605,11 +613,16 @@ describe('ConnectFlow — the click-to-connect state machine', () => {
             // re-counted it (the free family's unlimited span): the knot
             // IS the mid seat's (issue #90), so it rides to the re-counted
             // chain's middle (issue #87 by the roles themselves), and the
-            // armed seek's role stayed the same.
+            // armed seek MOVED past it — the flow armed the next free seat
+            // (issue #103, the group spec's decision 7): a seek parked on
+            // the seat it just tied bounced every later click with "seat
+            // already tied".
             expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'mid', target: bucket, pointId: 'rim' });
             // The free family's seek stays armed after a tie (ADR 0007
-            // amendment 3): the same seat aims for the next knot.
-            expect(flow.seek).toEqual({ rope, role: 'mid' });
+            // amendment 3 / issue #56), armed on the NEXT free seat: the
+            // end seat of the re-counted chain aims next (anchor, then
+            // mid, then end).
+            expect(flow.seek).toEqual({ rope, role: 'end' });
             rope.dispose();
             balloon.dispose();
             bucket.dispose();
@@ -821,10 +834,15 @@ describe('Renderer draws the connect-flow squares (edit modes only)', () => {
         const bucket = new Bucket(360, 240);
         flow.handlePointerDown(300, 300, [rope, bucket]); // coil seat seek
         const rim = bucket.getAttachmentWorldPoint('rim');
-        flow.handlePointerDown(rim.x, rim.y, [rope, bucket]); // first tie — the seek stays armed
+        flow.handlePointerDown(rim.x, rim.y, [rope, bucket]); // first tie — the seek ADVANCED (issue #103)
+        // The seat the flow armed after the advance (the mid square) gets
+        // tied OUT OF BAND — the restore path binds its tokens straight
+        // into the rope — so the armed seek sits on an occupied seat and
+        // the seat gate answers the next tie aim there.
         const balloon = new Balloon(320, 340);
+        rope.attachEndpoint('mid', balloon, 'knot');
         const knot = balloon.getAttachmentWorldPoint('knot');
-        flow.handlePointerDown(knot.x, knot.y, [rope, bucket, balloon]); // second tie → refused: seat tied
+        flow.handlePointerDown(knot.x, knot.y, [rope, bucket, balloon]); // its second tie → refused: seat tied
 
         const r = new Renderer();
         r._mode = 'EDITING';
@@ -976,16 +994,23 @@ describe('ConnectFlow — free-rope reach gates stay open across the board (issu
         flow.handlePointerDown(rim.x, rim.y, [rope, balloon, bucket]);
         expect(rope.getAttachmentRefs()).toHaveLength(2);
 
-        // Glow = tieable: with the seek live, the far square paints at the
-        // rim and the glow green style is on (only tieable squares glow).
+        // The tie landed on the END seat — the rope's LAST seat. No seat
+        // follows it, so the flow closes (issue #103, the group spec's
+        // decision 7): the seek and its aim are gone, and no square lies
+        // live-armed where nothing can tie.
+        expect(flow.seek).toBe(null);
+        expect(flow.preview).toBe(null);
+        // The dead live-aim is gone with the seek: no hover, so the far
+        // square paints nothing and no glow claims it is tieable.
         const r = new Renderer();
         r._mode = 'EDITING';
         r.setConnectFlow(flow);
+        r.hoverPoint = null;
         const ctx = makeDrawCtx();
         r._drawConnectSquares(ctx, [rope, balloon, bucket]);
         const rects = ctx.fillRect.mock.calls.map(([x, y]) => ({ x, y }));
-        expect(rects).toContainEqual({ x: rim.x - 9, y: rim.y - 9 });
-        expect(ctx.fillStyles).toContainEqual('rgba(64, 192, 64, 0.25)');
+        expect(rects).not.toContainEqual({ x: rim.x - 9, y: rim.y - 9 });
+        expect(ctx.fillStyles).not.toContainEqual('rgba(64, 192, 64, 0.25)');
         rope.dispose();
         balloon.dispose();
         bucket.dispose();
@@ -1041,9 +1066,12 @@ describe('ConnectFlow — the tie seat is a role, not a raw index (issue #56)', 
         const newMid = rope.getTieSeats()[1]; // the NEW middle seat
         expect(newMid.body).not.toBe(midBody); // the re-count drew the middle outboard
         expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'mid', target: far, pointId: 'knot' });
-        // …and the armed seek stayed on the role it started on — the same
-        // seat, wherever the live count puts it now.
-        expect(flow.seek).toEqual({ rope, role: 'mid' });
+        // …and the armed seek MOVED with the tie (issue #103, the group
+        // spec's decision 7): the flow armed the next free seat — the end
+        // seat of the re-counted chain — instead of parking on the seat it
+        // just tied. The knot itself keeps riding the role (issue #87, kept
+        // by the roles).
+        expect(flow.seek).toEqual({ rope, role: 'end' });
 
         // …and it realizes from the NEW middle's body — not the old mid-body
         // (which survives the count but is mid-chain no more).
@@ -1060,6 +1088,98 @@ describe('ConnectFlow — the tie seat is a role, not a raw index (issue #56)', 
     });
 });
 
+describe('ConnectFlow — the armed free-rope seek lives on the next free seat (issue #103)', () => {
+    let flow;
+
+    beforeEach(() => {
+        if (!objectRegistry.has('free-rope')) registerAllObjects();
+        flow = new ConnectFlow();
+        flow._mode = 'EDITING';
+    });
+
+    it('a free-rope tie arms the NEXT free seat — the coil tie advances anchor → mid (spec decision 7)', () => {
+        const rope = objectRegistry.create('free-rope', 300, 300); // bodyless coil: one anchor seat
+        const bucket = new Bucket(360, 240);
+        const [coil] = flow.getRopeSquares([rope], null);
+        expect(coil.role).toBe('anchor');
+
+        flow.handlePointerDown(coil.x, coil.y, [rope, bucket]); // the coil square seeks
+        expect(flow.seek).toEqual({ rope, role: 'anchor' });
+        const rim = bucket.getAttachmentWorldPoint('rim');
+        expect(flow.handlePointerDown(rim.x, rim.y, [rope, bucket])).toBe(true); // the spawn tie lands
+
+        expect(rope.getAttachmentRefs()).toEqual([{ seat: 'anchor', target: bucket, pointId: 'rim' }]);
+        // The seek did NOT die with the tie (ADR 0007 amendment 3 / issue
+        // #56's one-handed multi-tie flow kept) — and it did NOT sit down
+        // on the seat it just tied either (issue #103): every click at the
+        // tied square used to bounce "seat already tied". The flow re-armed
+        // on the NEXT free seat — the mid seat of the chain the spawn laid.
+        // That seat exists only because the tie laid the chain, so the
+        // advance had to re-read getTieSeats(): the mid seat is role-derived
+        // (issue #90), never a cached body or a cached index.
+        expect(flow.seek).toEqual({ rope, role: 'mid' });
+        // The advanced seat is a LIVE aim: its square reports tieable glow
+        // the way a seek entry does (the free family refuses no distance).
+        const targets = flow.getTieSquares([rope, bucket], null);
+        expect(targets).toHaveLength(1);
+        expect(targets[0].glows).toBe(true);
+
+        rope.dispose();
+        bucket.dispose();
+    });
+
+    it('the advanced seek dismisses through the same paths — a re-click at its square cancels', () => {
+        const rope = objectRegistry.create('free-rope', 300, 300);
+        const bucket = new Bucket(360, 240);
+        flow.handlePointerDown(300, 300, [rope, bucket]); // the coil square seeks
+        const rim = bucket.getAttachmentWorldPoint('rim');
+        flow.handlePointerDown(rim.x, rim.y, [rope, bucket]); // the spawn tie; the flow advanced to 'mid'
+        expect(flow.seek).toEqual({ rope, role: 'mid' });
+
+        // The armed square moved with the advance; its dismissal paths move
+        // with it: a re-click at the NEW armed square's world point cancels
+        // (the mid seat's body is read fresh from getTieSeats() by role).
+        const mid = rope.getTieSeats().find((s) => s.role === 'mid').worldPoint;
+        expect(flow.handlePointerDown(mid.x + 2, mid.y + 2, [rope, bucket])).toBe(true);
+        expect(flow.seek).toBe(null);
+        expect(flow.preview).toBe(null);
+
+        rope.dispose();
+        bucket.dispose();
+    });
+
+    it('tying the end seat ends the multi-tie flow — the seek cancels when no free seat remains', () => {
+        const rope = objectRegistry.create('free-rope', 300, 300);
+        const bucketA = new Bucket(360, 240);   // the coil's first tie (the anchor seat)
+        const balloonB = new Balloon(700, 120); // the advanced mid seat's tie
+        const bucketC = new Bucket(100, 100);   // the end seat's tie
+
+        flow.handlePointerDown(300, 300, [rope, bucketA]); // the coil square seeks
+        const rimA = bucketA.getAttachmentWorldPoint('rim');
+        flow.handlePointerDown(rimA.x, rimA.y, [rope, bucketA]); // the anchor tie (spawn)
+        expect(flow.seek).toEqual({ rope, role: 'mid' }); // anchor → mid (spec decision 7)
+
+        const knotB = balloonB.getAttachmentWorldPoint('knot');
+        expect(flow.handlePointerDown(knotB.x, knotB.y, [rope, bucketA, balloonB])).toBe(true);
+        expect(rope.getAttachmentRefs()).toContainEqual({ seat: 'mid', target: balloonB, pointId: 'knot' });
+        expect(flow.seek).toEqual({ rope, role: 'end' }); // mid → end: the advance rides the seat roles
+
+        // The end seat is the LAST seat: its tie has no next free seat, so
+        // the armed seek closes instead of pretending at a dead square —
+        // the one-handed multi-tie flow (anchor, then mid, then end) ends
+        // where it must: no free seat remains.
+        const rimC = bucketC.getAttachmentWorldPoint('rim');
+        expect(flow.handlePointerDown(rimC.x, rimC.y, [rope, bucketA, balloonB, bucketC])).toBe(true);
+        expect(rope.getAttachmentRefs().map((r) => r.seat)).toEqual(['anchor', 'mid', 'end']);
+        expect(flow.seek).toBe(null);
+        expect(flow.preview).toBe(null);
+
+        rope.dispose();
+        bucketA.dispose();
+        balloonB.dispose();
+        bucketC.dispose();
+    });
+});
 function makeDrawCtx() {
     const ctx = {};
     const strokeStyleLog = [];
