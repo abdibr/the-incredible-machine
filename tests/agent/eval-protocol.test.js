@@ -152,10 +152,10 @@ async function evalConfig(policy, { seeds = '1,4' } = {}) {
 
 describe('runProtocol - the measurement over the stub provider', () => {
     it(
-        'solves the gated level set: gate passes, every run reaches, transcripts land at the deterministic paths',
+        'the solved/unsolved mix: level-01 and level-03 reach, the ramp-only level-02 hits the cap; transcripts land at the deterministic paths',
         { timeout: 60000 },
         async () => {
-            const { errors, config } = await evalConfig(makeLevelSelectivePolicy(['level-01', 'level-02', 'level-03']));
+            const { errors, config } = await evalConfig(makeLevelSelectivePolicy(['level-01', 'level-03']));
             expect(errors).toEqual([]);
 
             const result = await runProtocol(config);
@@ -166,14 +166,20 @@ describe('runProtocol - the measurement over the stub provider', () => {
             expect(result.levels.map((l) => l.level)).toEqual(['level-01', 'level-02', 'level-03']);
             expect(result.levels.map((l) => l.gate)).toEqual(['must-solve-every-run', 'attempt-and-diagnose', 'attempt-and-diagnose']);
 
+            const byLevel = Object.fromEntries(result.levels.map((l) => [l.level, l]));
+            expect(byLevel['level-01'].solved).toBe(2);
+            expect(byLevel['level-03'].solved).toBe(2);
+            // level-02 has no player-placeable ball: the generic ball-drop
+            // policy cannot win it, so its runs end at the turn cap.
+            expect(byLevel['level-02'].solved).toBe(0);
+
             for (const level of result.levels) {
                 expect(level.runs).toHaveLength(2);
                 for (const run of level.runs) {
-                    expect(run.outcome).toBe('goal-reached');
+                    expect(run.outcome).toBe(level.level === 'level-02' ? 'turn-cap' : 'goal-reached');
                     expect(run.turns).toBeGreaterThanOrEqual(2);
                     expect(run.durationMs).toBeGreaterThanOrEqual(0);
                 }
-                expect(level.solved).toBe(2);
                 expect(level.name).toBeTruthy();
             }
 
@@ -190,7 +196,7 @@ describe('runProtocol - the measurement over the stub provider', () => {
             // the transcripts exist and name their outcome
             for (const ref of expected) {
                 const onDisk = await readFile(ref, 'utf8');
-                expect(onDisk).toContain('outcome: goal-reached');
+                expect(onDisk).toContain(ref.includes('level-02') ? 'outcome: turn-cap' : 'outcome: goal-reached');
             }
         },
     );
@@ -237,11 +243,11 @@ describe('runProtocol - the gate and the stuck-point diagnosis', () => {
                 const joined = run.diagnosis.join('\n');
                 // the OBSERVATION gap: the shipped hint the model never sees...
                 expect(joined).toMatch(/observation gap: the level ships a hint the observation never shows/);
-                expect(joined).toContain('Place the trampoline');
+                expect(joined).toContain('The ⚓ bowling ball is anchored');
                 // ...and the ACTION gap: observe-forever repetition (never building)
                 expect(joined).toMatch(/repetition: observe \{\} x/i);
                 // unused budget: what was never even attempted
-                expect(joined).toMatch(/budget left unused: ball 1, ramp 2, trampoline 1/);
+                expect(joined).toMatch(/budget left unused: ramp 3/);
             }
             // level-03's diagnosis names its own hint
             expect(l03.runs[0].diagnosis.join('\n')).toContain('Line up the dominoes on the ramp');

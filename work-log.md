@@ -1,5 +1,64 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-21 — level-02 "Across the Gap" rebuilt: the anchored ball plays itself, the player builds the bridge (user-directed design pass, no ticket)
+
+The design brief: "most of the levels are not very meaningful — start with level-02 and design a
+more interesting level using balls and ramps, and make sure it's winnable." The old level-02 was
+exactly the failure mode called out: a static shelf ramp, a floor bucket at (780, 480), a budget
+of ball + 2 ramps + 1 trampoline — and a win that ignored the furniture, because the player just
+manufactured their own ball flight and trampolined it over. Nothing on the board did anything
+until the player replaced it with their own throw.
+
+The rebuilt board is one authored physics narrative in three acts, and the player's parts are the
+third:
+
+- **Act 1 — the shelf.** The ⚓ bowling ball (the #67 anchored-part mechanic: immovable in the
+  editor, dynamic at play) sits at (85, 48) and rolls the moment Play is pressed, down three
+  shallow 0.3 rad fixed ramps (120,80 → 260,150 → 375,185) that hand it to the void past x ≈ 460.
+  The player cannot move or start the level's own motion; they can only watch where it leaves.
+- **Act 2 — the far pedestal.** Across the gap, the goal lives high on a funnel: mirrored 0.55 rad
+  ramps at (805, 370)/(955, 370) over a flat catch ramp (880, 455) that steers anything arriving
+  from above into the bucket (880, 430). Come in low or steep-drop to the floor and the ball
+  never climbs back — the hints own that trade-off plainly, and the description already says it:
+  the ball must arrive from above.
+- **Act 3 — the player's budget.** `availableParts` is exactly `{ ramp: 3 }` — no ball, no
+  trampoline. The win is to catch the rolling ball off the shelf end and carry it across the gap;
+  the shipped solution scene places three shallow 0.15 rad spans at (500, 235)/(640, 270)/(720, 300).
+
+- **Proof it is winnable:** `.scratch/level02-design/play.mjs` — the playtest builds the level the
+  way main.js does (fixedObjects through `levelObjectOptions`, then the solution's player rows
+  through `objectRegistry.deserialize`) — reports `outcome: "reached"` at 342 steps (~5.7 s of
+  sim), the ball settling at (878, 407), inside the bucket-goal's mouth at (880, 430). A live
+  Playwright pass at :5177 confirmed the editor view renders the new board and the give-up
+  solution replay lands the ball in the bucket (1280×800).
+- **ADR 0009 shape:** every fixedObjects row carries explicit `options: {}` and the solution scene
+  stamps `isScene` — `true` on scene rows, `false` explicitly on the three player rows, per the
+  ADR's written-explicitly convention. The ball row carries `isAnchored: true`, which
+  `levelObjectOptions` passes only for anchor-capable types while `isFixed !== true`, and
+  `Ball.deserialize` round-trips `isAnchored` + `isScene` verbatim — so the give-up replay
+  reconstructs the anchored roller exactly.
+- **Hints** rewritten for the new mechanics: watch the anchored ball leave the shelf first, keep
+  the player ramps shallow (steep drops strand the ball on the floor), and aim for the funnel
+  mouth rather than the bucket it feeds.
+- **Agent-protocol fallout, stated honestly:** the generic ball-drop eval policy can no longer
+  win level-02 — with no player-placeable ball its runs end at the turn cap. The suite now pins
+  that mix instead of pretending a solve: `tests/agent/eval-protocol.test.js` reports level-01 and
+  level-03 solving 2/2 runs while level-02 turns caps (transcripts recording `outcome:
+  turn-cap`), the stuck-point diagnosis names the shipped hint ("The ⚓ bowling ball is
+  anchored…") and the truthfully-unused "budget left unused: ramp 3", and
+  `tests/agent/http.test.js`'s scope-persistence turn places a ramp — a ball is no longer in the
+  budget.
+- **Design harnesses** (kept untracked in `.scratch/level02-design/`, per the scratch policy):
+  `sim.mjs` replays a committed level's solution, `probe.mjs` runs arbitrary ad-hoc scenes
+  against the real engine, `play.mjs` is the playtest above. The landed geometry came from probe
+  runs walking catch-and-carry ramp chains rather than by hand.
+- **Unrelated concurrent-runner note, for the record:** a foreign untracked
+  `tests/agent/session-stepping-parity.test.js` (another agent's #61 watch work-in-progress)
+  briefly failed this run's full suite with `session.beginTrial is not a function`; it was never
+  this session's change and the file was gone by the final run — recorded so the blip is not
+  misattributed to the level change.
+- Full suite: **76 files / 877 tests, all green** at the new working tree.
+
 ## 2026-11-21 — rope-ties: the review-fix pass lands, and the arc's provenance gap is recorded (issues #83, #91, #98-#103)
 
 The rope-ties feature arc (#83, #91, #98-#103) came back from its two code reviews; the fix pass

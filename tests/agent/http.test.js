@@ -202,7 +202,7 @@ describe('turn service - level selection', () => {
         expect(res.body.observation).toContain('level-02');
 
         // the scope persists: a plain /turn now plays level-02
-        const place = await post('/turn', { action: 'place', type: 'ball', x: 500, y: 100 });
+        const place = await post('/turn', { action: 'place', type: 'ramp', x: 500, y: 100, angle: 0.1 });
         expect(place.body.result.ok).toBe(true);
         const obs = await (await fetch(`${service.url}/observation`)).json();
         expect(obs.level).toBe('level-02');
