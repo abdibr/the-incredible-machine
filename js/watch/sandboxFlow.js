@@ -14,13 +14,19 @@
  * - Run opens the steppable trial (beginTrial, the #61 seam) over the
  *   built placements and advances it in small capped batches on the
  *   page's cadence - the same watch machinery as the level view; the run
- *   ends by its BUDGET and the finalized result the sandbox posture
- *   judges is always 'timeout': NO goal banner ever - bannerForSandbox-
- *   Result composes only stop/timeout payloads, and the event log tells
- *   the story (a bucket catch is data, not a verdict, ADR 0011). The
- *   manual stop, Reset, the two-phase Pause and the run-phase single-
- *   frame step land behind their own pinned red tests, one cycle per
- *   acceptance criterion.
+ *   ends by its BUDGET or a manual stop (stopRun), and the finalized
+ *   result the sandbox posture judges is always 'timeout': NO goal banner
+ *   ever - bannerForSandboxResult composes only stop/timeout payloads and
+ *   the event log tells the story (a bucket catch is data, not a verdict,
+ *   ADR 0011);
+ * - Reset returns the board to empty (reset): an interrupted run is
+ *   finalized first - its owned loop:reset end fact lands, the run-end
+ *   banner does NOT (a reset is not a run story) - the placements are
+ *   wiped, the board re-materialized empty and the cycle returns to
+ *   idle, one start() away from a fresh build.
+ *
+ * The two-phase Pause and the run-phase single-frame step land behind
+ * their own pinned red tests, one cycle per acceptance criterion.
  *
  * Watching never mutates player state: no recorder, no editor, no
  * progress marks - none of that machinery is even constructed here
@@ -28,6 +34,7 @@
  * no process env) and born goal-less.
  */
 
+import { reset as resetPlacements } from '../../agent/actions.js';
 import { AgentSession } from '../../agent/session.js';
 import { FIXED_STEP_MS } from '../../js/engine/GameLoop.js';
 import {
@@ -83,8 +90,9 @@ export function bannerForSandboxResult(result, { stopped = false, seconds = SAND
  * Lifecycle: start() installs the goal-less board document and applies
  * the scripted build, one beat per paced tick (status 'building' ->
  * 'built'); run() opens the steppable trial over the built placements
- * and animates it ('running'), ending by its budget ('ended') with the
- * never-a-goal-banner payload. Every page tick rides the injected
+ * and animates it ('running'), ending by its budget or a manual stop
+ * ('ended') with the never-a-goal-banner payload; reset() returns the
+ * board to empty ('idle'). Every page tick rides the injected
  * `schedule` (requestAnimationFrame in the browser, a manual pump in
  * tests); between ticks the caller may read the live board (liveObjects)
  * and the open run (session.trialRun). The listeners are the page's
@@ -207,6 +215,39 @@ export class SandboxFlow {
      */
     liveObjects() {
         return this.session.engine ? [...this.session.engine.getObjects()] : [];
+    }
+
+    /** Manual stop (issue #64): end the running trial now - stopping, not budgeting out. */
+    stopRun() {
+        if (this._cancelled || this.status !== 'running' || !this._run) return null;
+        this._finishRun(true);
+        return this.result;
+    }
+
+    /**
+     * Reset (issue #64): the board returns to empty. An open run is
+     * finalized first - its owned loop:reset end fact lands, the run-end
+     * banner does not (a reset is not a run story) - the placements are
+     * wiped and the empty board stands again; status back to idle, one
+     * start() away from a fresh build.
+     */
+    reset() {
+        if (this._cancelled) return;
+        if (this.session.trialRun) this.session.finalizeTrial(); // close the interrupted run's fact stream
+        resetPlacements(this.session);
+        this._beatIndex = 0;
+        this._buildAccMs = 0;
+        this._buildLast = null;
+        this._run = null;
+        this._accMs = 0;
+        this._lastNow = null;
+        this._eventCursor = 0;
+        this.result = null;
+        this.stoppedHow = null;
+        this.status = 'idle';
+        this.session.materializeBoard(); // the empty board (the board doc carries no furniture)
+        this._onFrame();
+        this._onStatus('reset - the board is empty again');
     }
 
     // ---- the build phase: one scripted beat per paced tick ----
