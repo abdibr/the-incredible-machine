@@ -41,6 +41,22 @@ describe('observe/state', () => {
         expect(bucket.extra).toMatch(/caught:1/); // the goal bucket caught it
     });
 
+    it('reports a turned part by its own size, not its rotated bounding box', async () => {
+        const sizeAt = async (angle) => {
+            const fresh = new AgentSession();
+            await fresh.loadLevel('level-02');
+            place(fresh, 'ramp', 500, 250, { angle });
+            fresh.materializeBoard();
+            const row = stateRows(fresh.engine, fresh.goal).find((r) => r.pos === '500,250');
+            fresh.dispose();
+            return row.size;
+        };
+        const flat = await sizeAt(0);
+        const turned = await sizeAt(0.45);
+        expect(flat).toBe('120×12'); // the plank's authored footprint
+        expect(turned).toBe(flat);   // rotating it does not inflate the reported size
+    });
+
     it('renders aligned columns with a fixed header', async () => {
         session = new AgentSession();
         await session.loadLevel('level-01');

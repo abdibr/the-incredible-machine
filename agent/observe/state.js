@@ -59,6 +59,24 @@ function extrasOf(obj, goal) {
 }
 
 /**
+ * Footprint from the body's own rectangle, so a turned part keeps the size it
+ * was authored with. `bounds` is the axis-aligned box, which grows as the part
+ * rotates (a 120×12 plank at 26° read "113×63" and invited coordinate math on
+ * a shape that no longer existed). Only exact for quad bodies; every other
+ * shape keeps the AABB it has always reported.
+ * @param {object} obj - BaseObject instance
+ * @returns {string|null} "W×H" in game units, or null when not a quad
+ */
+function footprintOf(obj) {
+    const body = obj.bodies.find((b) => b && b.position && Array.isArray(b.vertices) && b.vertices.length === 4);
+    if (!body) return null;
+    const [a, b, c] = body.vertices;
+    const w = Math.hypot(a.x - b.x, a.y - b.y);
+    const h = Math.hypot(b.x - c.x, b.y - c.y);
+    return w >= h ? `${Math.round(w)}×${Math.round(h)}` : `${Math.round(h)}×${Math.round(w)}`;
+}
+
+/**
  * One row per object in the live world.
  * @param {object} physics - PhysicsEngine instance
  * @param {object} [goal] - level goal (for target/goal-zone flags)
@@ -77,7 +95,7 @@ export function stateRows(physics, goal = null) {
             type: obj.type,
             pos,
             angle: `${(obj.angle * DEG).toFixed(0)}°`,
-            size: b ? `${Math.round(b.width)}×${Math.round(b.height)}` : '—',
+            size: footprintOf(obj) ?? (b ? `${Math.round(b.width)}×${Math.round(b.height)}` : '—'),
             flags: obj.isFixed ? 'fixed' : 'dynamic',
             motion: motionOf(obj),
             extra: extrasOf(obj, goal).join(', ') || '—',
