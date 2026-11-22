@@ -303,6 +303,17 @@ describe('resolveLiveDriverConfig - the browser driver\'s configuration contract
         expect(config.apiKey).toBe('k');
         expect(config.level).toBe('level-02');
     });
+
+    it('a model provider that never answers degrades at the transport own bound - the ask resolves structured, never hangs the cycle', { timeout: 2000 }, async () => {
+        const model = createChatModelTransport({
+            baseUrl: 'http://127.0.0.1:9/v1', model: 'stub-model',
+            fetchImpl: () => new Promise(() => {}), // hangs forever
+            timeoutMs: 5,
+        });
+        const answer = await model.ask([]);
+        expect(answer.calls).toEqual([]);
+        expect(answer.error).toMatch(/no answer within 5 ms/);
+    });
 });
 
 describe('createChatModelTransport - the OpenAI-compatible chat-completions seam', () => {
@@ -506,6 +517,48 @@ describe('LiveFlow - the live LLM turn source in the watch page (issue #65)', ()
                 { action: 'trial', seconds: 5, level: 'level-01' },
             ]);
             expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'goal-reached', turns: 2 })]);
+        },
+    );
+
+    it(
+        'the provider tool-call ids ride the loop history unmutated - the assistant turn re-posts its tool_calls and each tool row echoes the id it answers',
+        { timeout: 120000 },
+        async () => {
+            const ticker = makeTicker();
+            const service = await startTurnServer();
+            services.push(service);
+            const moves = [
+                { calls: [{ id: 'call_9f', name: 'place', args: { type: 'ball', x: 700, y: 100 } }] },
+                { calls: [{ name: 'trial', args: { seconds: 5 } }] },
+            ];
+            let step = 0;
+            const stub = await startStubServer(() => {
+                const next = step < moves.length ? moves[step++] : { calls: [{ name: 'observe', args: {} }] };
+                return next;
+            });
+            stubs.push(stub);
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], sandboxEnds: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                levelId: 'level-01',
+                fetchImpl: diskFetch('level-01'),
+                model: createChatModelTransport({ baseUrl: 'http://127.0.0.1:' + stub.port + '/v1', model: 'stub-model' }),
+                turns: createHttpTurnTransport(service.url, 'level-01'),
+                schedule: ticker.schedule,
+                maxTurns: 5,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start();
+            await driveLive(ticker, live);
+
+            expect(collected.errors).toHaveLength(0);
+            const continuation = stub.requests[1].body.messages;
+            // the assistant turn re-posts ITS tool_calls (the strict chat-completions contract: a tool reply needs its pending assistant turn)
+            const assistant = continuation.find((m) => m.role === 'assistant');
+            expect(assistant.tool_calls[0].id).toBe('call_9f');
+            // the tool row answers that very id, never a synthetic one
+            const tool = continuation.find((m) => m.role === 'tool');
+            expect(tool.tool_call_id).toBe('call_9f');
         },
     );
 });
@@ -714,6 +767,54 @@ describe('LiveFlow - the other endings, the dt-bound and the data posture (issue
             const nudged = stub.requests[stub.requests.length - 1].body.messages.at(-1);
             expect(nudged.role).toBe('user');
             expect(nudged.content).toBe(STALL_NUDGE);
+        },
+    );
+
+    it(
+        'a cancelled cycle stays silent mid-turn - the in-flight service turn resolves into a cancelled flow and no listener hears another word (the takeover path stays clean)',
+        { timeout: 120000 },
+        async () => {
+            const ticker = makeTicker();
+            const service = await startTurnServer();
+            services.push(service);
+            const stub = await startStubServer(() => ({ calls: [{ name: 'place', args: { type: 'ball', x: 700, y: 100 } }] }));
+            stubs.push(stub);
+            // the transport the test can pace: the real turn behind a gate the test releases
+            const real = createHttpTurnTransport(service.url, 'level-01');
+            let gate = null;
+            const gated = { local: false, landed: null };
+            gated.turn = async (actionJson) => {
+                if (actionJson.action !== 'observe') await new Promise((resolve) => { gate = resolve; });
+                const envelope = await real.turn(actionJson);
+                if (actionJson.action !== 'observe') gated.landed = envelope; // the flow's continuation runs after this lands
+                return envelope;
+            };
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], sandboxEnds: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                levelId: 'level-01',
+                fetchImpl: diskFetch('level-01'),
+                model: createChatModelTransport({ baseUrl: 'http://127.0.0.1:' + stub.port + '/v1', model: 'stub-model' }),
+                turns: gated,
+                schedule: ticker.schedule,
+                maxTurns: 1,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start();
+            for (let i = 0; i < 400 && !gate; i++) await new Promise((resolve) => setImmediate(resolve));
+            expect(gate).not.toBeNull(); // the cycle sits mid-turn, inside the service turn's flight
+            const heard = collected.statuses.length;
+            live.cancel();
+            gate();
+            for (let i = 0; i < 400 && !gated.landed; i++) await new Promise((resolve) => setImmediate(resolve));
+            expect(gated.landed).not.toBeNull(); // the in-flight turn resolved past the cancel
+            await new Promise((resolve) => setImmediate(resolve)); // the flow's continuation gets its microtask turn
+
+            // the flow's contract: cancelled means DONE speaking
+            expect(live.status).toBe('cancelled');
+            expect(collected.errors).toHaveLength(0); // no ghost driver-error after cancel
+            expect(collected.liveEnds).toHaveLength(0); // no ghost cap banner over the takeover
+            expect(collected.statuses.length).toBe(heard); // the mid-turn observation and status never land
         },
     );
 });
