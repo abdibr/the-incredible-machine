@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { AgentSession } from '../../agent/session.js';
 import { place, trial } from '../../agent/actions.js';
+import { runTurn } from '../../agent/turn.js';
 import { levelManager } from '../../js/levels/LevelManager.js';
 import { eventBus } from '../../js/EventBus.js';
 
@@ -189,5 +190,43 @@ describe('sandbox placements draw from the parts palette (issue #63)', () => {
         expect(result.ok).toBe(false);
         expect(result.error).toMatch(/off-playfield/);
         expect(result.clampedTo.x).toBeLessThanOrEqual(1000);
+    });
+});
+
+
+describe('the headless sandbox demo (issue #63)', () => {
+    it('builds a ramp + ball contraption on an empty playfield via the action API and runs it to a result', async () => {
+        session = new AgentSession({ sandbox: true });
+        await session.loadLevel({
+            id: 'sandbox-demo',
+            name: 'headless sandbox demo - the rolling machine',
+            fixedObjects: [],
+        });
+        // The scripted build, through the action API: the level-01 solution
+        // scene's proven ramp geometry - the ramp tilted 0.4 rad, the ball
+        // above its high end.
+        const built = [place(session, 'ramp', 580, 380, { angle: 0.4 }), place(session, 'ball', 539, 338)];
+        expect(built.map((r) => r.ok)).toEqual([true, true]);
+
+        const result = trial(session, { seconds: 3 });
+        // No goal exists to judge: the run is a timeout with real sim time
+        // stepped, an empty goal-event log and an unreachable distance.
+        expect(result.outcome).toBe('timeout');
+        expect(result.elapsed).toBeCloseTo(3000, 0);
+        expect(result.events).toEqual([]);
+        expect(result.distance).toBe(Infinity);
+        expect(result.failureReason).toBeNull();
+        // The machine is on the result's snapshot: both placement rows,
+        // exactly where the build put them (the snapshot reads the public
+        // object getters - the placement anchor poses).
+        const ball = result.snapshot.find((row) => row.type === 'ball');
+        const ramp = result.snapshot.find((row) => row.type === 'ramp');
+        expect(ball).toBeDefined();
+        expect(ramp).toBeDefined();
+        // A turn still sees the goal-less world at the seam, after the run
+        // stepped the machine.
+        const turn = runTurn({ action: 'observe' }, session);
+        expect(turn.observation).toContain('headless sandbox demo');
+        expect(turn.result.ok).toBe(true);
     });
 });
