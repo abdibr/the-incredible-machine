@@ -434,6 +434,27 @@ export class AgentSession {
         return this._lastResult;
     }
 
+    /**
+     * Materialize the current board (issue #64): a fresh engine built from
+     * the level document + the current placements, with NO run framing -
+     * no run facts, no recorder, no open run. Construction IS the restore
+     * (the same build every trial composes), only outside a run, so a
+     * watch page can render placements as they land: the sandbox build
+     * phase calls this after every applied beat and the part appears live.
+     * The driving surface is unchanged - this is the board-side view
+     * affordance beside snapshotObjects()/distanceToZone(), not an action.
+     * @returns {Array<{id: string, type: string, x: number, y: number, angle: number}>}
+     *   the pose snapshot of the materialized board (public getters only)
+     * @throws when a steppable run is open - the run owns the world
+     */
+    materializeBoard() {
+        if (this._run) {
+            throw new Error('[AgentSession] materializeBoard: a trial run is open (finalizeTrial it before rebuilding the board)');
+        }
+        this._rebuild();
+        return this.snapshotObjects();
+    }
+
     /** Quietly release the open run's recorder without judging it - the run is gone, not ended. @private */
     _abandonRun() {
         this._run?._recorder.stop();
