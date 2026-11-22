@@ -2,20 +2,25 @@
  * sandboxFlow - the sandbox view's run controller (issue #64).
  *
  * The second watch flow: a goal-less sandbox session (ADR 0011) whose
- * board is built by a deterministic script, over the same seams the
- * Solve & Watch cycle already uses. This is the BUILD half of the cycle:
+ * board is built by a deterministic script and then played, over the same
+ * seams the Solve & Watch cycle already uses:
  *
  * - the board starts EMPTY (loadLevel of the posture's minimal goal-less
  *   board document), then the scripted build applies its placement beats
  *   one per paced tick through the phase-1 action API; after every beat
  *   the session re-materializes the board (materializeBoard, the build
  *   side of "construction IS the restore") and the part appears live. A
- *   refused beat is data: the status narrates it and the build moves on.
- *
- * The play half (Run over the steppable seam with the event HUD, ending
- * by timeout or manual stop - never a goal banner), Reset, the two-phase
- * Pause and the run-phase single-frame step land behind their own pinned
- * red tests, one cycle per acceptance criterion.
+ *   refused beat is data: the status narrates it and the build moves on;
+ * - Run opens the steppable trial (beginTrial, the #61 seam) over the
+ *   built placements and advances it in small capped batches on the
+ *   page's cadence - the same watch machinery as the level view; the run
+ *   ends by its BUDGET and the finalized result the sandbox posture
+ *   judges is always 'timeout': NO goal banner ever - bannerForSandbox-
+ *   Result composes only stop/timeout payloads, and the event log tells
+ *   the story (a bucket catch is data, not a verdict, ADR 0011). The
+ *   manual stop, Reset, the two-phase Pause and the run-phase single-
+ *   frame step land behind their own pinned red tests, one cycle per
+ *   acceptance criterion.
  *
  * Watching never mutates player state: no recorder, no editor, no
  * progress marks - none of that machinery is even constructed here
@@ -24,7 +29,13 @@
  */
 
 import { AgentSession } from '../../agent/session.js';
-import { SANDBOX_BUILD_SCRIPT, applyBuildBeat, beatLabel } from './sandboxScript.js';
+import { FIXED_STEP_MS } from '../../js/engine/GameLoop.js';
+import {
+    SANDBOX_BUILD_SCRIPT,
+    SANDBOX_RUN_SECONDS,
+    applyBuildBeat,
+    beatLabel,
+} from './sandboxScript.js';
 
 /**
  * The goal-less board document the sandbox watch builds on (issue #63's
@@ -38,30 +49,65 @@ export const SANDBOX_BOARD = {
 };
 
 /**
+ * The run banner payload a sandbox run ends with (issue #64): the sandbox
+ * posture judges NOTHING, so the labels are only stop and timeout - the
+ * goal verdict vocabulary (reached / failed) can never come out of this
+ * compositor.
+ * @param {{ outcome: string, elapsed: number }} result the finalized run result
+ * @param {{ stopped?: boolean, seconds?: number }} [options] a manual stop and the run's budget
+ * @returns {{ label: string, text: string, kind: 'stopped'|'timeout'|'ended' }}
+ */
+export function bannerForSandboxResult(result, { stopped = false, seconds = SANDBOX_RUN_SECONDS } = {}) {
+    const spent = ((result?.elapsed ?? 0) / 1000).toFixed(2);
+    const budget = (seconds ?? SANDBOX_RUN_SECONDS).toFixed(2);
+    if (stopped) {
+        return {
+            label: 'RUN STOPPED',
+            text: `stopped at ${spent}s of its ${budget}s budget - sandbox judges no goal; the event log is the story`,
+            kind: 'stopped',
+        };
+    }
+    if (result?.outcome === 'timeout') {
+        return {
+            label: 'TIMEOUT',
+            text: `the run stepped out of its ${budget}s budget with no verdict - sandbox judges no goal; the event log is the story`,
+            kind: 'timeout',
+        };
+    }
+    return { label: 'RUN ENDED', text: `outcome: ${result?.outcome ?? '?'}`, kind: 'ended' };
+}
+
+/**
  * SandboxFlow - the sandbox watch cycle's controller (issue #64).
  *
- * Lifecycle (this module's build half): start() installs the goal-less
- * board document and applies the scripted build, one beat per paced tick
- * (status 'building' -> 'built'). Every page tick rides the injected
+ * Lifecycle: start() installs the goal-less board document and applies
+ * the scripted build, one beat per paced tick (status 'building' ->
+ * 'built'); run() opens the steppable trial over the built placements
+ * and animates it ('running'), ending by its budget ('ended') with the
+ * never-a-goal-banner payload. Every page tick rides the injected
  * `schedule` (requestAnimationFrame in the browser, a manual pump in
- * tests); between ticks the caller may read the live board
- * (liveObjects). The listeners are the page's seams: onBoardLoaded (the
- * board document), onStatus (the build's narration, refusals included),
- * onFrame (repaint the board), onError.
+ * tests); between ticks the caller may read the live board (liveObjects)
+ * and the open run (session.trialRun). The listeners are the page's
+ * seams: onBoardLoaded (the board document), onStatus, onEvent (HUD rows
+ * as they happen), onFrame (repaint the board), onSandboxRunEnded (the
+ * run-end payload), onError.
  */
 export class SandboxFlow {
     /**
      * @param {{ session?: import('../../agent/session.js').AgentSession,
      *          script?: Array<object>, boardDocument?: object,
-     *          buildBeatMs?: number,
+     *          runSeconds?: number, buildBeatMs?: number, maxBatchFrames?: number,
      *          schedule?: (cb: (now?: number) => void) => number,
-     *          listeners?: { onBoardLoaded?, onStatus?, onFrame?, onError? } }} [options]
+     *          listeners?: { onBoardLoaded?, onStatus?, onEvent?, onFrame?,
+     *                        onSandboxRunEnded?, onError? } }} [options]
      */
     constructor({
         session = null,
         script = null,
         boardDocument = SANDBOX_BOARD,
+        runSeconds = SANDBOX_RUN_SECONDS,
         buildBeatMs = 400, // the build's page pacing: one beat every ~400ms wall clock
+        maxBatchFrames = 3, // the run's per-tick batch cap (the WatchFlow bound)
         schedule = (cb) => globalThis.requestAnimationFrame(cb),
         listeners = {},
     } = {}) {
@@ -71,14 +117,24 @@ export class SandboxFlow {
         this.session = session ?? new AgentSession({ seed: null, sandbox: true });
         this._script = script ?? SANDBOX_BUILD_SCRIPT;
         this._boardDocument = boardDocument;
-        this._buildBeatMs = buildBeatMs;
+        this._runSeconds = runSeconds;
+        this._maxBatchFrames = maxBatchFrames;
+        this._accCapMs = 50; // the run's wall-clock accumulator cap (the ADR 0008 spiral bound)
         this._schedule = schedule;
         this._listeners = listeners;
-        /** @type {'idle'|'building'|'built'|'cancelled'|'error'} */
+        /** @type {'idle'|'building'|'built'|'running'|'ended'|'cancelled'|'error'} */
         this.status = 'idle';
+        /** @type {object|null} the last finalized run's result (null until one ends) */
+        this.result = null;
+        /** @type {'manual'|'budget'|null} how the last run ended */
+        this.stoppedHow = null;
         this._beatIndex = 0;
         this._buildAccMs = 0;
         this._buildLast = null;
+        this._run = null;
+        this._accMs = 0;
+        this._lastNow = null;
+        this._eventCursor = 0;
         this._cancelled = false;
     }
 
@@ -109,8 +165,33 @@ export class SandboxFlow {
     }
 
     /**
-     * Abandon the cycle and dispose its session (the world a build watches
-     * belongs to the session - it must not outlive the page's interest).
+     * Play the built contraption (issue #64): open the steppable trial
+     * over the current placements (the #61 seam) and advance it in small
+     * batches on the page's cadence, exactly like a watched level run.
+     */
+    run() {
+        if (this._cancelled) return;
+        if (this.status !== 'built' && this.status !== 'ended') return; // build first (or re-play an ended board)
+        this.status = 'running';
+        this.result = null;
+        this.stoppedHow = null;
+        this._accMs = 0;
+        this._lastNow = null;
+        this._eventCursor = 0;
+        try {
+            this._run = this.session.beginTrial({ seconds: this._runSeconds });
+        } catch (e) {
+            this._fail(e);
+            return;
+        }
+        this._onStatus(`run open - the built machine plays (${this._runSeconds}s budget - sandbox judges no goal)`);
+        this._schedule((now) => this._tickRun(now));
+    }
+
+    /**
+     * Abandon the cycle and dispose its session (the worlds a build or a
+     * run watch belong to the session - they must not outlive the page's
+     * interest in this cycle).
      */
     cancel() {
         if (this._cancelled) return;
@@ -169,10 +250,62 @@ export class SandboxFlow {
         this._schedule((t) => this._pumpBuild(t));
     }
 
+    // ---- the run phase: small advance batches on the page's cadence ----
+
+    /** @private */
+    _tickRun(now) {
+        if (this._cancelled || this.status !== 'running' || !this._run) return;
+        // Wall-clock pacing (the WatchFlow accumulator, ADR 0008's discipline):
+        // whole FIXED_STEP_MS quanta per tick, the batch capped at
+        // maxBatchFrames - real-time pacing, never a whole trial in one call.
+        if (this._lastNow !== null && typeof now === 'number') {
+            this._accMs = Math.min(this._accMs + Math.max(0, now - this._lastNow), this._accCapMs);
+        }
+        if (typeof now === 'number') this._lastNow = now;
+        let frames = Math.floor(this._accMs / FIXED_STEP_MS);
+        if (frames > this._maxBatchFrames) frames = this._maxBatchFrames;
+        this._accMs -= frames * FIXED_STEP_MS;
+        if (this._accMs < 0) this._accMs = 0;
+        const response = this.session.advanceTrial(frames);
+        this._onFrame();
+        this._emitNewEvents();
+        if (!response.done) {
+            this._schedule((t) => this._tickRun(t));
+            return;
+        }
+        this._finishRun(false); // the budget stepped out - the outcome the sandbox posture judges
+    }
+
+    /** @private */
+    _finishRun(stopped) {
+        const result = this.session.finalizeTrial();
+        this._emitNewEvents(); // rows landed between the last paint and finalize
+        this._run = null;
+        this.result = result;
+        this.stoppedHow = stopped ? 'manual' : 'budget';
+        this.status = 'ended';
+        this._onSandboxRunEnded(result, { stopped, seconds: this._runSeconds });
+        this._onStatus(stopped
+            ? `run stopped at ${(result.elapsed / 1000).toFixed(2)}s of its ${this._runSeconds}s budget - the log has the story`
+            : `run ended - ${result.outcome} - sandbox judges no goal, the log has the story`);
+    }
+
+    /** @private */
+    _emitNewEvents() {
+        const onEvent = this._listeners.onEvent;
+        if (!onEvent || !this._run) return; // the build emits no run rows (no recorder is open)
+        const rows = this._run.events ?? [];
+        if (rows.length > this._eventCursor) {
+            onEvent(rows.slice(this._eventCursor));
+            this._eventCursor = rows.length;
+        }
+    }
+
     // ---- page seams (one place, never scattered) ----
 
     /** @private */ _onBoardLoaded(doc) { this._listeners.onBoardLoaded?.(doc); }
     /** @private */ _onStatus(text) { this._listeners.onStatus?.(text); }
     /** @private */ _onFrame() { this._listeners.onFrame?.(); }
+    /** @private */ _onSandboxRunEnded(result, meta) { this._listeners.onSandboxRunEnded?.(result, meta); }
     /** @private */ _onError(message) { this._listeners.onError?.(message); }
 }

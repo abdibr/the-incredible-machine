@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { AgentSession } from '../../agent/session.js';
 import { place, trial } from '../../agent/actions.js';
-import { applyBuildBeat, SANDBOX_BUILD_SCRIPT, beatLabel } from '../../js/watch/sandboxScript.js';
-import { SandboxFlow, SANDBOX_BOARD, bannerForSandboxResult, SANDBOX_RUN_SECONDS } from '../../js/watch/sandboxFlow.js';
+import { SandboxFlow, SANDBOX_BOARD, bannerForSandboxResult } from '../../js/watch/sandboxFlow.js';
+import { applyBuildBeat, beatLabel, SANDBOX_BUILD_SCRIPT, SANDBOX_RUN_SECONDS } from '../../js/watch/sandboxScript.js';
 
 /**
  * The sandbox view's controller (issue #64).
@@ -203,7 +203,7 @@ describe('the sandbox run (issue #64)', () => {
             const outcomes = [];
             const order = [];
             let frames = 0;
-            await buildToBuilt(ticker, {
+            const { session } = await buildToBuilt(ticker, {
                 listeners: {
                     onStatus: () => {},
                     onEvent: (rows) => {

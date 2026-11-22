@@ -20,6 +20,10 @@
 
 import { place, rotate, nudge } from '../../agent/actions.js';
 
+/** The run budget the sandbox flow plays with (the trial() default). */
+export const SANDBOX_RUN_SECONDS = 5;
+
+
 /**
  * The build beats, in order - the exact shapes applyBuildBeat executes:
  *  { kind: 'place', type, x, y, angle? }      - a part on the board
