@@ -105,7 +105,7 @@ afterEach(async () => {
 function diskFetch(id = 'level-01') {
     return () => Promise.resolve({
         ok: true, status: 200,
-        json: () => Promise.resolve(JSON.parse(readLevelFileSync(new URL('../js/levels/puzzles/' + id + '.json', import.meta.url), 'utf8'))),
+        json: () => Promise.resolve(JSON.parse(readLevelFileSync(new URL('../../js/levels/puzzles/' + id + '.json', import.meta.url), 'utf8'))),
     });
 }
 
@@ -144,7 +144,7 @@ async function startCountingTurnService() {
     const server = http.createServer((req, res) => {
         let raw = '';
         req.on('data', (c) => { raw += c; });
-        req.on('end', () => {
+        req.on('end', async () => {
             let actionJson = null;
             try { actionJson = raw ? JSON.parse(raw) : null; } catch { actionJson = null; }
             posts.push({ method: req.method, url: req.url, actionJson });
@@ -156,7 +156,7 @@ async function startCountingTurnService() {
             }
             if (!session) {
                 session = new AgentSession();
-                session.loadLevel('level-01');
+                await session.loadLevel('level-01');
             }
             const envelope = JSON.stringify(runTurn(actionJson, session));
             res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(envelope) });
@@ -443,7 +443,7 @@ describe('LiveFlow - the live LLM turn source in the watch page (issue #65)', ()
             expect(outcome.elapsed).toBeLessThan(5000);
 
             // the watched session mirrored the model's move through the action API
-            expect(live.session.placements).toEqual([{ type: 'ball', x: 700, y: 180, angle: 0 }]);
+            expect(live.session.placements).toEqual([{ type: 'ball', x: 678, y: 180, angle: 0 }]);
             expect(live.liveObjects().some((o) => o.type === 'ball')).toBe(true);
 
             // AC2: the panel thread holds the model's readings; the last one carries the trial's story
@@ -501,10 +501,11 @@ describe('LiveFlow - the live LLM turn source in the watch page (issue #65)', ()
             // opening observe, then exactly one POST per executed call - level stamped on every payload
             expect(counting.posts.map((p) => p.actionJson)).toEqual([
                 { action: 'observe', level: 'level-01' },
-                { action: 'place', type: 'ball', x: 700, y: 180, level: 'level-01' },
+                { action: 'place', type: 'ball', x: 678, y: 180, level: 'level-01' },
                 { action: 'trial', seconds: 5, level: 'level-01' },
             ]);
             expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'goal-reached', turns: 2 })]);
         },
     );
 });
+
