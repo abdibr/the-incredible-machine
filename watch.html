@@ -22,22 +22,45 @@
          in-page posture by construction, the turn service stays the level
          scenario's seam. -->
     <label id="watch-live-sandbox-label"><input type="checkbox" id="watch-live-sandbox" /> sandbox</label>
+    <!-- Playback speed (the watch's own knob, never the physics'): a model
+         may ask for a 30 s trial, which at 1x is 30 s of watching. The knob
+         scales the sim time each animation tick earns, in the same capped
+         batches - the verdicts and the run's dt are untouched. -->
+    <label id="watch-speed-label" title="how fast the watched run plays back (the physics and the verdict are the same)">speed
+      <select id="watch-speed">
+        <option value="1">1x</option>
+        <option value="2">2x</option>
+        <option value="4">4x</option>
+        <option value="8">8x</option>
+      </select>
+    </label>
     <button id="watch-live" title="a live model drives the watched world through the turn boundary">Watch live</button>
   </header>
 
   <main id="watch-main">
     <section id="watch-stage">
-      <canvas id="watch-canvas"></canvas>
-      <!-- The run outcome banner (goal reached / failed / timeout / the live
-           source's error and turn-cap endings) - composed by the flow's
-           listeners. -->
-      <div id="watch-banner" class="hidden"></div>
+      <!-- The board wrapper: the canvas fills it exactly and the page's fit
+           (fitBoard in main.js) sizes it to the window while keeping the
+           1000x600 world's 5:3 ratio - the whole board is on screen when the
+           page lands, nothing is stretched. The banner anchors to the board's
+           own corner instead of floating at the bottom of the stage. The HUD
+           follows BELOW the stage (one column): the page scrolls, so the
+           symbolic view of the playfield never fights the playfield for
+           width. -->
+      <div id="watch-board">
+        <canvas id="watch-canvas"></canvas>
+        <!-- The run outcome banner (goal reached / failed / timeout / the live
+             source's error and turn-cap endings) - composed by the flow's
+             listeners. -->
+        <div id="watch-banner" class="hidden"></div>
+      </div>
     </section>
     <aside id="watch-hud">
       <div id="watch-status">idle - press Solve &amp; Watch</div>
       <!-- The model's observation panel (issue #65): the observation text the
-           model received is the live cycle's second thread, beside the board
-           like the event HUD. -->
+           model received is the live cycle's second thread - the symbolic
+           world dump, laid out under the board it describes, above the
+           event log. -->
       <ol id="watch-observations"></ol>
       <ol id="watch-events"></ol>
     </aside>

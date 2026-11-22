@@ -1,5 +1,223 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-22 - The scripted solver stops pretending: the target drop is the tutorial's lesson
+
+The baseline solver had exactly two candidate families and BOTH placed the goal target itself - "drop
+the ball straight into the bucket", alone or after one helper. That is level-01's lesson; on every other
+level it was a shortcut that won without touching a single authored part (level-03 skipped its dominoes
+and fan, level-04 its balloon and rope, level-05's mouse went straight in, level-06 its ramps). The
+scripted source reported `reached` for five of six levels and taught nothing about any of them.
+
+- **`agent/solver.js`** - `TARGET_PLACEABLE_LEVELS = ['level-01']` (the one level that teaches the
+  drop). `targetPlacement()` now answers `{ targetType, budgeted, allowed, placeable }` - the two
+  refusals are different facts: `budgeted: false` (the target is scene furniture, level-02) and
+  `allowed: false` (the target is budgeted, but the drop is not this level's lesson).
+  `candidatePlacements` yields nothing unless `placeable`, and the unsolved diagnosis names which
+  refusal it hit - so the page says WHY instead of "no valid candidate placements".
+- Consequence, by design: `solve()` reaches level-01 only; level-02 keeps its "already in the scene"
+  message; level-03/04/05/06 report `unsolved - this level is not the tutorial, so the search will not
+  drop the goal target (ball) straight into the goal; the helper-only machine search that builds its
+  path is not built yet (issue #104)`.
+- **Issue #104** files the real work (helper-only, scene-seeded, multi-part search), with the measured
+  facts from this session (level-02's authored path reaches at 5.68 s; the live model built a winning
+  3-ramp chain at 0.405 rad in 5 turns). Issues #105 (sandbox vs trial budget), #106 (conveyor tilt
+  glyphs) and #107 (observation cost) carry the rest, all `Part of #60`.
+- Tests (red-first): a non-tutorial level refuses the drop with `trials: 0` and names #104; a
+  non-tutorial generator yields nothing at all (`level-05`, target mouse). Suite **84 files / 975
+  tests, green** (+2).
+
+## 2026-11-22 - Playback speed: the watch can run faster than the wall clock (1x..8x)
+
+A model-requested `trial {seconds: 30}` was 30 seconds of watching at 1x - the horizon fix made
+runs judgeable and made the page slow. The knob is a WATCH setting, never a physics one.
+
+- **`js/watch/liveFlow.js`** - `speed` option + `setSpeed()` / `speed` getter, `clampSpeed()`
+  (1..LIVE_MAX_SPEED=8, NaN/0 -> 1). The pacing change is two lines of the tick that already
+  existed: the accumulator now EARNS `wallMs x speed` of sim time per tick, and the batch cap
+  scales with the speed (`maxBatchFrames x speed`), so playback still advances whole frames of
+  the run's own dt in the same capped batches - ADR 0008's cadence discipline intact, the run's
+  dt and verdicts untouched. `setSpeed` re-arms `_accCapMs` for an open run, so the knob works
+  MID-run. The status line names it when it is not real time: `... (1800 frame budget, 4x)`.
+- **`watch.html` / `js/watch/main.js` / `css/watch.css`** - `speed` select in the control bar
+  (1x/2x/4x/8x), the same chrome as the sandbox toggle; `?speed=` seeds it but only with an
+  offered stop (no silent rounding to a different speed); the change handler retargets the live
+  flow.
+- Measured in the page (headless, 34 fps, same 4 s trial at every speed): 4072 ms / 2032 ms /
+  1037 ms / 532 ms for 1x / 2x / 4x / 8x - the same 4000 ms `elapsed` and the same verdict at
+  each. The cap only bites when the page's frame rate collapses (a backgrounded tab degrades
+  toward real time rather than teleporting the sim, which is the guard's whole point).
+- Tests: the same run at 4x takes about a quarter of the ticks (60-frame run: ~61 ticks at 1x,
+  ~17 at 4x) with an identical outcome and elapsed; the knob clamps (0 -> 1, 99 -> 8, "4" -> 4,
+  NaN -> 1). Suite **84 files / 971 tests, green** (+2).
+
+## 2026-11-22 - The text map stops lying about rotation (ramps read their tilt)
+
+The model kept reading a ramp as `//` no matter which way it was turned, and the grid painted
+each body's **axis-aligned bounding box** — so a plank at 26 degrees and the same plank at 0
+degrees were the same solid block of `//`. Worse, `//` reads as ascending-to-the-right while a
+positive angle in screen space (y grows down) descends to the right: the glyph contradicted the
+plank it described. Both halves are fixed, red-first.
+
+- **`agent/observe/legend.js`** - `orientedCell(type, angle)` picks the character from the body
+  angle: `\` descends right, `/` ascends right, `=` flat (|sin| <= 0.18), `|` steep (>= 0.84).
+  `=` rather than `-` because the spring platform already owns `--`. `ORIENTED_GLYPHS` holds the
+  table; `GLYPHS.ramp` stays `'//'` as the no-angle fallback. The legend key now prints
+  `\/  ramp - the glyph follows the tilt: \ descends to the right, / ascends to the right, = flat, | steep`
+  instead of the old fixed row, because a fixed row is exactly what misled the reader.
+- **`agent/observe/grid.js`** - paint each body's OWN outline (cells whose centre falls inside the
+  body's polygon) instead of its bounds box; tilt-reading types paint their tilt character, the
+  rest keep their 2-char glyph pattern. A body too thin to hold a cell centre (a rope) falls back
+  to the bounds fill, so nothing vanishes - the reason bbox fill won originally. Extents now come
+  from painted cells, so `grid: 'auto'` measures the shape it actually drew.
+- **`agent/observe/state.js`** - the `size` column reported the rotated AABB too ("113x63" for a
+  120x12 plank at 26 degrees, inviting coordinate math on a shape that no longer exists). Quad
+  bodies now report their own footprint from the vertex edge lengths (rotation-invariant, exact);
+  every other shape keeps the AABB it always reported.
+- Tests: `orientedCell` table; a rotated ramp paints a parallelogram that slides right going down
+  and never a `//`; the mirrored ramp reads `/`; a turned part keeps its authored size. Suite
+  **84 files / 969 tests, green** (+4).
+- Verified in the watch page (level-02, cell 8): the ball is a round blob, the three placed planks
+  read as parallel `\` bands into the funnel, the level's -32 degree arms read `/`, and the flat
+  ramp under the bucket reads `===============` instead of a fat block.
+
+## 2026-11-22 - The trial horizon grows to 30 s (the budget must out-last the travel)
+
+Watching level-02 showed the old 5 s trial default could not answer the only question a trial
+asks: the authored ramp path needs **5.7 s** just to reach the bucket, so a default-length trial
+ended with the ball still in flight - a `timeout` that measured nothing. The horizon is now 30 s,
+generous for every campaign level and still a quarter of the boundary clamp
+(`MAX_TRIAL_SECONDS = 120`).
+
+- **`agent/session.js`** - `export const TRIAL_DEFAULT_SECONDS = 30` (the one constant, with the
+  reasoning in its doc), used by `trial()` and `beginTrial()`. `beginTrial()` with no arguments
+  reads `steps: 1800` at the loop's 16.67 ms quantum.
+- **`agent/solver.js` / `agent/cli.js`** - `secondsPerTrial` defaults follow it (30 s), so the
+  scripted search judges a candidate to settlement rather than to mid-flight.
+- **`agent/driver-protocol.js`** - the `trial` tool's advertised default reads `(default 30)`; the
+  Node driver test that pins the advertised schema was updated with it.
+- **`js/watch/watchFlow.js`** - the scripted source's `secondsPerTrial`/`watchSeconds` also 30: the
+  same horizon for the search and for the watched winning run. The horizon is a CEILING, not a
+  wait - the run stops at the verdict, so a solved level still ends in milliseconds (level-01
+  scripted watch: `GOAL REACHED ... 0.02s`, 126 ms wall).
+- **Turns were already 20** - `DEFAULT_MAX_TURNS` (agent/driver.js) and `LIVE_DEFAULT_MAX_TURNS`
+  (js/watch/liveFlow.js) are both 20; the `6` seen in live runs was the watch URL's
+  `?maxTurns=6`. No change needed, and the resolver contract test pins 20.
+- **Left alone, deliberately**: `SANDBOX_RUN_SECONDS = 5` (js/watch/sandboxScript.js) is the
+  sandbox play-through's animation budget, not a trial - the sandbox has no goal, so every cycle
+  runs its WHOLE budget, and 30 s there would mean 30 s of animation per cycle. A separate knob if
+  it should follow.
+- **Level-02 is now beaten by a live model, twice, first try** - the payoff of the two fixes plus
+  the horizon: `node agent/driver.js --level level-02` (the headless host) reached on turn 10
+  (`trial 20s` → `reached` at 5.58 s after nudging its first ramp and adding two more), and the
+  watch page (same model, `deepseek-v4.1-flash:1017-cloud`, default 20-turn cap) reached on turn
+  14: three placed ramps at 26 deg (`499,237` / `605,285` / `711,342`) bridging the gap into the
+  funnel, `GOAL REACHED - the run ended at 5.83s`, observation #21 showing `status: reached`,
+  `caught:1`. Transcripts: `.scratch/lvl02-driver-30s.txt`.
+- Full suite: **84 files / 965 tests, green**; `node agent/cli.js --level level-01 --solve` still
+  wins on its first candidate in 0.1 s.
+
+## 2026-11-22 - The browser driver reads the whole protocol, and the solver stops blaming an empty candidate list
+
+Two defects found while watching level-02 live, both contract-level rather than level-specific.
+
+- **The watch page never sent INSTRUCTIONS** (`js/watch/liveFlow.js`) - `agent/driver-protocol.js`
+  is "one contract, two hosts", but only the Node host consumed all of it: `driver.js` hands
+  `INSTRUCTIONS` to the SDK agent (which sends it as the system message), while `liveFlow.js`
+  imported the tool table, the opening directive and the stall nudge and left the instructions
+  behind - its chat history opened at `role: 'user'`. Chat-completions has no `instructions` seam,
+  so the history now carries `{ role: 'system', content: INSTRUCTIONS }` first: the watched model
+  reads the observation anatomy (grid, ruler, state table, x-right/y-DOWN), the
+  reached/failed/timeout vocabulary and the one-tool-per-turn rule the same way the headless
+  driver's model does. Pinned by a host-parity test that fails on the omission
+  (`the chat history opens with the SHARED contract as a system message`), plus the existing
+  message-index assertions updated to the new shape (system, brief, ...).
+- **The scripted solver blamed its candidate list for a search that never ran**
+  (`agent/solver.js`) - `candidatePlacements` only ever yields candidates containing a
+  `place <goal.targetType>`, so on a ramp-only level (level-02: the ball is fixed + anchored,
+  `availableParts` is `{ramp: 3}`) every candidate is refused for want of budget, zero trials run,
+  and the report said "unsolved - no valid candidate placements existed". New
+  `targetPlacement(session)` answers `{ targetType, placeable }` from the budget, and the
+  no-best diagnosis now names the real cause ("the goal target (ball) is not placeable here:
+  availableParts budgets the helpers only, so the ball is already in the scene and no candidate
+  can build one"). The watch banner drops the duplicated `unsolved - ` prefix the title already
+  says. Test written red first (`a level whose goal TARGET is not placeable reports that cause`)
+  then green.
+- **Verified**: `SOLVER UNSOLVED` on the page now carries the honest sentence; a level-02 live
+  cycle sends the system message on every request (test-pinned) and its behaviour changes (it now
+  measures settle times - 3s/3.4s/3.7s probes - instead of guessing), though this small model
+  still probes instead of building: the remaining gap is model capability and the open
+  helper-only-search decision, not the protocol. Full suite: **84 files / 965 tests, green**.
+
+
+## 2026-11-22 - Agent Watch: the page's board fills the stage, the observation panel becomes readable
+
+Watching the agent (scripted and live) exposed the sidecar page's layout faults, all fixed here
+without touching the game bundle or any flow: the 1000x600 board sat at its natural CSS size in
+the middle of a much larger stage (big dark bands on a big window, the watched action tiny), the
+side HUD crushed the board on a small window (a 156x93 playfield at 480px wide), and the live
+observation panel rendered the model's whole 125-column ASCII world dump as wrapped text (an
+unreadable soup that ate the HUD).
+
+- **`js/watch/main.js`** - new `fitBoard()`: the board wrapper is sized to the stage (padding
+  included) at the world's 5:3 ratio, so the playfield grows to fill a large window like the game
+  page's canvas does and shrinks on a small one, but never stretches; a `ResizeObserver` on the
+  stage plus a window `resize` fallback keeps it fitted (the 1000x600 backing store is unchanged -
+  the world coordinates stay the geometry's home). `renderObservation` now emits one collapsible
+  `<details>` per observation - a summary line plus a `<pre>` block (horizontal scroll, never
+  wrapped), newest entry open, others closed, its summary kept in view (the map can be taller than
+  the panel) - and the summary names what actually changed (`#2 · 1 part on the board`,
+  `#4 · t=0.18s ball caught by bucket-goal`) instead of repeating the identical level banner. The
+  observation counter and the HUD's `has-rows` class reset with the HUD on takeover.
+- **The page's own config (`readLiveConfig`)** - the standalone page has no host to set
+  `window.WATCH_LIVE_CONFIG`, so the same keys also ride the URL
+  (`?model=&modelBaseUrl=&turnBaseUrl=&apiKey=&maxTurns=&level=`). The resolved level is the
+  subject of BOTH buttons (the label reads `Solve & Watch level-02` and the scripted flow is
+  handed that id), so a level other than the default is watchable by opening one URL.
+- **`watch.html`** - the canvas and the banner move into a `#watch-board` wrapper inside the stage,
+  so the outcome banner anchors to the board's own bottom edge instead of floating at the bottom
+  of the stage (it used to sit ~100px below the playfield).
+- **`css/watch.css`** - the board wrapper carries the shadow, the canvas fills it, the banner is
+  board-relative and wraps at `max-width: 100%`; the HUD width is `clamp(300px, 26vw, 440px)`; the
+  observations list shrinks to its content (`flex: 0 1 auto; max-height: 55%`, `display: none`
+  while empty) with the event log taking the rest; the observation summary/pre styles; the header
+  aligns its controls on the centre line and `#watch-live` / the sandbox toggle get the same
+  button/toggle chrome as `Solve & Watch` (they were raw browser controls).
+- **The page, laid out like the game's own play page** - the game's hint was the one that
+  mattered: `index.html` gives the playfield the whole remaining window
+  (`#game-area { overflow: hidden }`, `#game-canvas { width: 100%; height: 100% }`), the chrome
+  lives in a bar around it, and nothing competes with it for width. The sidecar now does the same,
+  one page down instead of side by side: `#watch-main` is a single column - `#watch-stage` (the
+  board) then `#watch-hud` under it - and the page scrolls (`body#watch-page` is
+  `min-height: 100vh` in flow, `#watch-header` is `position: sticky` so the controls stay
+  reachable). The board is capped by the WINDOW, not by a flex remainder: `fitBoard()` takes
+  `innerHeight - header.offsetHeight - stage padding` as its height ceiling (both the stage and
+  the header are observed, so a wrapping header re-fits), which means the whole playfield is on
+  screen when the page lands at every size - at 1920x1080 the board is 1668x1000 and ends 13px
+  above the fold, at 1280x800 it is 1201x721, at 1024x768 exactly 1000x600, at 360x640 it is
+  344x206 - and the symbolic view is one scroll away, never a column stealing the board's width.
+  The old `max-width: 1100px` stacked mode, the `.has-rows` HUD slice and the nested vh caps are
+  gone: there is one scrollbar (the page's) and no list scrolls inside another.
+- **The world dump reads as a map** - the observation's 125 columns are sized to the panel
+  (`font-size: clamp(9px, calc((100vw - 44px) / 75), 14px)`, i.e. 125 cols x ~0.6em), so the ASCII
+  rows land on the full width up to a readable 14px: 1250px wide at 1280, 994px at 1024, and a
+  9px floor below ~700px where it sideways-scrolls inside its own box instead of shrinking to
+  nothing. The `pre` is never wrapped and never height-capped (the page is the scroll), so a
+  whole observation reads top to bottom; only the newest entry is open, so a long live run stays
+  one dump tall. The page never scrolls horizontally (`scrollWidth == innerWidth` at every size
+  checked).
+- **Verified live** (Playwright + CDP true-size emulation, vite on :5199): idle, scripted and live
+  runs at 1920x1080, 1440x900, 1280x800, 1024x768, 820x620, 480x780 and 360x640 - the board stays
+  5:3 and is wholly in view on load at every size, the HUD starts just below it, the sticky header
+  keeps the controls reachable over the dump, the page never scrolls horizontally, and a level-02
+  live cycle showed its ASCII observation under the board at 1250px wide (a 14px font) with the
+  collapsed older entries above it. Live cycles against the local Ollama chat-completions endpoint
+  (`deepseek-v4.1-flash:1017-cloud`) reached the goal on level-01 with console clean; on level-02
+  (fixed ramps, three ramps in the toolbox) it placed ramps but every probe it watched timed out
+  inside its own 1.5-20s budget, so those runs ended TIMEOUT rather than solved - a model / probe
+  budget matter, not a page one. Screenshots:
+  `.scratch/watch-fixed-*.png`, `.scratch/resp-*.png`. Full suite: **84 files / 963 tests, all
+  green** (`cmd /c npx vitest run`).
+
 
 ## 2026-11-21 - Agent Watch 5/5: the live LLM turn source in the watch page (issue #65)
 

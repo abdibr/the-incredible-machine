@@ -24,13 +24,17 @@
  * sandbox vocabulary. Either button starts its cycle; starting one
  * interrupts the other (a click is the human's takeover - a stuck or
  * errored cycle never locks the page, and the scripted fallback keeps the
- * watch usable). The live cycle's settings ride window.WATCH_LIVE_CONFIG;
- * without them the page names the resolver's gaps at boot.
+ * watch usable). The live cycle's settings ride window.WATCH_LIVE_CONFIG
+ * (or the page's own URL, since a standalone page has no host to set the
+ * global: ?model=&modelBaseUrl=&level=&maxTurns=&turnBaseUrl=&apiKey=);
+ * without them the page names the resolver's gaps at boot. The playback
+ * speed (?speed=1..8, or the header's select) is a watch setting, not a
+ * driver one: it rides the page, never the resolver's model contract.
  */
 
 import Renderer from '../render/Renderer.js';
 import { AgentSession } from '../../agent/session.js';
-import { bannerForRunResult, formatEventRow, WatchFlow } from './watchFlow.js';
+import { bannerForRunResult, DEFAULT_LEVEL_ID, formatEventRow, WatchFlow } from './watchFlow.js';
 import { bannerForSandboxResult } from './sandboxFlow.js';
 import {
     LiveFlow,
@@ -44,6 +48,9 @@ const WORLD_WIDTH = 1000;
 const WORLD_HEIGHT = 600;
 
 const canvas = document.getElementById('watch-canvas');
+const headerEl = document.getElementById('watch-header');
+const stageEl = document.getElementById('watch-stage');
+const boardEl = document.getElementById('watch-board');
 const levelNameEl = document.getElementById('watch-level-name');
 const statusEl = document.getElementById('watch-status');
 const eventsEl = document.getElementById('watch-events');
@@ -52,8 +59,9 @@ const bannerEl = document.getElementById('watch-banner');
 const button = document.getElementById('solve-watch');
 const liveButton = document.getElementById('watch-live');
 const sandboxToggle = document.getElementById('watch-live-sandbox');
+const speedSelect = document.getElementById('watch-speed');
 
-if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !bannerEl || !button || !liveButton || !sandboxToggle) {
+if (!canvas || !headerEl || !stageEl || !boardEl || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !bannerEl || !button || !liveButton || !sandboxToggle || !speedSelect) {
     console.error('[watch] required DOM elements not found');
 } else {
     // Fixed playfield size: the level geometry's home is the 1000x600
@@ -66,15 +74,81 @@ if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !ban
     const renderer = new Renderer();
     renderer.init(canvas);
 
-    // The live source's page configuration (issue #65): the host page sets
+    /** The status line's room under the board: the page lands with the whole
+     *  playfield AND the line saying what is happening on it (the game page
+     *  has no analog - its chrome is the header - but the same principle:
+     *  what the page is doing is visible without scrolling). A constant, not
+     *  a measurement: the line changes length as a run narrates, and a
+     *  measured reserve would resize the board mid-run. */
+    const STATUS_RESERVE = 44;
+
+    /** Size the board wrapper to the world's 5:3 ratio as large as the
+     *  WINDOW can show whole - the game page's playfield rule, adapted to a
+     *  page that scrolls: the board owns the window (a full-window view of
+     *  the watched world, never a stretched one), the symbolic dump sits
+     *  below the fold, so `innerHeight` minus the sticky header is the
+     *  board's ceiling, not the stage's own height. */
+    function fitBoard() {
+        const style = getComputedStyle(stageEl);
+        const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+        const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+        const availW = Math.max(0, stageEl.clientWidth - padX);
+        const availH = Math.max(0, (globalThis.innerHeight ?? 0) - headerEl.offsetHeight - padY - STATUS_RESERVE);
+        if (availW === 0 || availH === 0) return; // hidden/zero stage
+        const scale = Math.min(availW / WORLD_WIDTH, availH / WORLD_HEIGHT);
+        boardEl.style.width = `${Math.max(1, Math.floor(WORLD_WIDTH * scale))}px`;
+        boardEl.style.height = `${Math.max(1, Math.floor(WORLD_HEIGHT * scale))}px`;
+    }
+
+    fitBoard();
+    // The header participates: it wraps to two rows on a narrow window, which
+    // changes the board's ceiling.
+    if (typeof ResizeObserver === 'function') {
+        const observer = new ResizeObserver(fitBoard);
+        observer.observe(stageEl);
+        observer.observe(headerEl);
+    }
+    globalThis.addEventListener?.('resize', fitBoard);
+
+    // The live source's page configuration (issue #65): a host page sets
     // window.WATCH_LIVE_CONFIG ({model, modelBaseUrl, turnBaseUrl?,
-    // apiKey?, maxTurns?, level?}); the resolver's contract is the driver
-    // resolver's own ({errors, config} - the #62 boundary shape). Without
-    // the global the resolver names every gap, the live button sits out
-    // and the status line says so - the scripted source needs nothing.
-    const liveConfig = resolveLiveDriverConfig(window.WATCH_LIVE_CONFIG ?? {});
+    // apiKey?, maxTurns?, level?}); the standalone page has no host, so the
+    // same keys may ride the URL instead (?model=&modelBaseUrl=&level=&...).
+    // The resolver's contract is the driver resolver's own
+    // ({errors, config} - the #62 boundary shape). Without a model and its
+    // endpoint the resolver names every gap, the live button sits out and
+    // the status line says so - the scripted source needs nothing.
+    function readLiveConfig() {
+        const fromHost = globalThis.WATCH_LIVE_CONFIG;
+        if (fromHost && typeof fromHost === 'object') return fromHost;
+        const params = new URLSearchParams(globalThis.location?.search ?? '');
+        const config = {};
+        for (const key of ['model', 'modelBaseUrl', 'turnBaseUrl', 'apiKey', 'maxTurns', 'level', 'speed']) {
+            const value = params.get(key);
+            if (value !== null && value !== '') config[key] = value;
+        }
+        return config;
+    }
+
+    const pageConfig = readLiveConfig();
+    // One subject for both sources: the configured level, else the default.
+    const levelId = pageConfig.level ?? DEFAULT_LEVEL_ID;
+    const liveConfig = resolveLiveDriverConfig({ ...pageConfig, level: levelId });
+    button.textContent = `Solve & Watch ${levelId}`;
+    if (levelId !== DEFAULT_LEVEL_ID) levelNameEl.textContent = levelId;
 
     let flow = null;
+
+    // Playback speed (the header's select): the knob has four stops, and the
+    // URL may seed it (?speed=2) but only with one of them - an unoffered
+    // value is not silently rounded into a different speed. Changing it
+    // mid-cycle retargets the running watch (LiveFlow.setSpeed); the scripted
+    // source is millisecond-short and ignores it.
+    const speedStops = [...speedSelect.options].map((option) => option.value);
+    if (speedStops.includes(String(pageConfig.speed ?? ''))) speedSelect.value = String(pageConfig.speed);
+    speedSelect.addEventListener('change', () => {
+        if (typeof flow?.setSpeed === 'function') flow.setSpeed(speedSelect.value);
+    });
 
     function setBanner(payload) {
         if (!payload) {
@@ -98,16 +172,50 @@ if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !ban
         eventsEl.scrollTop = eventsEl.scrollHeight;
     }
 
+    let observationCount = 0;
+
+    /** The one-line summary of an observation entry. The level banner line
+     *  is identical in every observation, so the meaningful part is what
+     *  changed: the last event row, or how many parts stand on the board. */
+    function summarizeObservation(text, index) {
+        const lines = String(text ?? '').split('\n');
+        const eventRows = lines.filter((line) => /^-\s*t=/.test(line.trim()));
+        if (eventRows.length > 0) {
+            const last = eventRows[eventRows.length - 1].replace(/^-\s*/, '').trim();
+            return `#${index} · ${last}`;
+        }
+        const stateAt = lines.findIndex((line) => line.trim() === 'state:');
+        if (stateAt >= 0) {
+            const relationsAt = lines.findIndex((line, i) => i > stateAt && line.trim() === 'relations');
+            const rows = lines.slice(stateAt + 3, relationsAt >= 0 ? relationsAt : lines.length).filter((line) => line.trim());
+            const count = rows.length;
+            return `#${index} · ${count === 0 ? 'empty board' : `${count} part${count === 1 ? '' : 's'} on the board`}`;
+        }
+        return `#${index} · ${(lines[0] ?? 'observation').trim()}`;
+    }
+
+    /** One observation entry (issue #65): the observation is a whole ASCII
+     *  world dump, so it rides a collapsible preformatted block - horizontal
+     *  scroll instead of wrapping into soup, the newest entry left open. */
     function renderObservation(text) {
+        observationCount += 1;
         const li = document.createElement('li');
-        li.textContent = text;
-        observationsEl.appendChild(li);
-        observationsEl.scrollTop = observationsEl.scrollHeight;
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = summarizeObservation(text, observationCount);
+        const pre = document.createElement('pre');
+        pre.textContent = text;
+        details.append(summary, pre);
+        li.append(details);
+        for (const open of observationsEl.querySelectorAll('details[open]')) open.open = false;
+        details.open = true;
+        observationsEl.append(li);
     }
 
     function resetHud() {
         eventsEl.replaceChildren();
         observationsEl.replaceChildren();
+        observationCount = 0;
         setBanner(null);
         statusEl.classList.remove('error');
     }
@@ -143,7 +251,11 @@ if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !ban
             setBanner({ title: banner.label, body: banner.text, kind: result.outcome });
         },
         onSolverUnsolved: (report) => {
-            setBanner({ title: 'SOLVER UNSOLVED', body: report.diagnosis, kind: 'unsolved' });
+            // The diagnosis keeps the report's own "unsolved - " prefix (the
+            // CLI reads it as a sentence); the banner's title already says
+            // SOLVER UNSOLVED, so the body drops the repetition.
+            const body = String(report.diagnosis ?? '').replace(/^unsolved\s*[-:]\s*/i, '');
+            setBanner({ title: 'SOLVER UNSOLVED', body, kind: 'unsolved' });
         },
         onError: () => {
             statusEl.classList.add('error');
@@ -204,6 +316,7 @@ if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !ban
         // Scripted fallback: never needs a model or a service. The cycle
         // runs to its banner; a second click interrupts it mid-run.
         flow = new WatchFlow({
+            levelId,
             listeners: scriptedListeners,
         });
         flow.start();
@@ -235,6 +348,7 @@ if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !ban
                 ? createLocalTurnTransport(session)
                 : createHttpTurnTransport(cfg.turnBaseUrl, cfg.level),
             maxTurns: cfg.maxTurns,
+            speed: speedSelect.value,
             listeners: liveListeners,
         });
         flow.start();

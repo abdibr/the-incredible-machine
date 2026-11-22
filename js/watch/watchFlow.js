@@ -118,9 +118,9 @@ export class WatchFlow {
         fetchImpl = globalThis.fetch,
         schedule = (cb) => globalThis.requestAnimationFrame(cb),
         maxBatchFrames = 3, // small batches: at most ~3 catch-up quanta per tick (ADR 0008's bound)
-        watchSeconds = 5,
+        watchSeconds = 30,
         maxTrials = 800,
-        secondsPerTrial = 5,
+        secondsPerTrial = 30,
         lattice = 50,
         listeners = {},
     } = {}) {

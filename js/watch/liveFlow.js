@@ -19,7 +19,10 @@
  *   never-throw action API on the page's own session - the watched world
  *   the #62/#64 postures own - and the observation text the model received
  *   renders in the page's panel next to the board. Trials play over the
- *   #61 steppable seam in small advance batches on the page's cadence.
+ *   #61 steppable seam in small advance batches on the page's cadence - at
+ *   the playback speed the page asks for (1x by default: a model-requested
+ *   30 s trial is 30 s of watching at 1x, so the knob is what makes long
+ *   horizons watchable).
  *
  * Connection trouble degrades gracefully (never a frozen watch): a
  * transport failure is structured data, the model provider's error status
@@ -29,9 +32,14 @@
  * The configuration contract (resolveLiveDriverConfig) mirrors the driver
  * resolver's shape: { errors, config | null } - model + model endpoint are
  * required, the turn service URL and maxTurns/level/apiKey are knobs.
+ *
+ * The model-facing protocol rides agent/driver-protocol.js verbatim, the
+ * whole of it: the tool table, the opening directive, the stall nudge AND
+ * the instructions (INSTRUCTIONS is the chat history's system message here -
+ * the Node driver's `instructions` argument).
  */
 
-import { ACTION_TOOLS, OBSERVE_TOOL, OPENING_DIRECTIVE, STALL_NUDGE, asArgs, createHttpTurnTransport, toolOutput } from '../../agent/driver-protocol.js';
+import { ACTION_TOOLS, INSTRUCTIONS, OBSERVE_TOOL, OPENING_DIRECTIVE, STALL_NUDGE, asArgs, createHttpTurnTransport, toolOutput } from '../../agent/driver-protocol.js';
 import { runTurn } from '../../agent/turn.js';
 import { AgentSession } from '../../agent/session.js';
 import { DEFAULT_LEVEL_ID, fetchLevelDocument, levelUrlFor } from './watchFlow.js';
@@ -186,6 +194,26 @@ export { createHttpTurnTransport };
 /** Small capped batches per tick, the WatchFlow bound (ADR 0008's discipline). */
 const DEFAULT_MAX_BATCH_FRAMES = 3;
 
+/** Real-time playback: one sim millisecond per wall millisecond. */
+export const LIVE_DEFAULT_SPEED = 1;
+
+/** The fastest playback the page offers (a knob, not a physics change). */
+export const LIVE_MAX_SPEED = 8;
+
+/**
+ * Clamp a playback speed to the offered range. Playback speed scales the
+ * SIM TIME a tick earns (`wallMs * speed`) and the batch cap together, so a
+ * faster playback still advances whole frames of the run's own dt in the
+ * same capped batches - it is the watch that runs faster, never the physics.
+ * @param {unknown} value
+ * @returns {number} 1..LIVE_MAX_SPEED
+ */
+export function clampSpeed(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 1) return LIVE_DEFAULT_SPEED;
+    return Math.min(LIVE_MAX_SPEED, Math.round(n * 100) / 100);
+}
+
 /** The model transport's own HTTP bound - the same number the turn transport carries: a hung provider degrades, never hangs the cycle. */
 const MODEL_HTTP_TIMEOUT_MS = 120_000;
 
@@ -232,7 +260,7 @@ export class LiveFlow {
      *                    calls: Array<{ name: string, args: object }>, rawMessage?: object, error?: string }> },
      *          turns?: { local?: boolean, turn(actionJson: object):
      *                    Promise<{ observation: string, result: object }> },
-     *          maxTurns?: number, maxBatchFrames?: number,
+     *          maxTurns?: number, maxBatchFrames?: number, speed?: number,
      *          listeners?: { onStatus?, onObservation?, onEvent?, onFrame?,
      *                        onWatchOutcome?, onSandboxRunEnded?, onLiveEnded?,
      *                        onDriverError?, onServiceUnreachable? } }} [options]
@@ -247,6 +275,7 @@ export class LiveFlow {
         turns = null,
         maxTurns = LIVE_DEFAULT_MAX_TURNS,
         maxBatchFrames = DEFAULT_MAX_BATCH_FRAMES,
+        speed = LIVE_DEFAULT_SPEED,
         listeners = {},
     } = {}) {
         if (!model || typeof model.ask !== 'function') {
@@ -263,6 +292,7 @@ export class LiveFlow {
         this._turns = turns;
         this._maxTurns = Number(maxTurns) === maxTurns && Number.isFinite(maxTurns) && maxTurns >= 1 ? maxTurns : LIVE_DEFAULT_MAX_TURNS;
         this._maxBatchFrames = maxBatchFrames;
+        this._speed = clampSpeed(speed);
         this._accCapMs = 50; // placeholder - the cap rides the open run (set in _playTrial)
         this._listeners = listeners;
         // Seed: null keeps the browser-safe unseeded posture (no `process` is
@@ -286,6 +316,28 @@ export class LiveFlow {
     /** @returns {boolean} the cycle reached a terminal status (or never left idle) */
     get done() {
         return ['idle', 'ended', 'driver-error', 'cancelled'].includes(this.status);
+    }
+
+    /** @returns {number} the playback speed in force (1 = real time) */
+    get speed() {
+        return this._speed;
+    }
+
+    /**
+     * Change the playback speed (the page's knob - a watch setting, never a
+     * physics one: the run's dt and the verdicts are untouched). The
+     * accumulator cap rides the open run's dt, so a running trial re-arms it
+     * and the very next tick plays at the new speed.
+     * @param {unknown} value
+     * @returns {number} the speed in force (clamped)
+     */
+    setSpeed(value) {
+        this._speed = clampSpeed(value);
+        if (this._run) {
+            this._accCapMs = this._maxBatchFrames * this._run.dt * this._speed;
+            this._accMs = Math.min(this._accMs, this._accCapMs);
+        }
+        return this._speed;
     }
 
     /**
@@ -354,7 +406,16 @@ export class LiveFlow {
     /** @private */
     async _driveLoop(openingObservation) {
         const goalLine = String(openingObservation ?? '').split('\n')[0] ?? '';
+        // The Node driver hands the SDK agent `instructions: INSTRUCTIONS`,
+        // which the SDK sends as the system message; chat-completions has no
+        // such seam, so the browser driver seeds the history with it. The
+        // protocol is ONE contract in both hosts (driver-protocol.js) - the
+        // watched model must read the observation contract it is judged by:
+        // without this message it only saw the tool descriptions and one
+        // sample observation, and had to reverse-engineer the grid, the y
+        // axis and the reached/failed/timeout vocabulary.
         const messages = [
+            { role: 'system', content: INSTRUCTIONS },
             { role: 'user', content: `${goalLine}\n\nInitial observation:\n${openingObservation}\n\n${OPENING_DIRECTIVE}` },
         ];
         let turnsUsed = 0;
@@ -562,11 +623,12 @@ export class LiveFlow {
         // coarse custom-dt trial (the model's mirror quanta) still moves a
         // whole batch per paced tick instead of starving under the default
         // wall-clock cap - ADR 0008's cadence discipline stays whole.
-        this._accCapMs = this._maxBatchFrames * this._run.dt;
+        this._accCapMs = this._maxBatchFrames * this._run.dt * this._speed;
         this._accMs = 0;
         this._lastNow = null;
         this._eventCursor = 0;
-        this._onStatus(`the model tests the machine - watching the run live (${this._run.steps} frame budget)`);
+        const fast = this._speed > 1 ? `, ${this._speed}x` : '';
+        this._onStatus(`the model tests the machine - watching the run live (${this._run.steps} frame budget${fast})`);
         return new Promise((resolve) => {
             this._watchResolve = resolve;
             this._schedule((now) => this._watchTick(now));
@@ -583,11 +645,13 @@ export class LiveFlow {
         // whole frames of the run's own dt per tick, the batch capped at
         // maxBatchFrames - never a whole trial in one call.
         if (this._lastNow !== null && typeof now === 'number') {
-            this._accMs = Math.min(this._accMs + Math.max(0, now - this._lastNow), this._accCapMs);
+            const earned = Math.max(0, now - this._lastNow) * this._speed;
+            this._accMs = Math.min(this._accMs + earned, this._accCapMs);
         }
         if (typeof now === 'number') this._lastNow = now;
+        const batchCap = this._maxBatchFrames * this._speed;
         let frames = Math.floor(this._accMs / this._run.dt);
-        if (frames > this._maxBatchFrames) frames = this._maxBatchFrames;
+        if (frames > batchCap) frames = batchCap;
         this._accMs -= frames * this._run.dt;
         if (this._accMs < 0) this._accMs = 0;
         const response = this.session.advanceTrial(frames);

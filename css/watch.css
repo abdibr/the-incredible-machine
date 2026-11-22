@@ -9,40 +9,101 @@ html,
 body {
     margin: 0;
     padding: 0;
-    height: 100%;
 }
 
+/* The page scrolls (the game page cannot - its playfield is the whole
+   window). Here the play area comes FIRST and the symbolic view of it
+   (the model's ASCII observation, then the event log) sits UNDER it in the
+   same flow, so the board is always the thing on screen when the page
+   lands and the dump is one scroll away - no competing side column. */
 body#watch-page {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    min-height: 100vh;
     font-family: 'Segoe UI', Arial, sans-serif;
     color: #35302a;
     background: #262220;
 }
 
+/* The controls stay reachable while the dump is being read. */
 #watch-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
     display: flex;
-    align-items: baseline;
-    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 16px;
     padding: 10px 16px;
     background: #4a3f35;
     color: #f3ead9;
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35);
 }
 
-#watch-header h1 { font-size: 18px; margin: 0; }
-#watch-level-name { flex: 1; font-size: 13px; color: #cfc2ab; }
+#watch-header h1 { font-size: 18px; margin: 0; white-space: nowrap; }
+
+#watch-level-name {
+    flex: 1 1 120px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 13px;
+    color: #cfc2ab;
+}
 
 /* The live source's sandbox toggle (issue #65): the spectating scenario's
    other half - the model constructs on the goal-less board. */
 #watch-live-sandbox-label {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid #6a5c4b;
+    border-radius: 4px;
+    background: #3d342c;
     font-size: 12px;
     color: #cfc2ab;
     cursor: pointer;
     user-select: none;
 }
 
-#solve-watch {
+#watch-live-sandbox-label:hover { border-color: #c98c1c; color: #f3ead9; }
+
+/* The playback-speed knob: the same chrome as the sandbox toggle beside it -
+   one control bar, one look. The select inherits the label's colors; the
+   options list is the browser's (a native popup reads fine on the dark bar). */
+#watch-speed-label {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid #6a5c4b;
+    border-radius: 4px;
+    background: #3d342c;
+    font-size: 12px;
+    color: #cfc2ab;
+    user-select: none;
+}
+
+#watch-speed-label:hover { border-color: #c98c1c; color: #f3ead9; }
+
+#watch-speed {
+    font: inherit;
+    font-size: 12px;
+    padding: 1px 2px;
+    border: 1px solid #6a5c4b;
+    border-radius: 3px;
+    background: #2e2822;
+    color: #f3ead9;
+    cursor: pointer;
+}
+
+#solve-watch,
+#watch-live {
+    flex: 0 0 auto;
     font: inherit;
     padding: 6px 14px;
     border: 1px solid #8a6508;
@@ -52,30 +113,49 @@ body#watch-page {
     cursor: pointer;
 }
 
-#solve-watch:disabled { opacity: 0.5; cursor: default; }
+#watch-live {
+    border-color: #6a5c4b;
+    background: #e9dfc9;
+}
 
+#solve-watch:hover:not(:disabled),
+#watch-live:hover:not(:disabled) { filter: brightness(1.08); }
+
+#solve-watch:disabled,
+#watch-live:disabled { opacity: 0.5; cursor: default; }
+
+/* One column, always: stage (the playfield) then HUD (its symbolic view). */
 #watch-main {
     display: flex;
-    flex: 1;
-    min-height: 0;
+    flex-direction: column;
+    flex: 0 0 auto;
 }
 
 #watch-stage {
-    flex: 1;
-    position: relative;
     display: flex;
-    align-items: center;
     justify-content: center;
     padding: 12px;
     min-width: 0;
 }
 
+/* The board wrapper (fitBoard in js/watch/main.js sizes it): the canvas
+   fills it exactly. The fit is the game page's rule as far as a 5:3 world
+   allows - the playfield is as big as the window can show whole (so you land
+   on the whole board, never on its middle), and it is never stretched. The
+   banner anchors here, over the board's own bottom edge. */
+#watch-board {
+    position: relative;
+    flex: 0 0 auto;
+    line-height: 0;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
 /* The canvas backing store is the 1000x600 world (the level geometry's
-   home); CSS scales it into the stage like the game page does. */
+   home); the wrapper's CSS size is the scaled playfield. */
 #watch-canvas {
-    max-width: 100%;
-    max-height: 100%;
-    aspect-ratio: 5 / 3;
+    display: block;
+    width: 100%;
+    height: 100%;
     background: #e8e0d0;
     border: 1px solid #5a5142;
 }
@@ -83,14 +163,15 @@ body#watch-page {
 #watch-banner {
     position: absolute;
     left: 50%;
-    bottom: 24px;
+    bottom: 14px;
     transform: translateX(-50%);
+    max-width: calc(100% - 24px);
     padding: 10px 18px;
     border-radius: 6px;
+    line-height: 1.35;
     font-weight: bold;
     background: #fff7e2;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-    white-space: nowrap;
 }
 
 #watch-banner.hidden { display: none; }
@@ -102,13 +183,13 @@ body#watch-page {
 #watch-banner[data-outcome='error'] { background: #fbeaea; border: 2px solid #b8433a; color: #6e2119; }
 #watch-banner[data-outcome='cap'] { background: #e9f1f8; border: 2px solid #3a6db8; color: #1d3d69; }
 
+/* The HUD under the board: status, the model's symbolic view of the world
+   (the observation dump), then the event log. Each list scrolls inside its
+   own cap so one long dump cannot bury the rest of the page. */
 #watch-hud {
-    width: 340px;
-    display: flex;
-    flex-direction: column;
+    width: 100%;
     background: #f3ead9;
-    border-left: 1px solid #5a5142;
-    min-height: 0;
+    border-top: 1px solid #5a5142;
 }
 
 #watch-status {
@@ -121,29 +202,103 @@ body#watch-page {
 #watch-status.error { color: #a03028; font-weight: bold; }
 
 /* The live cycle's observation panel (issue #65): the model's observation
-   text as a second HUD thread above the event log. */
+   text as a second HUD thread above the event log. One collapsible entry per
+   observation - the observation is a whole ASCII world dump (125 columns), so
+   it is rendered as a preformatted, horizontally scrollable block instead of
+   wrapping into an unreadable soup; the newest entry opens. */
 #watch-observations {
     margin: 0;
     padding: 8px 14px;
     list-style: none;
-    overflow-y: auto;
-    flex: 1;
-    min-height: 30%;
     font-family: Consolas, monospace;
     font-size: 12px;
     color: #514a3c;
     border-bottom: 1px solid #d8ccae;
 }
 
+#watch-observations:empty { display: none; }
+
+#watch-observations li + li { margin-top: 4px; }
+
+#watch-observations summary {
+    font-size: 11px;
+    color: #6a5f4b;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#watch-observations summary::marker { color: #c98c1c; }
+
+/* The world dump: 125 columns of ASCII, drawn at its natural size. Never
+   wrapped (a wrapped map is soup) and never height-capped - the page is the
+   one scrollbar, so the dump reads top to bottom and sideways-scrolls only
+   when the window is narrower than the map. */
+#watch-observations pre {
+    margin: 4px 0 2px;
+    padding: 6px 8px;
+    background: #fffaf0;
+    border: 1px solid #e2d6bb;
+    border-radius: 4px;
+    /* The map is 125 fixed columns wide: size the type so the row lands on
+       the panel's width (125 cols x ~0.6em char) up to a readable 14px, and
+       below that let it scroll sideways rather than shrink to nothing. */
+    font-size: clamp(9px, calc((100vw - 44px) / 75), 14px);
+    line-height: 1.15;
+    white-space: pre;
+    overflow-x: auto;
+    user-select: text;
+}
+
 #watch-events {
     margin: 0;
     padding: 8px 14px;
     list-style: none;
-    overflow-y: auto;
-    flex: 1;
     font-family: Consolas, monospace;
     font-size: 12px;
 }
 
 #watch-events li { padding: 2px 0; border-bottom: 1px dotted #d8ccae; }
 #watch-events li.landmark { font-weight: bold; color: #1f6b1f; }
+
+/* ---------- Small screens ---------- */
+
+/* The level name stops competing with the controls: its own truncated row
+   under them instead of a crushed column beside them. */
+@media (max-width: 860px) {
+    #watch-level-name {
+        order: 3;
+        flex-basis: 100%;
+        font-size: 12px;
+    }
+
+    #watch-header h1 { flex: 1 1 auto; }
+}
+
+/* Very narrow phones: the control bar keeps its buttons on one line by
+   shrinking the chrome, not the labels. */
+@media (max-width: 560px) {
+    #watch-header {
+        padding: 8px 10px;
+        gap: 6px 10px;
+    }
+
+    #watch-header h1 { font-size: 16px; }
+
+    #solve-watch,
+    #watch-live {
+        padding: 5px 8px;
+        font-size: 13px;
+    }
+
+    #watch-live-sandbox-label,
+    #watch-speed-label {
+        padding: 4px 8px;
+    }
+
+    #watch-stage { padding: 8px; }
+
+    #watch-observations,
+    #watch-events { padding: 8px 10px; }
+}

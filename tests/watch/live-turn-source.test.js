@@ -318,6 +318,49 @@ describe('resolveLiveDriverConfig - the browser driver\'s configuration contract
     });
 });
 
+describe('the browser driver speaks the whole protocol - host parity (issue #65)', () => {
+    it(
+        'the chat history opens with the SHARED contract as a system message: the same INSTRUCTIONS the Node driver hands the SDK agent',
+        { timeout: 120000 },
+        async () => {
+            const ticker = makeTicker();
+            const service = await startTurnServer();
+            services.push(service);
+            const stub = await startStubServer(makeWinPolicy());
+            stubs.push(stub);
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                levelId: 'level-01',
+                fetchImpl: diskFetch('level-01'),
+                model: createChatModelTransport({ baseUrl: 'http://127.0.0.1:' + stub.port + '/v1', model: 'stub-model' }),
+                turns: createHttpTurnTransport(service.url, 'level-01'),
+                schedule: ticker.schedule,
+                maxTurns: 5,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start();
+            await driveLive(ticker, live);
+            expect(live.status).toBe('ended');
+
+            // Every turn's history starts with the protocol - not a copy of
+            // it: the very string the Node driver passes as `instructions`
+            // (chat-completions has no instructions seam, so it rides the
+            // system message; the observation contract is the model's to read).
+            const protocol = await import('../../agent/driver-protocol.js');
+            expect(protocol.INSTRUCTIONS.length).toBeGreaterThan(500);
+            for (const request of stub.requests) {
+                const [first] = request.body.messages;
+                expect(first.role).toBe('system');
+                expect(first.content).toBe(protocol.INSTRUCTIONS);
+            }
+            // the Node host's spelling of the same contract, by identity
+            const driver = await import('../../agent/driver.js');
+            expect(driver.INSTRUCTIONS).toBe(protocol.INSTRUCTIONS);
+        },
+    );
+});
+
 describe('createChatModelTransport - the OpenAI-compatible chat-completions seam', () => {
     it('asks once: posts model + messages + the seven advertised tools, and parses the tool calls', async () => {
         const server = await startCaptureModelServer(() => ({ calls: [{ name: 'place', args: { type: 'ball', x: 700, y: 180 } }] }));
@@ -474,14 +517,16 @@ describe('LiveFlow - the live LLM turn source in the watch page (issue #65)', ()
             expect(collected.order.lastIndexOf('event')).toBe(collected.order.indexOf('outcome') - 1); // rows before the banner
             expect(collected.frames.length).toBeGreaterThanOrEqual(2); // the board painted across the cycle
 
-            // the model's chat history: the brief carries the opening observation + the directive
+            // the model's chat history: the system contract, then the brief
+            // carrying the opening observation + the directive
             expect(stub.requests).toHaveLength(2);
-            expect(stub.requests[0].body.messages[0].content).toContain('level-01 — First Steps');
-            expect(stub.requests[0].body.messages[0].content).toContain('Choose exactly one tool call now');
+            expect(stub.requests[0].body.messages[0].role).toBe('system');
+            expect(stub.requests[0].body.messages[1].content).toContain('level-01 — First Steps');
+            expect(stub.requests[0].body.messages[1].content).toContain('Choose exactly one tool call now');
             // the continuation carries the tool result the model decided from
             const continuation = stub.requests[1].body.messages;
-            expect(continuation[2].role).toBe('tool');
-            const toolPayload = JSON.parse(continuation[2].content);
+            expect(continuation[3].role).toBe('tool');
+            const toolPayload = JSON.parse(continuation[3].content);
             expect(toolPayload.action).toBe('place');
             expect(toolPayload.result.ok).toBe(true);
             expect(toolPayload.observation).toContain('state:');
@@ -563,6 +608,74 @@ describe('LiveFlow - the live LLM turn source in the watch page (issue #65)', ()
             expect(tool.tool_call_id).toBe('call_9f');
         },
     );
+});
+
+describe('LiveFlow - the playback speed knob (the watch setting, not the physics)', () => {
+    /** One cycle: a model that asks for a 1 s trial, one turn, at `speed`. */
+    async function cycleAt(speed) {
+        const ticker = makeTicker();
+        const session = new AgentSession({ seed: null });
+        const collected = { frames: [], outcomes: [], liveEnds: [], errors: [] };
+        const flow = new LiveFlow({
+            levelId: 'level-01',
+            fetchImpl: diskFetch('level-01'),
+            session,
+            // the model seam is just { ask } - no wire needed to pin the cadence
+            model: { ask: async () => ({ calls: [{ name: 'trial', args: { seconds: 1 } }] }) },
+            turns: createLocalTurnTransport(session),
+            schedule: ticker.schedule,
+            maxTurns: 1,
+            speed,
+            listeners: liveListeners(collected),
+        });
+        await flow.start();
+        await driveLive(ticker, flow);
+        session.dispose();
+        return { ticks: collected.frames.length, outcome: flow.result?.outcome, elapsed: flow.result?.elapsed, status: flow.status };
+    }
+
+    it(
+        'a faster playback advances the same run in fewer ticks: 4x is a quarter of 1x, same verdict, same elapsed',
+        { timeout: 120000 },
+        async () => {
+            const real = await cycleAt(1);
+            const fast = await cycleAt(4);
+
+            expect(real.status).toBe('ended');
+            expect(fast.status).toBe('ended');
+            // The physics is untouched: the same run, frame for frame.
+            expect(fast.outcome).toBe(real.outcome);
+            expect(fast.elapsed).toBe(real.elapsed);
+            // 60 frames of a 1 s run at ~17 ms ticks: ~60 ticks at 1x, ~15 at 4x.
+            expect(real.ticks).toBeGreaterThanOrEqual(55);
+            expect(real.ticks).toBeLessThanOrEqual(75);
+            expect(fast.ticks).toBeGreaterThanOrEqual(10);
+            expect(fast.ticks).toBeLessThanOrEqual(22);
+        },
+    );
+
+    it('the knob clamps to the offered range and retargets a running cycle', async () => {
+        const ticker = makeTicker();
+        const session = new AgentSession({ seed: null });
+        const flow = new LiveFlow({
+            levelId: 'level-01',
+            fetchImpl: diskFetch('level-01'),
+            session,
+            model: { ask: async () => ({ calls: [] }) },
+            turns: createLocalTurnTransport(session),
+            schedule: ticker.schedule,
+            maxTurns: 1,
+            speed: 2,
+            listeners: liveListeners({}),
+        });
+        expect(flow.speed).toBe(2);
+        expect(flow.setSpeed(0)).toBe(1);   // no slow motion below real time
+        expect(flow.setSpeed(99)).toBe(8);  // and a ceiling
+        expect(flow.setSpeed('4')).toBe(4); // the select hands strings
+        expect(flow.setSpeed(Number.NaN)).toBe(1);
+        flow.cancel();
+        session.dispose();
+    });
 });
 
 describe('LiveFlow - the other endings, the dt-bound and the data posture (issue #65)', () => {
