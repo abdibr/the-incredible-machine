@@ -263,3 +263,53 @@ suites that landed it: `tests/rope-seats.test.js`, `rope-ties.test.js`, `rope-se
 `rope-seat-tokens.test.js`, `rope-span.test.js`, `rope-tie-compliance.test.js` (the 80px ceiling),
 `rope-family.test.js` (the roster seam) and `connect-flow.test.js` (the armed-seek advance). Full
 suite: 76 files / 877 tests, all green.
+
+## Amendment (2026-11-21) - the review-fix records: what the docs pass listed but never wrote (issues #100, #101)
+
+The 2026-11-22 amendment's preamble read issues #100 and #101 off the landed commits, and the
+rope-ties spec carried lines the code answers differently; both reviews surfaced the gaps. This
+amendment records them where the code's own doc lives — zero lines of behavior change.
+
+1. **The tie point answers the body's rotation (issue #100) — superseding ADR 0005 decision 7 as
+first written.** `BaseObject.getAttachmentWorldPoint` resolves an attachment point from
+body-local terms: the offset rides its own body's angle (`position + rotate(offset,
+body.angle)`), so the tie square, knot ring, knot tooltip and the drawn knots sit on the same
+point the realized engine link pins at every body angle — Matter re-rotates the knot link's
+stored pointB in place as the bearer body turns (ADR 0005's "Matter pins worth knowing"), so a
+tie must answer the body's frame or the square and the pin drift apart while a balloon spins or
+a bucket tips (the 10.8-17.7px growing wedge the ticket's probe measured;
+`tests/rope-tie-frame.test.js` holds the frame-coincidence probe). ADR 0005 decision 7's
+parenthetical — "world space (position + offset, unrotated)" — was the angle-0 spelling, true
+only while every attachment-bearing object rendered upright; it is amended in place there (the
+domain rule: ADR conflicts are surfaced, never silently overridden), and the glossary's
+attachment-point entry carries the same correction. This pass also corrected the probe suite's
+own name, which said the opposite of what it ships: "Tie points ignore body rotation" is now
+"Tie points answer the body's rotation".
+2. **The balloon paints no decorative string (issue #101).** The tie preamble listed it, and no
+point recorded it: a balloon paints never a string of its own, tied or untied — the rope's
+drawn tail is the only string on the board; the knot triangle and the realized pin are the
+balloon's tie truth.
+3. **A beyond-reach tie grows the rope; the target never moves.** The spec's decision 2 ("the
+target is pulled onto the seat when the knot is beyond it") is deliberately not implemented and
+superseded as written: an end/mid tie aimed past the seat's covering circle answers with the
+tie-grow covering re-lay (issue #98) — the chain re-lays ONTO the knot, and nothing of the tie
+ever translates the target (the same target immobility the #98 triage states). The only pull
+that lives is the anchor seat's connect-flow pull of a movable non-rope target onto the anchor
+(Consequences, above), where the knot consumes no chain and no beyond-it exists.
+4. **Restore ties re-seat nothing.** `attachEndpoint` carries an `opts` flag (`reseat: false`)
+and the token-bind paths pass it: a restored row binds its knot over the lay the row itself
+records, because the in-reach re-seat would reshape a replayed board before its first step and
+break ADR 0006 decision 1's snapshot-authoritative replay (bit-exact bug-file replay). The
+covering grow still answers a knot recorded past its cover; the re-seat is live-tie policy
+only. The restore paths keep their no-move contract — unasked by the feature spec, recorded
+because the code depends on it.
+5. **A free-rope tie's advance sweeps the refusal flash (issue #103's rider).** The seek-advance
+(the 2026-11-22 amendment's point 4) clears any standing refusal flash at the exact moment it
+re-arms the seat: the newest click's outcome — a landed tie — replaces the last refusal's red
+paint, so a timed flash never points at a seat the flow has just left (the pinned family's
+settled tie sweeps the same way; `flow.refusal` answers null after either, pinned by
+`tests/connect-flow.test.js`'s refusal tests). Nothing of decision-level tie behavior changes;
+recorded because the sweep ships with the advance and decision-level text never said so.
+
+Test surface at amendment time: none added — records, the #100 rename and the two-pass seal's
+one-spelling dedup only. Full suite: 76 files / 877 tests, all green.
