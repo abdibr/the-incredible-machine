@@ -126,7 +126,10 @@ describe('WatchFlow - the Solve & Watch cycle (issue #62)', () => {
             pumpSolving(ticker);
             expect(flow.status).toBe('watching'); // the script found the win in-page
             // Progress streams one candidate per tick when the search runs
-            // past its first judgment (level-01 often wins on trial #1).\n            if (flow.solverReport.trials > 1) {\n                expect(statuses.some((t) => /solving - trial #/.test(t))).toBe(true);\n            }
+                        // past its first judgment (level-01 often wins on trial #1).
+            if (flow.solverReport.trials > 1) {
+                expect(statuses.some((t) => /solving - trial #/.test(t))).toBe(true);
+            }
             const solved = statuses.find((t) => /solved after \d+ trial/.test(t));
             expect(solved).toContain('watching the winning trial');
             // The winning placements stand on the session (the watched rebuild uses them).
