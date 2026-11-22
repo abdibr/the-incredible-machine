@@ -1,5 +1,60 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-21 - Agent Watch 5/5: the live LLM turn source in the watch page (issue #65)
+
+The watch page's driver becomes the real phase-2 agent: `LiveFlow` (`js/watch/liveFlow.js`)
+drives the watched world from a live model's responses, through the configurable turn service
+or over the in-page runTurn posture, with the observation text rendering beside the board and
+every ending degrading to a usable page. The branch arrived crash-resumed (the prior session's
+first three slices - the one protocol leaf, the config + transports, the live cycle - were on
+the books; its fourth slice sat red in a dirty worktree); this session finished the slice,
+then wired the page:
+
+- **The dt-bound closed the in-flight slice** - the red pinned the coarse custom-dt deadlock:
+  the watched accumulator was capped at a fixed 50 ms, so a dt=100 trial moved floor(50/100)=0
+  frames per tick and the cycle never ended. The fix binds the accumulator cap to the open run
+  (`maxBatchFrames x run.dt`) - one tick may spend at most a full batch's worth of the run's
+  own dt, so the mirror moves a whole batch per paced tick; for the default dt the number is
+  the same 50 ms plateau (3 x 16.67), ADR 0008's cadence discipline untouched. (The slice's
+  sandbox arrival-order pin was also corrected to its honest spelling: every streamed row
+  precedes the run banner - frame marks interleave the order stream between the rows and it.)
+- **The one protocol leaf** - `agent/driver-protocol.js` carries the model-facing contract
+  (INSTRUCTIONS, the opening directive, the stall nudge, the seven-advertised-tool table with
+  OBSERVE_TOOL first + ACTION_TOOLS' six rows, the HTTP turn transport) verbatim; `driver.js`
+  re-exports the bindings (the #94 byte-identity pin, tests-bound) and the browser loop speaks
+  exactly the same objects - the two drivers cannot drift.
+- **The cycle's endings + the data posture** - the served stub model plays level-01 under
+  observation (placements mirrored live, the trial re-watched over the #61 seam, the goal
+  banner composed by the #62 vocabulary), the sandbox cycle builds on the goal-less board and
+  caps (turn-cap, no goal vocabulary), the in-page posture is a first-class configuration,
+  a refusal is data the model reads and continues past, and a stalling model rides the shared
+  stall nudge to the cap.
+- **The review's three fixes** - (1) the chat transport returns the provider's assistant
+  message verbatim and the loop re-posts its tool_calls + echoes the provider's tool_call ids
+  into the history: the synthetic `call_<i>` ids broke the strict chat-completions contract
+  against real providers (the stub suite never exercised the round-trip); (2) a cancelled
+  cycle goes silent mid-turn - the cancelled guard rides every post-await step of the call
+  execution, the trial branches and the cap emission, so the human's takeover never hears a
+  ghost driver-error or an after-the-fact cap banner; (3) a hung model provider degrades at
+  the transport's own bound (`AbortSignal.timeout`, the same 120 s discipline the transport
+  seam carries) - the ask resolves structured no-answer data, never a frozen cycle.
+- **The page rides the live source** - `js/watch/main.js` composes the Watch-live button:
+  `window.WATCH_LIVE_CONFIG` feeds `resolveLiveDriverConfig` (the driver resolver's
+  `{errors, config}` contract - the missing model or endpoint names the gaps, the button
+  sits out and the status line says so); the sandbox toggle rides the spectating scenario's
+  other half: the model constructs on the goal-less board and plays it, in-page by
+  construction, the run banner composed by the #64 sandbox vocabulary. The observation panel
+  renders the model's observation thread beside the events. A click interrupts whichever
+  cycle is running (the takeover) - both buttons stay live and the scripted fallback keeps
+  the watch usable; a degrade banners with its kind ('error' for the driver/service endings,
+  'cap' for the driver's own turn cap).
+- **The harness bound** - the live-cycle fail-safe guard rides at 20000 loop turns (the whole
+  watch suite in parallel stretches the HTTP awaits' loop turns above the old 4000; the
+  fail-safe's purpose - a true deadlock trips fast - is untouched).
+- **Suite posture at the ticket tip** - `tests/watch/live-turn-source.test.js` 28/28 (the one
+  protocol leaf, the configuration contract, the transports, the live cycle and the endings),
+  full suite green at 84 files.
+
 ## 2026-11-21 - Agent Watch 4/5: the sandbox watch - the agent constructs, then plays (issue #64)
 
 The second watch flow stands: a goal-less sandbox session (ADR 0011) is built part by part,

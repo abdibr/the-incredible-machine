@@ -33,6 +33,15 @@ body#watch-page {
 #watch-header h1 { font-size: 18px; margin: 0; }
 #watch-level-name { flex: 1; font-size: 13px; color: #cfc2ab; }
 
+/* The live source's sandbox toggle (issue #65): the spectating scenario's
+   other half - the model constructs on the goal-less board. */
+#watch-live-sandbox-label {
+    font-size: 12px;
+    color: #cfc2ab;
+    cursor: pointer;
+    user-select: none;
+}
+
 #solve-watch {
     font: inherit;
     padding: 6px 14px;

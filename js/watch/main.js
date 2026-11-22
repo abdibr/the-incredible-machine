@@ -17,16 +17,21 @@
  * source (LiveFlow: the page connects to the configurable turn service, or
  * rides the in-page runTurn posture, and a live model drives the watched
  * world; the model's observations render in the HUD's observation panel).
- * Either button starts its cycle; starting one interrupts the other (a
- * click is the human's takeover - a stuck or errored cycle never locks the
- * page, and the scripted fallback keeps the watch usable). The live
- * cycle's settings ride window.WATCH_LIVE_CONFIG; without them the page
- * names the resolver's gaps at boot.
+ * The live button carries a sandbox toggle - the sandbox spectating
+ * scenario: the model constructs on the goal-less board (ADR 0011) and
+ * plays it, the in-page posture by construction (the turn service stays
+ * the level scenario's seam), the run's banner composed by the #64
+ * sandbox vocabulary. Either button starts its cycle; starting one
+ * interrupts the other (a click is the human's takeover - a stuck or
+ * errored cycle never locks the page, and the scripted fallback keeps the
+ * watch usable). The live cycle's settings ride window.WATCH_LIVE_CONFIG;
+ * without them the page names the resolver's gaps at boot.
  */
 
 import Renderer from '../render/Renderer.js';
 import { AgentSession } from '../../agent/session.js';
 import { bannerForRunResult, formatEventRow, WatchFlow } from './watchFlow.js';
+import { bannerForSandboxResult } from './sandboxFlow.js';
 import {
     LiveFlow,
     createChatModelTransport,
@@ -46,8 +51,9 @@ const observationsEl = document.getElementById('watch-observations');
 const bannerEl = document.getElementById('watch-banner');
 const button = document.getElementById('solve-watch');
 const liveButton = document.getElementById('watch-live');
+const sandboxToggle = document.getElementById('watch-live-sandbox');
 
-if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !bannerEl || !button || !liveButton) {
+if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !bannerEl || !button || !liveButton || !sandboxToggle) {
     console.error('[watch] required DOM elements not found');
 } else {
     // Fixed playfield size: the level geometry's home is the 1000x600
@@ -161,6 +167,12 @@ if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !ban
                 kind: 'cap',
             });
         },
+        onSandboxRunEnded: (result, meta) => {
+            // The sandbox run's own banner vocabulary (#64): stop/timeout
+            // shaped, never a goal banner.
+            const banner = bannerForSandboxResult(result, meta);
+            setBanner({ title: banner.label, body: banner.text, kind: banner.kind });
+        },
         onDriverError: (payload) => {
             statusEl.classList.add('error');
             setBanner({
@@ -208,15 +220,20 @@ if (!canvas || !levelNameEl || !statusEl || !eventsEl || !observationsEl || !ban
         const cfg = liveConfig.config;
         // The in-page posture shares the flow's session with the turn
         // transport; the service posture reads through the configurable
-        // URL with the level stamped per turn.
-        const session = new AgentSession({ seed: null });
+        // URL with the level stamped per turn. The sandbox toggle rides
+        // the spectating scenario's other half (ADR 0011): the goal-less
+        // board lives on the page, so sandbox cycles are in-page by
+        // construction - the turn service is the level scenario's seam.
+        const sandbox = sandboxToggle.checked;
+        const session = sandbox ? new AgentSession({ seed: null, sandbox: true }) : new AgentSession({ seed: null });
         flow = new LiveFlow({
+            sandbox,
             levelId: cfg.level,
             session,
             model: createChatModelTransport({ baseUrl: cfg.modelBaseUrl, model: cfg.model, apiKey: cfg.apiKey }),
-            turns: cfg.turnBaseUrl !== undefined
-                ? createHttpTurnTransport(cfg.turnBaseUrl, cfg.level)
-                : createLocalTurnTransport(session),
+            turns: sandbox || cfg.turnBaseUrl === undefined
+                ? createLocalTurnTransport(session)
+                : createHttpTurnTransport(cfg.turnBaseUrl, cfg.level),
             maxTurns: cfg.maxTurns,
             listeners: liveListeners,
         });
