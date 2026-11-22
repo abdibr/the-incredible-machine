@@ -461,3 +461,113 @@ describe('the sandbox manual stop and reset (issue #64)', () => {
         },
     );
 });
+describe('the sandbox pause and single-frame step (issue #64)', () => {
+    it(
+        'pause holds the build mid-script - the beats freeze, the ticker quiets - and resume finishes the script',
+        { timeout: 30000 },
+        async () => {
+            const ticker = makeTicker();
+            flow = new SandboxFlow({
+                session: new AgentSession({ seed: null, sandbox: true }),
+                schedule: ticker.schedule,
+                buildBeatMs: 0,
+                listeners: { onStatus: () => {}, onEvent: () => {}, onFrame: () => {} },
+            });
+            await flow.start();
+            ticker.pump(ticker.pump());
+            const beatCount = flow.session.placements.length;
+            expect(beatCount).toBeGreaterThanOrEqual(2);
+
+            // The pause: the build's cadence stops with its place held.
+            flow.pause();
+            expect(flow.paused).toBe(true);
+            ticker.pump(); // drain the already-queued pump - it returns without re-arming
+            ticker.pump(ticker.pump(ticker.pump()));
+            expect(ticker.size()).toBe(0); // the cadence ended: nothing scheduled on
+            expect(flow.session.placements.length).toBe(beatCount); // the script held
+            expect(flow.status).toBe('building');
+
+            // Resume: a fresh cadence, the script finishes.
+            flow.resume();
+            expect(flow.paused).toBe(false);
+            expect(ticker.size()).toBe(1); // re-armed
+            let guard = 0;
+            while (flow.status === 'building' && guard++ < 20) ticker.pump();
+            expect(flow.status).toBe('built');
+            expect(flow.session.placements).toHaveLength(5);
+
+            // Pause is a no-op outside the active phases.
+            flow.pause();
+            expect(flow.paused).toBe(false);
+        },
+    );
+
+    it(
+        'pause holds the run\'s simulation - the frames freeze, the ticker quiets - and resume finishes the run',
+        { timeout: 60000 },
+        async () => {
+            const ticker = makeTicker();
+            const { session } = await buildToBuilt(ticker, {
+                listeners: { onStatus: () => {}, onEvent: () => {}, onFrame: () => {} },
+            });
+            flow.run();
+            let now = 0;
+            let guard = 0;
+            while (session.trialRun.stepped < 60 && guard++ < 500) ticker.pump((now += 17)); // ~1s of sim
+            const stepped = session.trialRun.stepped;
+
+            // The pause: the simulation holds its frame.
+            flow.pause();
+            expect(flow.paused).toBe(true);
+            ticker.pump(); // drain the queued tick - it returns without advancing or re-arming
+            ticker.pump(ticker.pump(ticker.pump()));
+            expect(ticker.size()).toBe(0);
+            expect(session.trialRun.stepped).toBe(stepped); // not one frame further
+            expect(flow.status).toBe('running');
+
+            // Resume: the run continues to its budget's end.
+            flow.resume();
+            expect(flow.paused).toBe(false);
+            expect(ticker.size()).toBe(1);
+            guard = 0;
+            while (flow.status === 'running' && guard++ < 3000) ticker.pump((now += 17));
+            expect(flow.status).toBe('ended');
+            expect(flow.result.outcome).toBe('timeout'); // the whole budget still stepped out
+        },
+    );
+
+    it(
+        "single-frame stepping is the run phase's manual cadence - one frame per call, finalizing on the last - and answers null outside it",
+        { timeout: 90000 },
+        async () => {
+            const ticker = makeTicker();
+            const { session } = await buildToBuilt(ticker, {
+                listeners: { onStatus: () => {}, onEvent: () => {}, onFrame: () => {} },
+            });
+            flow.run();
+            let response = flow.stepFrame();
+            expect(response).toEqual({ stepped: 1, done: false, verdict: null }); // exactly one frame
+            expect(flow.paused).toBe(true); // stepping IS the manual cadence
+            ticker.pump(); // the automatic ticker no longer advances the run
+            expect(session.trialRun.stepped).toBe(1);
+
+            // Frame by frame to the very end of the budget: the last frame
+            // finalizes the run (the budget - not a stop).
+            response = null;
+            let calls = 1;
+            while (response === null || !response.done) {
+                response = flow.stepFrame();
+                calls++;
+            }
+            expect(calls).toBeGreaterThanOrEqual(295); // 300 whole quanta, counted one frame at a time
+            expect(flow.status).toBe('ended');
+            expect(flow.stoppedHow).toBe('budget'); // frame-by-frame to the budget - not a manual stop
+            expect(flow.result.outcome).toBe('timeout');
+            expect(flow.result.elapsed).toBeCloseTo(5000, 6);
+            expect(session.trialRun).toBeNull();
+
+            // Outside the run phase: null, and nothing steps.
+            expect(flow.stepFrame()).toBeNull();
+        },
+    );
+});
