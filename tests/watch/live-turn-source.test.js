@@ -6,7 +6,12 @@ import {
     resolveLiveDriverConfig,
     createChatModelTransport,
     createLocalTurnTransport,
+    createHttpTurnTransport,
+    LiveFlow,
 } from '../../js/watch/liveFlow.js';
+import { startStubServer, makeWinPolicy } from '../helpers/stub-provider.js';
+import { startTurnServer } from '../../agent/server.js';
+import { readFileSync as readLevelFileSync } from 'node:fs';
 
 /**
  * The live LLM turn source in the watch page (issue #65).
@@ -94,6 +99,106 @@ describe('agent/driver-protocol.js - the one protocol leaf (issue #65)', () => {
 const modelServers = [];
 afterEach(async () => {
     for (const s of modelServers.splice(0)) await s.close();
+});
+
+/** The node-only level fetches of the flow tests (the served file, from disk). */
+function diskFetch(id = 'level-01') {
+    return () => Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve(JSON.parse(readLevelFileSync(new URL('../js/levels/puzzles/' + id + '.json', import.meta.url), 'utf8'))),
+    });
+}
+
+/** A manual animation-frame scheduler - the page's cadence, unwrapped. */
+function makeTicker() {
+    const queue = [];
+    return {
+        schedule: (cb) => { queue.push(cb); return queue.length; },
+        size: () => queue.length,
+        pump: (times) => {
+            const n = queue.length;
+            for (let i = 0; i < n && queue.length > 0; i++) queue.shift()(times);
+        },
+    };
+}
+
+/** Drive one live cycle: pump the ticker (the trial animation's cadence) and let the awaited transports advance between pumps. */
+async function driveLive(ticker, target) {
+    let now = 0;
+    let guard = 0;
+    while (!target.done && guard++ < 4000) {
+        if (ticker.size() > 0) ticker.pump((now += 17));
+        await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(guard).toBeLessThan(4000); // the live cycle is bounded
+}
+
+/**
+ * A counting FAKE turn service (the transport seam): real HTTP, real
+ * AgentSession, real runTurn envelopes - posts counted for wire assertions.
+ */
+const countingServices = [];
+async function startCountingTurnService() {
+    const posts = [];
+    let session = null;
+    const server = http.createServer((req, res) => {
+        let raw = '';
+        req.on('data', (c) => { raw += c; });
+        req.on('end', () => {
+            let actionJson = null;
+            try { actionJson = raw ? JSON.parse(raw) : null; } catch { actionJson = null; }
+            posts.push({ method: req.method, url: req.url, actionJson });
+            if (req.method !== 'POST' || req.url !== '/turn') {
+                const body = JSON.stringify({ observation: '(no session)', result: { ok: false, error: 'unknown endpoint: ' + req.method + ' ' + req.url } });
+                res.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) });
+                res.end(body);
+                return;
+            }
+            if (!session) {
+                session = new AgentSession();
+                session.loadLevel('level-01');
+            }
+            const envelope = JSON.stringify(runTurn(actionJson, session));
+            res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(envelope) });
+            res.end(envelope);
+        });
+    });
+    return new Promise((resolve) => {
+        server.listen(0, '127.0.0.1', () => resolve({
+            port: server.address().port,
+            url: 'http://127.0.0.1:' + server.address().port,
+            posts,
+            close: () => new Promise((r) => { session?.dispose(); session = null; server.close(r); }),
+        }));
+    }).then((s) => (countingServices.push(s), s));
+}
+
+/** Listeners that collect every seam's traffic + the arrival order. */
+function liveListeners(extra = {}) {
+    return {
+        onStatus: (t) => extra.statuses?.push(t),
+        onObservation: (t) => extra.observations?.push(t),
+        onEvent: (rows) => { extra.events?.push(...rows); extra.order?.push(...rows.map(() => 'event')); },
+        onFrame: () => { extra.frames?.push(1); extra.order?.push('frame'); },
+        onWatchOutcome: (r) => { extra.outcomes?.push(r); extra.order?.push('outcome'); },
+        onSandboxRunEnded: (r, m) => extra.sandboxEnds?.push({ result: r, meta: m }),
+        onLiveEnded: (p) => extra.liveEnds?.push(p),
+        onDriverError: (p) => extra.errors?.push(p),
+        onServiceUnreachable: (p) => extra.unreachables?.push(p),
+    };
+}
+
+/** @type {InstanceType<typeof import('../../js/watch/liveFlow.js').LiveFlow>|null} */
+let live = null;
+const stubs = [];
+const services = [];
+
+afterEach(async () => {
+    live?.cancel();
+    live = null;
+    for (const s of stubs.splice(0)) await s.close();
+    for (const s of services.splice(0)) await s.close();
+    for (const s of countingServices.splice(0)) await s.close();
 });
 
 function startCaptureModelServer(handler) {
@@ -290,4 +395,116 @@ describe('createLocalTurnTransport - the in-page posture (the session IS the tur
             session.dispose();
         }
     });
+});
+
+describe('LiveFlow - the live LLM turn source in the watch page (issue #65)', () => {
+    it(
+        'the served model plays level-01 under observation: turns ride the service, each placement lands live, the model\'s observations render in the panel thread, the watched trial streams rows before the goal-reached banner',
+        { timeout: 120000 },
+        async () => {
+            const ticker = makeTicker();
+            const service = await startTurnServer();
+            services.push(service);
+            const stub = await startStubServer(makeWinPolicy());
+            stubs.push(stub);
+            const { errors, config } = resolveLiveDriverConfig({
+                model: 'stub-model',
+                modelBaseUrl: 'http://127.0.0.1:' + stub.port + '/v1',
+                turnBaseUrl: service.url,
+                maxTurns: 5,
+            });
+            expect(errors).toEqual([]);
+
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], sandboxEnds: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                levelId: 'level-01',
+                fetchImpl: diskFetch('level-01'),
+                model: createChatModelTransport({ baseUrl: config.modelBaseUrl, model: config.model }),
+                turns: createHttpTurnTransport(config.turnBaseUrl, config.level),
+                schedule: ticker.schedule,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start(); // setup + the opening observation; the loop rides on
+            await driveLive(ticker, live);
+
+            expect(live.status).toBe('ended');
+            expect(collected.errors).toHaveLength(0);
+            expect(collected.unreachables).toHaveLength(0);
+            expect(collected.sandboxEnds).toHaveLength(0);
+            // the driver outcome vocabulary, exactly the phase-2 shapes
+            expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'goal-reached', turns: 2 })]);
+
+            // the banner: one goal-reached outcome, honest fields (the judged run's)
+            expect(collected.outcomes).toHaveLength(1);
+            const outcome = collected.outcomes[0];
+            expect(outcome.outcome).toBe('reached');
+            expect(outcome.elapsed).toBeGreaterThan(0);
+            expect(outcome.elapsed).toBeLessThan(5000);
+
+            // the watched session mirrored the model's move through the action API
+            expect(live.session.placements).toEqual([{ type: 'ball', x: 700, y: 180, angle: 0 }]);
+            expect(live.liveObjects().some((o) => o.type === 'ball')).toBe(true);
+
+            // AC2: the panel thread holds the model's readings; the last one carries the trial's story
+            expect(collected.observations.length).toBeGreaterThanOrEqual(3);
+            expect(collected.observations[0]).toContain('level-01 — First Steps');
+            expect(collected.observations[0]).toContain('state:');
+            expect(collected.observations[collected.observations.length - 1]).toContain('events:');
+            expect(collected.observations[collected.observations.length - 1]).toMatch(/goal reached/);
+
+            // the HUD streamed the run's rows as they happened, then the banner
+            expect(collected.events.map((r) => r.text)).toContain('ball caught by bucket-goal');
+            expect(collected.events.some((r) => r.landmark && /goal reached/.test(r.text))).toBe(true);
+            for (const row of collected.events) expect(row.t).toMatch(/^\d+\.\d{2}$/);
+            expect(collected.order.lastIndexOf('event')).toBe(collected.order.indexOf('outcome') - 1); // rows before the banner
+            expect(collected.frames.length).toBeGreaterThanOrEqual(2); // the board painted across the cycle
+
+            // the model's chat history: the brief carries the opening observation + the directive
+            expect(stub.requests).toHaveLength(2);
+            expect(stub.requests[0].body.messages[0].content).toContain('level-01 — First Steps');
+            expect(stub.requests[0].body.messages[0].content).toContain('Choose exactly one tool call now');
+            // the continuation carries the tool result the model decided from
+            const continuation = stub.requests[1].body.messages;
+            expect(continuation[2].role).toBe('tool');
+            const toolPayload = JSON.parse(continuation[2].content);
+            expect(toolPayload.action).toBe('place');
+            expect(toolPayload.result.ok).toBe(true);
+            expect(toolPayload.observation).toContain('state:');
+        },
+    );
+
+    it(
+        'the wire the sidecar drives: one POST /turn per model turn with the level stamped and the moves executed in order',
+        { timeout: 120000 },
+        async () => {
+            const ticker = makeTicker();
+            const counting = await startCountingTurnService();
+            services.push(counting);
+            const stub = await startStubServer(makeWinPolicy());
+            stubs.push(stub);
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                levelId: 'level-01',
+                fetchImpl: diskFetch('level-01'),
+                model: createChatModelTransport({ baseUrl: 'http://127.0.0.1:' + stub.port + '/v1', model: 'stub-model' }),
+                turns: createHttpTurnTransport(counting.url, 'level-01'),
+                schedule: ticker.schedule,
+                maxTurns: 5,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start();
+            await driveLive(ticker, live);
+
+            expect(collected.outcomes[0]?.outcome).toBe('reached');
+            // opening observe, then exactly one POST per executed call - level stamped on every payload
+            expect(counting.posts.map((p) => p.actionJson)).toEqual([
+                { action: 'observe', level: 'level-01' },
+                { action: 'place', type: 'ball', x: 700, y: 180, level: 'level-01' },
+                { action: 'trial', seconds: 5, level: 'level-01' },
+            ]);
+            expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'goal-reached', turns: 2 })]);
+        },
+    );
 });
