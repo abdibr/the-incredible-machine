@@ -118,9 +118,13 @@ export class AgentSession {
      *      playfield size; `seed` opts this session into seeded construction
      *      randomness (strings accepted, e.g. a raw env value). When omitted
      *      the TIM_AGENT_SEED env var is consulted; both unset = today's
-     *      unseeded behavior.
+     *      unseeded behavior. `sandbox: true` opens the sandbox posture
+     *      (issue #63): goal-less ad-hoc sessions - the load gate accepts
+     *      goal-less documents, placements draw from the parts palette (the
+     *      registered roster), and runs judge no goal. Defaults false - the
+     *      puzzle posture, today's behavior to the byte.
      */
-    constructor({ width = 1000, height = 600, seed } = {}) {
+    constructor({ width = 1000, height = 600, seed, sandbox = false } = {}) {
         if (objectRegistry.getAll().length === 0) registerAllObjects();
         this.width = width;
         this.height = height;
@@ -129,6 +133,11 @@ export class AgentSession {
         this.placements = [];
         /** @type {PhysicsEngine|null} */
         this.engine = null;
+        // The session posture (issue #63): true = sandbox - goal-less
+        // ad-hoc sessions; placements from the parts palette; runs that
+        // never judge a goal. Default false: the puzzle posture, today's
+        // behavior to the byte.
+        this._sandbox = !!sandbox;
         this._goalChecker = null;
         this._outcome = null;
         this._failureReason = null;
@@ -201,7 +210,16 @@ export class AgentSession {
         // schema the campaign loader answers to (validateCustom), and the
         // level:loaded fact emitted by the LevelManager seam in the rebuild
         // below - never by hand here.
-        levelManager.validateCustom(data);
+        // The level owner validates and publishes (issue #78): the sandbox
+        // posture (issue #63) takes the goal-less sibling gate - the same
+        // schema owner, the puzzle requirements relaxed only for the posture
+        // that carries them - and every other load keeps answering to the
+        // same schema the campaign loader runs (validateCustom).
+        if (this._sandbox) {
+            levelManager.validateSandbox(data);
+        } else {
+            levelManager.validateCustom(data);
+        }
         this.levelData = data;
         this.placements = [];
         this._rebuild();
