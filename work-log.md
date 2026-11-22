@@ -1,5 +1,61 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-21 - Agent Watch 2/5: the watch sidecar lands - the browser watches a solved level play out (issue #62)
+
+The second browser entry is real in both toolchains, the phase-1 surface is now a UI contract, and
+the import-rule amendment is on the books (ADR 0010):
+
+- **ADR 0010 (docs/adr/0010-watch-sidecar-agent-import.md)** - the scoped amendment: the watch
+  sidecar site (watch.html -> js/watch/) may import the agent layer; the game bundle's entry
+  subgraph still may not (and nothing imports the watch code); watching never mutates player
+  state (no progress marks - the sidecar never runs levelManager.init(), the only progress-mark
+  arming site - no recorder, no editor panels; it reuses none of those components); watched
+  trials are the same deterministic trials trial() judges; the fs level loader stays Node-only.
+  GLOSSARY.md gains the watch vocabulary.
+- **The solver is steppable (agent/solver.js)** - solveTrials yields one judged candidate at a
+  time (trials, candidate, result, best-so-far); solve() is the composition (the #61 pattern: the
+  two spellings cannot drift). Parity pinned in tests/watch/solver-stepping.test.js against
+  all-at-once solve() on level-01; the yield stream pinned on a bounded search; the solver
+  contract (solver.test.js) untouched and green.
+- **The run controller (js/watch/watchFlow.js)** - fetchLevelDocument is the browser's own level
+  loader (the campaign loader's URL, handed to the session as a data object); WatchFlow.start()
+  runs the full Solve & Watch cycle - fetch, install, solver search one candidate per scheduled
+  tick (progress streams), then on a win startWatch(placements) opens the #61 steppable trial
+  and each tick advances a small, wall-clock-paced batch (ADR 0008's accumulator discipline,
+  batch capped at 3 quanta) - the page never blocks for a whole trial. The event log streams to
+  the HUD as it happens and the finalized result ends the run with the banner payload (goal
+  reached / failed / timeout; a no-win search ends with the diagnosis - reported, not fixed).
+  AgentSession gains two browser-safety guards: the seed env is read only where process exists,
+  and loadLevel(id) refuses in a page with the fetch-it-yourself sentence.
+- **The page (watch.html, css/watch.css, js/watch/main.js)** - canvas (1000x600 backing store)
+  painted by a fresh Renderer class instance; the HUD lists live event sentences with their t=
+  timestamps (landmark rows emphasized); the banner names the outcome; the button guards a
+  running cycle. vite.config.js lists both HTML entries (build.rollupOptions.input); the dev
+  server serves /watch.html (smoke-tested: all module + level URLs 200) and the production build
+  emits dist/watch.html beside dist/index.html (one externalization note for the lazy node:fs
+  import, never executed on the watch path).
+- **The boundary pins (tests/watch/boundary.test.js)** - ADR 0010 exists and carries the five
+  decisions; the vite config lists both entries; watch.html's entry module and HUD mounts; the
+  game bundle unchanged (index.html -> js/main.js scan; main.js imports no agent/watch module);
+  the repo-wide import-graph scan: nothing outside js/watch/ imports agent/ or watch code, and
+  the watch site does import the agent layer; a full watched win on the shared bus leaves the
+  progress set untouched (even after a raw goal:reached emission); the watch site never
+  references the player-side machinery; the fs loader refuses in a browser-like page; the
+  session constructor survives process-less pages.
+- **The cycle pins (tests/watch/watch-flow.test.js)** - the full level-01 cycle streams (the
+  solver's win judged through the steppable facade, watched in capped batches), live HUD rows
+  with timestamps, the goal-reached banner payload; the watched run IS trial() over the solver's
+  placements (events incl. timestamps, poses, distance - identical), and repeated cycles land
+  identically; a longer winning run (the classic (700, 100) drop via startWatch, the page's
+  rewatch seam) unwraps over dozens of ticks with every batch capped - never a whole trial in
+  one call, rows streamed before the banner; a clean unsolved diagnosis; a 404 fetch ends the
+  flow with a readable error without rejecting; cancel disposes the session and stops the ticks.
+- Full suite: **80 files / 909 tests, all green** (cmd /c npx vitest run; baseline before the
+  ticket: 77 files / 884 tests - the +25 are the three watch suites). npm run build refreshed
+  dist. One honest note: the solver's level-01 win is candidate #1, a ball spawning overlapping
+  the bucket sensor, so the judged-and-watched trial latches on the first frame; the watching
+  machinery proves out on longer runs (the (700, 100) drop), and the solver itself is untouched.
+
 ## 2026-11-21 — rope-ties: the review-fix pass lands, and the arc's provenance gap is recorded (issues #83, #91, #98-#103)
 
 The rope-ties feature arc (#83, #91, #98-#103) came back from its two code reviews; the fix pass
