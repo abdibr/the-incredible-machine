@@ -5,9 +5,9 @@
  * every Math.random draw made while a session's world is built (Balloon
  * color/bob phase, Candle flicker phase at construction time) comes from
  * this generator instead of the global one, so two same-seed sessions
- * produce byte-identical trials. The browser bundle never imports agent/,
- * and with no seed configured nothing here is consulted - live behavior is
- * unchanged.
+ * produce byte-identical trials. The game bundle never imports agent/ (ADR 0010
+ * grants the watch sidecar the one import allowance), and with no seed configured
+ * nothing here is consulted - live behavior is unchanged.
  *
  * Generator: mulberry32 (public domain, Tommy Ettinger) - tiny, fast,
  * one closure word of state, [0,1) doubles over the full 32-bit seed space.

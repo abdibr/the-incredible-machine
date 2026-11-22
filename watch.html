@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Agent Watch - watch the agent beat a level in The Incredible Machine (a spectating sidecar; the game bundle is untouched)." />
+  <title>Agent Watch - The Incredible Machine</title>
+  <link rel="stylesheet" href="/css/watch.css" />
+</head>
+<body id="watch-page">
+  <header id="watch-header">
+    <h1>Agent Watch</h1>
+    <div id="watch-level-name">level-01 - First Steps</div>
+    <button id="solve-watch">Solve &amp; Watch level-01</button>
+  </header>
+
+  <main id="watch-main">
+    <section id="watch-stage">
+      <canvas id="watch-canvas"></canvas>
+      <!-- The run outcome banner (goal reached / failed / timeout) and the
+           solver's no-win report - composed by the flow's listeners. -->
+      <div id="watch-banner" class="hidden"></div>
+    </section>
+    <aside id="watch-hud">
+      <div id="watch-status">idle - press Solve &amp; Watch</div>
+      <ol id="watch-events"></ol>
+    </aside>
+  </main>
+
+  <!-- The sidecar entry (ADR 0010): the one site allowed to import the
+       agent layer; the game bundle's entry imports nothing new. -->
+  <script type="module" src="/js/watch/main.js"></script>
+</body>
+</html>
