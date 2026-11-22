@@ -1,5 +1,202 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+
+## 2026-11-21 - Agent Watch 5/5: the live LLM turn source in the watch page (issue #65)
+
+The watch page's driver becomes the real phase-2 agent: `LiveFlow` (`js/watch/liveFlow.js`)
+drives the watched world from a live model's responses, through the configurable turn service
+or over the in-page runTurn posture, with the observation text rendering beside the board and
+every ending degrading to a usable page. The branch arrived crash-resumed (the prior session's
+first three slices - the one protocol leaf, the config + transports, the live cycle - were on
+the books; its fourth slice sat red in a dirty worktree); this session finished the slice,
+then wired the page:
+
+- **The dt-bound closed the in-flight slice** - the red pinned the coarse custom-dt deadlock:
+  the watched accumulator was capped at a fixed 50 ms, so a dt=100 trial moved floor(50/100)=0
+  frames per tick and the cycle never ended. The fix binds the accumulator cap to the open run
+  (`maxBatchFrames x run.dt`) - one tick may spend at most a full batch's worth of the run's
+  own dt, so the mirror moves a whole batch per paced tick; for the default dt the number is
+  the same 50 ms plateau (3 x 16.67), ADR 0008's cadence discipline untouched. (The slice's
+  sandbox arrival-order pin was also corrected to its honest spelling: every streamed row
+  precedes the run banner - frame marks interleave the order stream between the rows and it.)
+- **The one protocol leaf** - `agent/driver-protocol.js` carries the model-facing contract
+  (INSTRUCTIONS, the opening directive, the stall nudge, the seven-advertised-tool table with
+  OBSERVE_TOOL first + ACTION_TOOLS' six rows, the HTTP turn transport) verbatim; `driver.js`
+  re-exports the bindings (the #94 byte-identity pin, tests-bound) and the browser loop speaks
+  exactly the same objects - the two drivers cannot drift.
+- **The cycle's endings + the data posture** - the served stub model plays level-01 under
+  observation (placements mirrored live, the trial re-watched over the #61 seam, the goal
+  banner composed by the #62 vocabulary), the sandbox cycle builds on the goal-less board and
+  caps (turn-cap, no goal vocabulary), the in-page posture is a first-class configuration,
+  a refusal is data the model reads and continues past, and a stalling model rides the shared
+  stall nudge to the cap.
+- **The review's three fixes** - (1) the chat transport returns the provider's assistant
+  message verbatim and the loop re-posts its tool_calls + echoes the provider's tool_call ids
+  into the history: the synthetic `call_<i>` ids broke the strict chat-completions contract
+  against real providers (the stub suite never exercised the round-trip); (2) a cancelled
+  cycle goes silent mid-turn - the cancelled guard rides every post-await step of the call
+  execution, the trial branches and the cap emission, so the human's takeover never hears a
+  ghost driver-error or an after-the-fact cap banner; (3) a hung model provider degrades at
+  the transport's own bound (`AbortSignal.timeout`, the same 120 s discipline the transport
+  seam carries) - the ask resolves structured no-answer data, never a frozen cycle.
+- **The page rides the live source** - `js/watch/main.js` composes the Watch-live button:
+  `window.WATCH_LIVE_CONFIG` feeds `resolveLiveDriverConfig` (the driver resolver's
+  `{errors, config}` contract - the missing model or endpoint names the gaps, the button
+  sits out and the status line says so); the sandbox toggle rides the spectating scenario's
+  other half: the model constructs on the goal-less board and plays it, in-page by
+  construction, the run banner composed by the #64 sandbox vocabulary. The observation panel
+  renders the model's observation thread beside the events. A click interrupts whichever
+  cycle is running (the takeover) - both buttons stay live and the scripted fallback keeps
+  the watch usable; a degrade banners with its kind ('error' for the driver/service endings,
+  'cap' for the driver's own turn cap).
+- **The harness bound** - the live-cycle fail-safe guard rides at 20000 loop turns (the whole
+  watch suite in parallel stretches the HTTP awaits' loop turns above the old 4000; the
+  fail-safe's purpose - a true deadlock trips fast - is untouched).
+- **Suite posture at the ticket tip** - `tests/watch/live-turn-source.test.js` 28/28 (the one
+  protocol leaf, the configuration contract, the transports, the live cycle and the endings),
+  full suite green at 84 files.
+
+## 2026-11-21 - Agent Watch 4/5: the sandbox watch - the agent constructs, then plays (issue #64)
+
+The second watch flow stands: a goal-less sandbox session (ADR 0011) is built part by part,
+played, held, stepped and reset - all through the phase-1 surface, over the very seams the
+level view already uses. No model in the loop yet (the live turn source is #65). The branch
+arrived crash-resumed with its first six red-to-green commits on the books (the build half,
+the run over the steppable seam, stop + reset); this session folded the in-flight red suite
+(the pause + the single-frame step) into one final red commit and drove it green:
+
+- **The build half - construction IS the restore, outside a run** - `SandboxFlow.start()` loads
+  the minimal goal-less board document (`SANDBOX_BOARD`) and answers an empty playfield, then
+  the FIXED build script (`js/watch/sandboxScript.js` - seven beats of place / rotate / nudge)
+  applies one beat per paced tick through the never-throw action API; every beat re-materializes
+  the board (`AgentSession.materializeBoard`, the issue-#63 rebuild with no run framing) and the
+  part appears live - eight paint frames for five placed parts. A refused beat is data the
+  status narrates ("unknown type: unregistered-widget", "unknown beat kind: teleport"), never
+  a throw.
+- **The run half rides the #61 seam** - `run()` opens `beginTrial` over the built placements and
+  advances a small capped batch (at most 3 quanta) per scheduled tick on the page's cadence
+  (the WatchFlow wall-clock discipline, ADR 0008); rows stream to the HUD as they happen and
+  the board repaints per tick. The posture judges nothing: the whole budget times out (5s =
+  300 frames), `bannerForSandboxResult` composes ONLY stop/timeout labels - the goal-banner
+  vocabulary cannot come out of it - and the event log tells the story (two bucket catches at
+  t=0.95/1.57, rows strictly before the banner, never a landmark row).
+- **Determinism pinned against trial()** - the watched run IS `trial()` over the same board +
+  script on a fresh session (events incl. the t timestamps, final poses, distance identical),
+  and repeated cycles land identically.
+- **Manual stop + reset** - `stopRun()` finalizes mid-run: an honest partial result (the sim
+  time actually stepped, meta stopped: true), with the stop banner that still never names a
+  goal. `reset()` returns the board to empty from every phase: an interrupted run's `loop:reset`
+  end fact lands exactly once, the run-end banner does NOT (a reset is not a run story), the
+  placements wipe, the palette is whole and a fresh build replays after it.
+- **The two-phase pause and the run's manual cadence** - `pause()` holds the ACTIVE phase in
+  place (a hold, not an end: the build's cadence stops between beats, the simulation stops
+  between frames, the already-queued tick drains to a no-op without re-arming, the status is
+  unchanged; idle / built / ended / cancelled hold nothing); `resume()` re-arms the held
+  cadence and the phase finds its same end. `stepFrame()` is the run phase's manual cadence:
+  exactly ONE whole frame per call (`advanceTrial(1)`), stepping IS the pause for the automatic
+  ticker, and the frame that steps the budget out finalizes the run (stoppedHow 'budget',
+  not a manual stop); outside the run phase it answers null and nothing steps.
+- **Tests** - tests/watch/sandbox-flow.test.js (13 across six describes): the empty-board
+  cycle + refused beats, the shipped script pin, materializeBoard's no-run framing + its
+  refusal while a run is open, the capped-batch run, trial() parity + cycle repetition, the
+  banner vocabulary, the stop, the reset from every phase, and the pause in both phases +
+  the single-frame step. Full suite: **83 files / 935 tests, all green** (`cmd /c npm test`).
+
+## 2026-11-21 - Agent Watch 3/5: the sandbox posture - goal-less sessions + parts palette (issue #63)
+
+The agent session gained a second posture (ADR 0011), cut in four red-to-green cycles, one per acceptance criterion, all on the same phase-1 surface:
+
+- **The posture is the session's birth option** - `new AgentSession({ sandbox: true })` (agent/session.js): one private flag governing the whole lifecycle (load gate, placement budget, goal neutrality); the default puzzle posture stays today's behavior to the byte. No load-time toggle, so a session cannot drift between postures mid-life.
+- **The document gate stays with its owner** - `levelManager.validateSandbox(data)` (js/levels/LevelManager.js): validateCustom's goal-less sibling; the shared `_validate` grew a `{ sandbox }` posture flag that relaxes exactly the three puzzle-owning fields (typed goal, availableParts budget, the ADR 0009 solution proof) while id/name/fixedObjects stay required, a ride-along goal must carry a type and a ride-along availableParts map must stay map-shaped. Puzzle documents never travel it: the puzzle branch keeps every wording byte-identical (the existing suite pins them).
+- **Sandbox runs judge no goal, by posture** - the sandbox session installs no private GoalChecker (no verdict can latch, no goal:* event can fire, even when a document carries a goal shape): the run rides its loop-fact budget to 'timeout' with the issue-#78 stream framing exactly kept, while the recorder stays free to log real interactions - a bucket catch is recorded as data and never becomes a verdict. Red pinned by the level-01 catch geometry: with the checker still armed the run 'reached'; posturally neutral, it times out.
+- **Placements draw from the parts palette** - budget() in the sandbox posture answers every registered type at the unauthored sandbox default count (js/ui/PalettePanel.js DEFAULT_PALETTE_COUNT = 10, the "every type x10" an untweaked sandbox Save writes, issue #69) minus placed; the document's availableParts is carry-through save data, never the constraint - agent/session.js carries the count as SANDBOX_PALETTE_COUNT beside the parity comment (a deliberate follow point if the game's default changes). place()'s never-throw shapes re-proven in the posture: ten balls place, the 11th refuses `no budget left for ball` with the remaining map (the puzzle shape), off-playfield refuses with clampedTo, an unregistered type refuses `unknown type`.
+- **The headless demo** - tests/agent/session-sandbox-posture.test.js builds the ramp + ball contraption on an empty playfield (ramp tilted 0.4 rad, ball above it - the level-01 solution-scene geometry) through the action API and runs it to a result: outcome 'timeout', 3000ms of stepped sim time, no goal events, Infinity distance, snapshot rows for both parts, and the runTurn observe turn reading the goal-less header afterwards.
+- **Tests** - new tests/agent/session-sandbox-posture.test.js (11): the goal-less gate (accept / structural fields / ride-along wording / puzzle unchanged), the goal silence (catch recorded, run still times out; zero goal rows over the fact stream), the palette (ten-place and eleventh refuse, roster-is-palette, the document cannot constrain, off-playfield) and the demo. Full suite: **82 files / 922 tests, all green** (`cmd /c npm test`).
+
+## 2026-11-21 - Agent Watch 2/5: reconciliation finished - committed-suite text repairs + the two-toolchain entries suite (issue #62)
+
+The #62 content was in place; four finishing commits reconcile what the interrupted session had committed mangled and what it never verified:
+
+- **`agent/session.js` (1d54068)** - the `loadLevel` JSDoc had two interleaved half-sentences
+  from the interruption; restored to the coherent Node-only-branch doc.
+- **`agent/server.js` (65b0241)** - the header import rule ("nothing under js/ imports agent/")
+  still read pre-ADR-0010; it now excludes the watch sidecar by name.
+- **`tests/watch/watch-flow.test.js` (4ec2367)** - the solver progress-streaming assertion was
+  flattened into ONE comment line with literal backslash-n sequences in 89d88a6, silently muting
+  it; the four real lines run again.
+- **`tests/watch/entries.test.js` (8ea30de)** - the second browser entry is verified in BOTH
+  toolchains, beyond the vite-config structure pin: the dev server is actually run
+  (vite createServer) and serves the watch page, its entry module through the dev transform
+  chain, and the level JSON URL fetchLevelDocument points at; the production build is actually
+  run (vite build), dist carries index.html (main bundle) + watch.html (watch bundle with its
+  stylesheet), and the agent layer code (ADR 0010 browser-refusal sentence) is in the watch
+  bundle and absent from the game own chunk. Red->green: with watch.html moved aside BOTH
+  tests fail (page 404 / RollupError could-not-resolve watch.html); restored, green.
+- A one-off dev-chain probe (`.scratch/t62-probe/probe-dev-chain.mjs`, uncommitted) walked the
+  dev-served import graph of the sidecar page: 45 URLs, 0 failures - the agent layer, the engine
+  and matter-js all serve through the dev server.
+- Provenance note: mid-ticket, further commits (1dffd61, c51fa07) landed on this branch while the
+  dispatched implementer was reconciling the inherited WIP; the reconciliation builds on top of
+  them - nothing was reverted, the two writers plans were materially the same.
+- Full suite: **81 files / 911 tests, all green** (`cmd /c npm test`; the watch suites now count
+  27 across four files).
+
+## 2026-11-21 - Agent Watch 2/5: the watch sidecar lands - the browser watches a solved level play out (issue #62)
+
+The second browser entry is real in both toolchains, the phase-1 surface is now a UI contract, and
+the import-rule amendment is on the books (ADR 0010):
+
+- **ADR 0010 (docs/adr/0010-watch-sidecar-agent-import.md)** - the scoped amendment: the watch
+  sidecar site (watch.html -> js/watch/) may import the agent layer; the game bundle's entry
+  subgraph still may not (and nothing imports the watch code); watching never mutates player
+  state (no progress marks - the sidecar never runs levelManager.init(), the only progress-mark
+  arming site - no recorder, no editor panels; it reuses none of those components); watched
+  trials are the same deterministic trials trial() judges; the fs level loader stays Node-only.
+  GLOSSARY.md gains the watch vocabulary.
+- **The solver is steppable (agent/solver.js)** - solveTrials yields one judged candidate at a
+  time (trials, candidate, result, best-so-far); solve() is the composition (the #61 pattern: the
+  two spellings cannot drift). Parity pinned in tests/watch/solver-stepping.test.js against
+  all-at-once solve() on level-01; the yield stream pinned on a bounded search; the solver
+  contract (solver.test.js) untouched and green.
+- **The run controller (js/watch/watchFlow.js)** - fetchLevelDocument is the browser's own level
+  loader (the campaign loader's URL, handed to the session as a data object); WatchFlow.start()
+  runs the full Solve & Watch cycle - fetch, install, solver search one candidate per scheduled
+  tick (progress streams), then on a win startWatch(placements) opens the #61 steppable trial
+  and each tick advances a small, wall-clock-paced batch (ADR 0008's accumulator discipline,
+  batch capped at 3 quanta) - the page never blocks for a whole trial. The event log streams to
+  the HUD as it happens and the finalized result ends the run with the banner payload (goal
+  reached / failed / timeout; a no-win search ends with the diagnosis - reported, not fixed).
+  AgentSession gains two browser-safety guards: the seed env is read only where process exists,
+  and loadLevel(id) refuses in a page with the fetch-it-yourself sentence.
+- **The page (watch.html, css/watch.css, js/watch/main.js)** - canvas (1000x600 backing store)
+  painted by a fresh Renderer class instance; the HUD lists live event sentences with their t=
+  timestamps (landmark rows emphasized); the banner names the outcome; the button guards a
+  running cycle. vite.config.js lists both HTML entries (build.rollupOptions.input); the dev
+  server serves /watch.html (smoke-tested: all module + level URLs 200) and the production build
+  emits dist/watch.html beside dist/index.html (one externalization note for the lazy node:fs
+  import, never executed on the watch path).
+- **The boundary pins (tests/watch/boundary.test.js)** - ADR 0010 exists and carries the five
+  decisions; the vite config lists both entries; watch.html's entry module and HUD mounts; the
+  game bundle unchanged (index.html -> js/main.js scan; main.js imports no agent/watch module);
+  the repo-wide import-graph scan: nothing outside js/watch/ imports agent/ or watch code, and
+  the watch site does import the agent layer; a full watched win on the shared bus leaves the
+  progress set untouched (even after a raw goal:reached emission); the watch site never
+  references the player-side machinery; the fs loader refuses in a browser-like page; the
+  session constructor survives process-less pages.
+- **The cycle pins (tests/watch/watch-flow.test.js)** - the full level-01 cycle streams (the
+  solver's win judged through the steppable facade, watched in capped batches), live HUD rows
+  with timestamps, the goal-reached banner payload; the watched run IS trial() over the solver's
+  placements (events incl. timestamps, poses, distance - identical), and repeated cycles land
+  identically; a longer winning run (the classic (700, 100) drop via startWatch, the page's
+  rewatch seam) unwraps over dozens of ticks with every batch capped - never a whole trial in
+  one call, rows streamed before the banner; a clean unsolved diagnosis; a 404 fetch ends the
+  flow with a readable error without rejecting; cancel disposes the session and stops the ticks.
+- Full suite: **80 files / 909 tests, all green** (cmd /c npx vitest run; baseline before the
+  ticket: 77 files / 884 tests - the +25 are the three watch suites). npm run build refreshed
+  dist. One honest note: the solver's level-01 win is candidate #1, a ball spawning overlapping
+  the bucket sensor, so the judged-and-watched trial latches on the first frame; the watching
+  machinery proves out on longer runs (the (700, 100) drop), and the solver itself is untouched.
+
 ## 2026-11-21 — level-02 "Across the Gap" rebuilt: the anchored ball plays itself, the player builds the bridge (user-directed design pass, no ticket)
 
 The design brief: "most of the levels are not very meaningful — start with level-02 and design a
@@ -58,6 +255,7 @@ third:
   this session's change and the file was gone by the final run — recorded so the blip is not
   misattributed to the level change.
 - Full suite: **76 files / 877 tests, all green** at the new working tree.
+
 
 ## 2026-11-21 — rope-ties: the review-fix pass lands, and the arc's provenance gap is recorded (issues #83, #91, #98-#103)
 

@@ -119,6 +119,25 @@ class LevelManager {
     }
 
     /**
+     * The sandbox document gate (issue #63): validateCustom's goal-less
+     * sibling. Sandbox sessions load ad-hoc, goal-less boards - the goal,
+     * the scarcity budget (availableParts) and the ADR 0009 solvability
+     * proof are all optional, because a sandbox build is not a winnable
+     * puzzle. The structural fields (id, name, fixedObjects) stay
+     * required, and a goal that rides along with a sandbox document must
+     * still carry its type. Puzzle documents never travel this gate:
+     * validateCustom keeps the typed-goal requirement (and the rest of
+     * the shared `_validate`) exactly as the campaign loader answers to it.
+     * @param {object} data - parsed sandbox document JSON
+     * @returns {object} the same data, on success
+     * @throws {Error} with a readable message on the first schema violation
+     */
+    validateSandbox(data) {
+        this._validate(data, { sandbox: true });
+        return data;
+    }
+
+    /**
      * Get the current loaded level.
      * @returns {object|null}
      */
@@ -217,20 +236,45 @@ class LevelManager {
 
     // ── Private ──────────────────────────────────
 
-    _validate(data) {
-        const required = ['id', 'name', 'goal', 'fixedObjects', 'availableParts', 'solution'];
+    _validate(data, { sandbox = false } = {}) {
+        // The puzzle gate requires the full puzzle furniture; the sandbox
+        // gate (issue #63) relaxes exactly the three puzzle-owning fields -
+        // the typed goal, the scarcity budget and the ADR 0009 solution
+        // proof - and never weakens the puzzle requirement itself.
+        const required = sandbox
+            ? ['id', 'name', 'fixedObjects']
+            : ['id', 'name', 'goal', 'fixedObjects', 'availableParts', 'solution'];
         for (const field of required) {
             if (!(field in data)) {
                 throw new Error(`[LevelManager] Level missing required field: "${field}"`);
             }
         }
 
-        if (!data.goal.type) {
+        if (!sandbox) {
+            if (!data.goal.type) {
+                throw new Error('[LevelManager] Level goal must have a "type" field');
+            }
+        } else if (data.goal && !data.goal.type) {
+            // A sandbox document may be goal-less (issue #63); a goal that
+            // rides along still must carry its type - the puzzle wording.
             throw new Error('[LevelManager] Level goal must have a "type" field');
         }
 
         if (!Array.isArray(data.fixedObjects)) {
             throw new Error('[LevelManager] fixedObjects must be an array');
+        }
+
+        if (sandbox) {
+            // A sandbox document's availableParts, when it rides along, must
+            // still be map-shaped (a sandbox save carries its parts palette
+            // there); the sandbox posture never budgets against it - the
+            // placement budget is the registered roster (issue #63). And a
+            // sandbox board ships no solvability proof: it is not a winnable
+            // puzzle, so ADR 0009's two-scene rule is a puzzle requirement.
+            if (data.availableParts != null && typeof data.availableParts !== 'object') {
+                throw new Error('[LevelManager] availableParts must be an object');
+            }
+            return;
         }
 
         if (typeof data.availableParts !== 'object') {

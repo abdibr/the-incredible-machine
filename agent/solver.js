@@ -94,13 +94,24 @@ export function* candidatePlacements(session, { lattice = 50 } = {}) {
 }
 
 /**
- * Run the solve loop.
+ * Steppable spelling of the solve loop (issue #62): the EXACT search
+ * solve() owns, yielded one judged candidate at a time so a page can
+ * spread the search over frames - the watch sidecar drives this facade on
+ * its own cadence instead of blocking on the whole search. Each yield
+ * reports the progress a page can render: trials judged so far, the
+ * candidate that was just judged, its trial result, and the current best
+ * partial. The final report is the generator's done value - the SAME
+ * object shape solve() returns - and the winning placements stand on the
+ * session exactly as solve() leaves them. The all-at-once solve() is the
+ * composition of this facade (issue #61 pattern); the two cannot drift.
  * @param {import('./session.js').AgentSession} session
  * @param {{ maxTrials?: number, secondsPerTrial?: number, lattice?: number }} [options]
- * @returns {{ outcome: 'reached'|'unsolved', trials: number, placements?: object[],
- *            result?: object, best?: object, diagnosis?: string }}
+ * @returns {Generator<{trials: number, candidate: object[], placements: object[],
+ *            result: object, best: object|null},
+ *            { outcome: 'reached'|'unsolved', trials: number, placements?: object[],
+ *              result?: object, best?: object, diagnosis?: string }>}
  */
-export function solve(session, { maxTrials = 2000, secondsPerTrial = 5, lattice = 50 } = {}) {
+export function* solveTrials(session, { maxTrials = 2000, secondsPerTrial = 5, lattice = 50 } = {}) {
     if (!session.levelData) throw new Error('[solver] load a level first (session.loadLevel)');
     const trialOptions = { seconds: secondsPerTrial, dt: 1000 / 60 };
     let trials = 0;
@@ -111,7 +122,7 @@ export function solve(session, { maxTrials = 2000, secondsPerTrial = 5, lattice 
         let valid = true;
         for (const step of candidate) {
             const r = place(session, step.type, step.x, step.y, { angle: step.angle });
-            if (!r.ok) { valid = false; break; } // over budget / off-playfield → skip combo
+            if (!r.ok) { valid = false; break; } // over budget / off-playfield - skip combo
         }
         if (!valid) continue;
         const result = trial(session, trialOptions);
@@ -122,9 +133,29 @@ export function solve(session, { maxTrials = 2000, secondsPerTrial = 5, lattice 
         if (Number.isFinite(result.distance) && (!best || result.distance < best.score)) {
             best = { score: result.distance, result, placements: [...session.placements] };
         }
+        yield { trials, candidate: [...candidate], placements: [...session.placements], result, best };
     }
     const diagnosis = best
-        ? `unsolved — best attempt ended ${Math.round(best.score)}px from the zone (${best.result.outcome})`
-        : 'unsolved — no valid candidate placements existed';
+        ? `unsolved - best attempt ended ${Math.round(best.score)}px from the zone (${best.result.outcome})`
+        : 'unsolved - no valid candidate placements existed';
     return { outcome: 'unsolved', trials, best, diagnosis };
+}
+
+/**
+ * Run the solve loop to completion (the all-at-once spelling). This is
+ * the composition of solveTrials - one loop over its yields - so the
+ * solver contract this return shape pins (solver.test.js) and the watch
+ * page's incremental drive stay the one search by construction (issue #62,
+ * ADR 0010).
+ * @param {import('./session.js').AgentSession} session
+ * @param {{ maxTrials?: number, secondsPerTrial?: number, lattice?: number }} [options]
+ * @returns {{ outcome: 'reached'|'unsolved', trials: number, placements?: object[],
+ *            result?: object, best?: object, diagnosis?: string }}
+ */
+export function solve(session, options = {}) {
+    const iterator = solveTrials(session, options);
+    for (;;) {
+        const next = iterator.next();
+        if (next.done) return next.value;
+    }
 }
