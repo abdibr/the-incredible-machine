@@ -100,6 +100,18 @@ export class TrialRun {
     }
 }
 
+/**
+ * The seed env var value, read only where an environment exists: a
+ * browser page has no `process` (ADR 0010 made the agent layer loadable
+ * there), and unseeded stays the browser posture. In Node this answers
+ * exactly the env lookup it replaces.
+ * @returns {string|number|undefined}
+ */
+function seedEnvValue() {
+    if (typeof process === `undefined`) return undefined;
+    return process.env?.[SEED_ENV_VAR];
+}
+
 export class AgentSession {
     /**
      * @param {{ width?: number, height?: number, seed?: number|string }} [options]
@@ -125,7 +137,7 @@ export class AgentSession {
         this._run = null;
         // Opt-in seeded determinism, agent-side only (null = unseeded = stock
         // Math.random behavior). Re-applied per build in _rebuild().
-        this._seed = resolveSeed(seed === undefined ? process.env?.[SEED_ENV_VAR] : seed);
+        this._seed = resolveSeed(seed === undefined ? seedEnvValue() : seed);
         this._unsubs = [
             eventBus.on('goal:reached', () => { this._outcome = 'reached'; }),
             eventBus.on('goal:failed', ({ reason } = {}) => { this._outcome = 'failed'; this._failureReason = reason; }),
@@ -165,6 +177,8 @@ export class AgentSession {
 
     /**
      * Load a level by id (fs, levels live in js/levels/puzzles/) or accept a
+ * The string branch is Node-only (ADR 0010): a browser fetches the
+ * level JSON itself and calls loadLevel with the parsed data object,
      * full level-data object directly (ad-hoc / custom levels).
      * @param {string|object} idOrData e.g. 'level-01'
      */
@@ -172,6 +186,13 @@ export class AgentSession {
         this._abandonRun(); // the watched world is torn down; a run over it is over
         let data = idOrData;
         if (typeof idOrData === 'string') {
+            // ADR 0010: the fs level loader stays Node-only. A browser page
+            // fetches the served level JSON itself (js/watch/watchFlow.js,
+            // the same URL the campaign loader pulls) and hands the
+            // session the level data object.
+            if (typeof document !== `undefined`) {
+                throw new Error(`[AgentSession] loadLevel(id) is Node-only (ADR 0010): the browser fetches the level JSON itself and passes the parsed level data object.`);
+            }
             const fs = await import('node:fs/promises');
             const path = new URL(`../js/levels/puzzles/${idOrData}.json`, import.meta.url);
             data = JSON.parse(await fs.readFile(path, 'utf8'));
