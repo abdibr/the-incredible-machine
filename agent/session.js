@@ -14,6 +14,13 @@
  * 0008 decision 2), `loop:reset` ends the run - so GoalChecker (arm +
  * off-world check) and the event narrator consume the same fact stream
  * the sandbox sees.
+ *
+ * The trial is steppable (issue #61): beginTrial() opens a run with the
+ * same begin facts, advanceTrial() steps any number of frames between
+ * pauses, the run view reads the latched verdict and event log at any
+ * point, and finalizeTrial() returns the same result object trial()
+ * returns. trial() IS that composition, so the two spellings cannot
+ * drift: what a watched run latches is what trial() judged.
  */
 
 import { eventBus } from '../js/EventBus.js';
@@ -27,6 +34,71 @@ import { levelManager } from '../js/levels/LevelManager.js';
 import { levelObjectOptions } from '../js/ui/selectionHandles.js';
 import { EventRecorder } from './observe/events.js';
 import { createSeedRng, resolveSeed, SEED_ENV_VAR } from './rng.js';
+
+/**
+ * TrialRun - one live steppable trial run (issue #61).
+ *
+ * Created ONLY by AgentSession.beginTrial (the world it watches belongs
+ * to the session); the session itself does the stepping (advanceTrial)
+ * and the closing (finalizeTrial). The run object is the read surface:
+ * its getters answer the latched verdict, the failure reason and the
+ * event log at any pause between frames - exactly what the run has
+ * judged so far - and stay readable after finalize.
+ */
+export class TrialRun {
+    /**
+     * @param {AgentSession} session the world owner (module-internal back reference)
+     * @param {{ dt: number, steps: number, recorder: EventRecorder }} shape
+     * @private (beginTrial constructs runs)
+     */
+    constructor(session, { dt, steps, recorder }) {
+        this._session = session;
+        /** @type {number} the frame quantum in ms - the trial's dt, defaulting to the loop's FIXED_STEP_MS double */
+        this.dt = dt;
+        /** @type {number} planned frame count - trial()'s Math.max(1, round(seconds*1000/dt)) arithmetic */
+        this.steps = steps;
+        /** @type {number} frames stepped so far */
+        this.stepped = 0;
+        /** @type {number} ms of sim time actually stepped (whole dt multiples) */
+        this.elapsed = 0;
+        /** @type {EventRecorder} @private subscribes from begin to finalize only */
+        this._recorder = recorder;
+    }
+
+    /** @returns {'reached'|'failed'|null} the latched verdict (null until GoalChecker has one) */
+    get verdict() {
+        return this._session._outcome;
+    }
+
+    /** @returns {string|undefined} the failure packet reason while verdict is 'failed' */
+    get failureReason() {
+        return this._session._failureReason;
+    }
+
+    /** @returns {Array<{t: string, text: string, landmark?: boolean}>} event rows so far (a copy) */
+    get events() {
+        return this._recorder.rows;
+    }
+
+    /**
+     * @returns {number} the frames advanceTrial would still step: zero once
+     * the verdict latched or the budget stepped out (a latched run stops
+     * stepping exactly where the all-at-once loop broke)
+     */
+    get stepsLeft() {
+        return this.verdict === null ? Math.max(0, this.steps - this.stepped) : 0;
+    }
+
+    /** @returns {boolean} stepping is over: the verdict latched or the budget stepped out */
+    get done() {
+        return this.stepsLeft === 0;
+    }
+
+    /** @returns {boolean} the session still holds this run open (finalizeTrial closes it) */
+    get open() {
+        return this._session._run === this;
+    }
+}
 
 export class AgentSession {
     /**
@@ -49,6 +121,8 @@ export class AgentSession {
         this._outcome = null;
         this._failureReason = null;
         this._lastResult = null;
+        /** @type {TrialRun|null} the open steppable run (issue #61) - null when none is open */
+        this._run = null;
         // Opt-in seeded determinism, agent-side only (null = unseeded = stock
         // Math.random behavior). Re-applied per build in _rebuild().
         this._seed = resolveSeed(seed === undefined ? process.env?.[SEED_ENV_VAR] : seed);
@@ -79,11 +153,23 @@ export class AgentSession {
     }
 
     /**
+     * The open steppable run (issue #61), or null before beginTrial / after
+     * finalizeTrial. Between frames this is the read-latch handle (the same
+     * object beginTrial returned): verdict, failure reason, event log,
+     * clock - readable any time; live poses stay on snapshotObjects().
+     * @returns {TrialRun|null}
+     */
+    get trialRun() {
+        return this._run;
+    }
+
+    /**
      * Load a level by id (fs, levels live in js/levels/puzzles/) or accept a
      * full level-data object directly (ad-hoc / custom levels).
      * @param {string|object} idOrData e.g. 'level-01'
      */
     async loadLevel(idOrData) {
+        this._abandonRun(); // the watched world is torn down; a run over it is over
         let data = idOrData;
         if (typeof idOrData === 'string') {
             const fs = await import('node:fs/promises');
@@ -134,9 +220,9 @@ export class AgentSession {
         // editor imports ride (the glossary owner rule: the browser/session
         // surface never emits level:loaded by hand; the replay harness
         // still hand-emits it for its checker wiring - the one known case
-        // left). The play-mode boundary row belongs to the run framing in
-        // trial(), not the build (issue #78: the run lifecycle is the loop
-        // seam's business).
+        // left). The play-mode boundary row belongs to the run framing
+        // (trial() and the steppable seam), not the build (issue #78: the
+        // run lifecycle is the loop seam's business).
         levelManager.loadCustom(this.levelData);
         // Construction window (agent-side seeded determinism): object ctors are
         // the only Math.random consumers during a build (Balloon color/bob
@@ -164,45 +250,122 @@ export class AgentSession {
     }
 
     /**
-     * Run one deterministic trial: fresh world, step to `seconds`, judge.
+     * Run one deterministic trial: fresh world, step to `seconds`, judge
+     * (the all-at-once spelling - exact contract unchanged). This is the
+     * steppable seam as one call - beginTrial, advanceTrial over the whole
+     * budget, finalizeTrial - so the two spellings are identical by
+     * construction (issue #61 stepping parity).
      * @param {{ seconds?: number, dt?: number }} [options]
      * @returns {{ outcome: 'reached'|'failed'|'timeout', elapsed: number, events: object[],
-     *            sentences: string[], snapshot: object[], distance: number }}
+     *            snapshot: object[], distance: number, failureReason?: string }}
      */
     trial({ seconds = 5, dt = FIXED_STEP_MS } = {}) {
+        // A steppable run mixed into this call is abandoned, never merged:
+        // its recorder is released quietly and this fresh run owns the world.
+        this._abandonRun();
+        this.beginTrial({ seconds, dt });
+        this.advanceTrial(this._run.steps);
+        return this.finalizeTrial();
+    }
+
+    /**
+     * Begin a steppable trial run (issue #61): fresh world, event recorder
+     * and run facts opened exactly as trial() frames them - loop:play (the
+     * packet GameLoop.play() publishes), the play boundary row after it
+     * (sandbox order) - and then each loop:frame arrives from advanceTrial.
+     * Between advances the caller may pause as long as it likes: the
+     * returned run view reads the latched verdict, the failure reason and
+     * the event log at any point; live poses and the live distance stay on
+     * the public getters (snapshotObjects / distanceToZone).
+     * @param {{ seconds?: number, dt?: number }} [options] the budget and
+     *   frame quantum - the same arithmetic trial() applies (one step
+     *   minimum; the dt default is the loop's FIXED_STEP_MS double)
+     * @returns {TrialRun} the open run; finalize it with finalizeTrial()
+     */
+    beginTrial({ seconds = 5, dt = FIXED_STEP_MS } = {}) {
+        if (this._run) {
+            throw new Error('[AgentSession] beginTrial: a trial run is already open (finalizeTrial it before beginning another)');
+        }
         this._rebuild();
         const recorder = new EventRecorder();
         recorder.start();
         const steps = Math.max(1, Math.round((seconds * 1000) / dt));
         // The run lifecycle is the loop seam's contract (issue #78), not a
-        // private ordering: begin (`loop:play`, the packet GameLoop.play()
-        // publishes), the play boundary row after it - sandbox order - then
-        // one published step-to fact per engine step in the step -> elapsed
-        // -> emit order ADR 0008 decision 2 pins, and the owned end fact
-        // (`loop:reset`, the packet GameLoop.reset() publishes) closes it.
-        // GoalChecker sees post-step states exactly as it does live.
-        let elapsed = 0;
+        // private ordering: the begin loop:play is the packet GameLoop.play()
+        // publishes, and the play boundary row follows it (sandbox order);
+        // the per-step fact belongs to advanceTrial and the owned end fact
+        // (loop:reset) to finalizeTrial. GoalChecker sees post-step states
+        // exactly as it does live.
         eventBus.emit('loop:play', { elapsed: 0 });
         eventBus.emit('mode:changed', { oldMode: 'EDITING', newMode: 'PLAYING' });
-        for (let i = 0; i < steps; i++) {
-            this.engine.step(dt);
-            elapsed += dt;
-            eventBus.emit('loop:frame', { dt, elapsed });
+        this._run = new TrialRun(this, { dt, steps, recorder });
+        return this._run;
+    }
+
+    /**
+     * Advance the open trial run by at most `frames` steps, then stop for
+     * however long the caller likes (issue #61). The step body is trial()'s
+     * exact loop: engine.step -> elapsed -> emit loop:frame - the post-step
+     * packet in the step -> elapsed -> emit order ADR 0008 decision 2 pins
+     * - breaking early when GoalChecker latches a verdict and never
+     * stepping past the run budget: a done or latched run steps nothing
+     * further, so the watched frames are the frames the all-at-once loop
+     * would have stepped, only unwrapped over time.
+     * @param {number} [frames] how many frames to step this call (fractional
+     *   asks floor - a frame is never half-stepped; a non-finite ask
+     *   steps nothing - the budget is on the run view)
+     * @returns {{ stepped: number, done: boolean, verdict: 'reached'|'failed'|null }}
+     *   frames actually stepped this call, whether the run is over, and the
+     *   latched verdict (null until GoalChecker has one)
+     */
+    advanceTrial(frames = 1) {
+        const run = this._run;
+        if (!run) throw new Error('[AgentSession] advanceTrial: no trial run is open (beginTrial first)');
+        let target = Math.floor(frames);
+        if (!Number.isFinite(target)) target = 0;
+        const before = run.stepped; // the run's own counter is the one truth - this call steps the delta
+        while (!run.done && run.stepped - before < target) {
+            this.engine.step(run.dt);
+            run.elapsed += run.dt;
+            run.stepped++;
+            eventBus.emit('loop:frame', { dt: run.dt, elapsed: run.elapsed });
             if (this._outcome) break; // GoalChecker latched a verdict
         }
+        return { stepped: run.stepped - before, done: run.done, verdict: run.verdict };
+    }
+
+    /**
+     * Finalize the open trial run: the owned end fact (loop:reset, the
+     * packet GameLoop.reset() publishes - exactly one, latched verdict or
+     * not), recorder unsubscription, and the same result object the
+     * all-at-once trial returns (issue #61 parity by construction).
+     * `elapsed` is the sim time actually stepped, not the budget.
+     * @returns {{ outcome: 'reached'|'failed'|'timeout', elapsed: number, events: object[],
+     *            snapshot: object[], distance: number, failureReason?: string }}
+     */
+    finalizeTrial() {
+        const run = this._run;
+        if (!run) throw new Error('[AgentSession] finalizeTrial: no trial run is open (beginTrial first)');
         eventBus.emit('loop:reset', { elapsed: 0 });
         const outcome = this._outcome ?? 'timeout';
-        recorder.stop();
+        run._recorder.stop();
         const distance = this.distanceToZone();
         this._lastResult = {
             outcome,
-            elapsed,
-            events: recorder.rows,
+            elapsed: run.elapsed,
+            events: run._recorder.rows,
             distance,
             snapshot: this.snapshotObjects(),
             failureReason: this._failureReason,
         };
+        this._run = null;
         return this._lastResult;
+    }
+
+    /** Quietly release the open run's recorder without judging it - the run is gone, not ended. @private */
+    _abandonRun() {
+        this._run?._recorder.stop();
+        this._run = null;
     }
 
     /** Per-object pose snapshot (public getters only). */
@@ -237,6 +400,7 @@ export class AgentSession {
     }
 
     dispose() {
+        this._abandonRun(); // an open steppable run must not outlive the session (its recorder would leak)
         this._teardown();
         for (const unsub of this._unsubs) unsub();
         this._unsubs = [];
