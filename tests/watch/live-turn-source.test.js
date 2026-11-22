@@ -9,7 +9,8 @@ import {
     createHttpTurnTransport,
     LiveFlow,
 } from '../../js/watch/liveFlow.js';
-import { startStubServer, makeWinPolicy } from '../helpers/stub-provider.js';
+import { startStubServer, makeWinPolicy, makeFailPolicy, makeJammerPolicy, makeBadThenWinPolicy } from '../helpers/stub-provider.js';
+import { STALL_NUDGE } from '../../agent/driver-protocol.js';
 import { startTurnServer } from '../../agent/server.js';
 import { readFileSync as readLevelFileSync } from 'node:fs';
 
@@ -181,7 +182,7 @@ function liveListeners(extra = {}) {
         onEvent: (rows) => { extra.events?.push(...rows); extra.order?.push(...rows.map(() => 'event')); },
         onFrame: () => { extra.frames?.push(1); extra.order?.push('frame'); },
         onWatchOutcome: (r) => { extra.outcomes?.push(r); extra.order?.push('outcome'); },
-        onSandboxRunEnded: (r, m) => extra.sandboxEnds?.push({ result: r, meta: m }),
+        onSandboxRunEnded: (r, m) => { extra.sandboxEnds?.push({ result: r, meta: m }); extra.order?.push('outcome'); },
         onLiveEnded: (p) => extra.liveEnds?.push(p),
         onDriverError: (p) => extra.errors?.push(p),
         onServiceUnreachable: (p) => extra.unreachables?.push(p),
@@ -505,6 +506,214 @@ describe('LiveFlow - the live LLM turn source in the watch page (issue #65)', ()
                 { action: 'trial', seconds: 5, level: 'level-01' },
             ]);
             expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'goal-reached', turns: 2 })]);
+        },
+    );
+});
+
+describe('LiveFlow - the other endings, the dt-bound and the data posture (issue #65)', () => {
+    it(
+        'a verdict the model drove to failure ends with the failed banner - and a custom-dt trial\'s mirror steps its own frames',
+        { timeout: 120000 },
+        async () => {
+            const ticker = makeTicker();
+            const service = await startTurnServer();
+            services.push(service);
+            const stub = await startStubServer(makeFailPolicy()); // place (300,100); trial {dt: 100} - the target tunnels off
+            stubs.push(stub);
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], sandboxEnds: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                levelId: 'level-01',
+                fetchImpl: diskFetch('level-01'),
+                model: createChatModelTransport({ baseUrl: 'http://127.0.0.1:' + stub.port + '/v1', model: 'stub-model' }),
+                turns: createHttpTurnTransport(service.url, 'level-01'),
+                schedule: ticker.schedule,
+                maxTurns: 5,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start();
+            await driveLive(ticker, live);
+
+            expect(live.status).toBe('ended');
+            expect(collected.errors).toHaveLength(0);
+            // the banner: the judged failed outcome with its fixed wording
+            expect(collected.outcomes).toHaveLength(1);
+            expect(collected.outcomes[0].outcome).toBe('failed');
+            expect(collected.outcomes[0].failureReason).toBe('The target fell off the playfield.');
+            // the mirror re-ran the same dt: its watched elapsed rides in whole 100 ms quanta
+            expect(collected.outcomes[0].elapsed).toBe(Math.round(collected.outcomes[0].elapsed / 100) * 100);
+            expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'goal-failed' })]);
+            expect(collected.observations[collected.observations.length - 1]).toMatch(/goal failed|events:/);
+        },
+    );
+
+    it(
+        'the model constructs the sandbox machine live and runs it - no turn service, the goal-less posture judges nothing, the cap ends the cycle',
+        { timeout: 120000 },
+        async () => {
+            const ticker = makeTicker();
+            const moves = [
+                { name: 'place', args: { type: 'bucket', x: 700, y: 470 } },
+                { name: 'place', args: { type: 'ball', x: 700, y: 100 } },
+                { name: 'place', args: { type: 'ramp', x: 480, y: 380 } },
+                { name: 'rotate', args: { type: 'ramp', radians: 0.4 } },
+                { name: 'place', args: { type: 'ball', x: 440, y: 300 } },
+                { name: 'nudge', args: { type: 'ball', dx: 30, dy: 25, slot: 1 } },
+                { name: 'place', args: { type: 'bucket', x: 620, y: 470 } },
+                { name: 'trial', args: { seconds: 5 } },
+            ];
+            let step = 0;
+            const stub = await startStubServer(() => {
+                const move = step < moves.length ? moves[step++] : null;
+                return move ? { calls: [move] } : { calls: [{ name: 'observe', args: {} }] };
+            });
+            stubs.push(stub);
+            const session = new AgentSession({ sandbox: true }); // the goal-less posture the live sandbox source drives
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], sandboxEnds: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                sandbox: true,
+                session,
+                model: createChatModelTransport({ baseUrl: 'http://127.0.0.1:' + stub.port + '/v1', model: 'stub-model' }),
+                turns: createLocalTurnTransport(session),
+                schedule: ticker.schedule,
+                maxTurns: 12,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start();
+            await driveLive(ticker, live);
+
+            // the cycle ended at the cap; NO verdict ever came (sandbox judges nothing)
+            expect(live.status).toBe('ended');
+            expect(collected.unreachables).toHaveLength(0);
+            expect(collected.errors).toHaveLength(0);
+            expect(collected.outcomes).toHaveLength(0); // no goal banner vocabulary in sandbox
+            expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'turn-cap', turns: 12 })]);
+
+            // the build: the model's seven turns landed exactly the #64 script's board
+            expect(collected.frames.length).toBeGreaterThanOrEqual(8); // the empty board + one paint per beat
+            expect(live.session.placements).toHaveLength(5); // 5 places (rotate/nudge edit placed rows)
+            expect(session.materializeBoard().map((r) => [r.type, r.x, r.y, r.angle])).toEqual([
+                ['bucket', 700, 470, 0],
+                ['ball', 700, 100, 0],
+                ['ramp', 480, 380, 0.4],
+                ['ball', 470, 325, 0],
+                ['bucket', 620, 470, 0],
+            ]);
+
+            // the run: budget-ending timeout, both catches streamed as DATA (no landmark rows)
+            expect(collected.sandboxEnds).toHaveLength(1);
+            const runEnd = collected.sandboxEnds[0];
+            expect(runEnd.meta).toEqual({ stopped: false, seconds: 5 });
+            expect(runEnd.result.outcome).toBe('timeout');
+            expect(runEnd.result.elapsed).toBeGreaterThan(4000);
+            const texts = collected.events.map((r) => r.text);
+            expect(texts.filter((t) => /caught by/.test(t))).toHaveLength(2);
+            for (const row of collected.events) {
+                expect(row.landmark).toBeUndefined(); // a catch is data, not a verdict
+                expect(row.t).toMatch(/^\d+\.\d{2}$/);
+            }
+            // the rows arrived before the sandbox run banner (every streamed
+            // row precedes it; frames interleave the order stream between)
+            expect(collected.order.lastIndexOf('event')).toBeLessThan(collected.order.indexOf('outcome'));
+        },
+    );
+
+    it(
+        'without a turn service the same cycle drives the page\'s own session - the in-page posture, no network on the game seam',
+        { timeout: 120000 },
+        async () => {
+            const ticker = makeTicker();
+            const stub = await startStubServer(makeWinPolicy());
+            stubs.push(stub);
+            const session = new AgentSession();
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], sandboxEnds: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                levelId: 'level-01',
+                fetchImpl: diskFetch('level-01'),
+                session,
+                model: createChatModelTransport({ baseUrl: 'http://127.0.0.1:' + stub.port + '/v1', model: 'stub-model' }),
+                turns: createLocalTurnTransport(session),
+                schedule: ticker.schedule,
+                maxTurns: 5,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start();
+            expect(collected.statuses.join(' ')).toMatch(/in-page/);
+            await driveLive(ticker, live);
+
+            expect(live.status).toBe('ended');
+            expect(collected.outcomes).toHaveLength(1);
+            expect(collected.outcomes[0].outcome).toBe('reached'); // the watched run IS the judged run
+            expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'goal-reached', turns: 2 })]);
+            expect(session.placements).toHaveLength(1); // the model's placement IS the session's
+            expect(collected.events.map((r) => r.text)).toContain('ball caught by bucket-goal');
+            expect(collected.observations[0]).toContain('level-01');
+        },
+    );
+
+    it(
+        'an action refusal is data, never a degrade: the model continues past a refused placement to the goal-reached banner',
+        { timeout: 120000 },
+        async () => {
+            const ticker = makeTicker();
+            const session = new AgentSession();
+            const stub = await startStubServer(makeBadThenWinPolicy());
+            stubs.push(stub);
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], sandboxEnds: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                levelId: 'level-01',
+                fetchImpl: diskFetch('level-01'),
+                session,
+                model: createChatModelTransport({ baseUrl: 'http://127.0.0.1:' + stub.port + '/v1', model: 'stub-model' }),
+                turns: createLocalTurnTransport(session),
+                schedule: ticker.schedule,
+                maxTurns: 5,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start();
+            await driveLive(ticker, live);
+
+            expect(collected.errors).toHaveLength(0);
+            expect(collected.statuses.join(' ')).toMatch(/refused as data - unknown type: unicorn/);
+            expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'goal-reached', turns: 3 })]);
+            expect(collected.outcomes[0].outcome).toBe('reached');
+        },
+    );
+
+    it(
+        'a stalling model is nudged with the shared wording and rides the cap - the two drivers speak one nudge',
+        { timeout: 60000 },
+        async () => {
+            const ticker = makeTicker();
+            const session = new AgentSession();
+            const stub = await startStubServer(() => ({ text: 'thinking about the machine' }));
+            stubs.push(stub);
+            const collected = { statuses: [], observations: [], events: [], frames: [], outcomes: [], sandboxEnds: [], liveEnds: [], errors: [], unreachables: [], order: [] };
+            live = new LiveFlow({
+                levelId: 'level-01',
+                fetchImpl: diskFetch('level-01'),
+                session,
+                model: createChatModelTransport({ baseUrl: 'http://127.0.0.1:' + stub.port + '/v1', model: 'stub-model' }),
+                turns: createLocalTurnTransport(session),
+                schedule: ticker.schedule,
+                maxTurns: 2,
+                listeners: liveListeners(collected),
+            });
+
+            await live.start();
+            await driveLive(ticker, live);
+
+            expect(live.status).toBe('ended');
+            expect(collected.liveEnds).toEqual([expect.objectContaining({ outcome: 'turn-cap', turns: 2 })]);
+            expect(collected.outcomes).toHaveLength(0);
+            expect(collected.statuses.join(' ')).toMatch(/text only - nudged/);
+            // the nudged wording is THE shared leaf's - the two drivers cannot drift
+            const nudged = stub.requests[stub.requests.length - 1].body.messages.at(-1);
+            expect(nudged.role).toBe('user');
+            expect(nudged.content).toBe(STALL_NUDGE);
         },
     );
 });
