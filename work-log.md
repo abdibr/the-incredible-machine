@@ -1,5 +1,51 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-21 - Agent Watch 4/5: the sandbox watch - the agent constructs, then plays (issue #64)
+
+The second watch flow stands: a goal-less sandbox session (ADR 0011) is built part by part,
+played, held, stepped and reset - all through the phase-1 surface, over the very seams the
+level view already uses. No model in the loop yet (the live turn source is #65). The branch
+arrived crash-resumed with its first six red-to-green commits on the books (the build half,
+the run over the steppable seam, stop + reset); this session folded the in-flight red suite
+(the pause + the single-frame step) into one final red commit and drove it green:
+
+- **The build half - construction IS the restore, outside a run** - `SandboxFlow.start()` loads
+  the minimal goal-less board document (`SANDBOX_BOARD`) and answers an empty playfield, then
+  the FIXED build script (`js/watch/sandboxScript.js` - seven beats of place / rotate / nudge)
+  applies one beat per paced tick through the never-throw action API; every beat re-materializes
+  the board (`AgentSession.materializeBoard`, the issue-#63 rebuild with no run framing) and the
+  part appears live - eight paint frames for five placed parts. A refused beat is data the
+  status narrates ("unknown type: unregistered-widget", "unknown beat kind: teleport"), never
+  a throw.
+- **The run half rides the #61 seam** - `run()` opens `beginTrial` over the built placements and
+  advances a small capped batch (at most 3 quanta) per scheduled tick on the page's cadence
+  (the WatchFlow wall-clock discipline, ADR 0008); rows stream to the HUD as they happen and
+  the board repaints per tick. The posture judges nothing: the whole budget times out (5s =
+  300 frames), `bannerForSandboxResult` composes ONLY stop/timeout labels - the goal-banner
+  vocabulary cannot come out of it - and the event log tells the story (two bucket catches at
+  t=0.95/1.57, rows strictly before the banner, never a landmark row).
+- **Determinism pinned against trial()** - the watched run IS `trial()` over the same board +
+  script on a fresh session (events incl. the t timestamps, final poses, distance identical),
+  and repeated cycles land identically.
+- **Manual stop + reset** - `stopRun()` finalizes mid-run: an honest partial result (the sim
+  time actually stepped, meta stopped: true), with the stop banner that still never names a
+  goal. `reset()` returns the board to empty from every phase: an interrupted run's `loop:reset`
+  end fact lands exactly once, the run-end banner does NOT (a reset is not a run story), the
+  placements wipe, the palette is whole and a fresh build replays after it.
+- **The two-phase pause and the run's manual cadence** - `pause()` holds the ACTIVE phase in
+  place (a hold, not an end: the build's cadence stops between beats, the simulation stops
+  between frames, the already-queued tick drains to a no-op without re-arming, the status is
+  unchanged; idle / built / ended / cancelled hold nothing); `resume()` re-arms the held
+  cadence and the phase finds its same end. `stepFrame()` is the run phase's manual cadence:
+  exactly ONE whole frame per call (`advanceTrial(1)`), stepping IS the pause for the automatic
+  ticker, and the frame that steps the budget out finalizes the run (stoppedHow 'budget',
+  not a manual stop); outside the run phase it answers null and nothing steps.
+- **Tests** - tests/watch/sandbox-flow.test.js (13 across six describes): the empty-board
+  cycle + refused beats, the shipped script pin, materializeBoard's no-run framing + its
+  refusal while a run is open, the capped-batch run, trial() parity + cycle repetition, the
+  banner vocabulary, the stop, the reset from every phase, and the pause in both phases +
+  the single-frame step. Full suite: **83 files / 935 tests, all green** (`cmd /c npm test`).
+
 ## 2026-11-21 - Agent Watch 3/5: the sandbox posture - goal-less sessions + parts palette (issue #63)
 
 The agent session gained a second posture (ADR 0011), cut in four red-to-green cycles, one per acceptance criterion, all on the same phase-1 surface:
