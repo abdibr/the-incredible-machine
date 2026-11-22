@@ -23,7 +23,7 @@
 
 import Matter from 'matter-js';
 import BaseObject from './BaseObject.js';
-import { isRopeFamily } from './Rope.js';
+import { isRopeFamily, queryRopeFamily } from './Rope.js';
 
 const { Bodies, Body } = Matter;
 
@@ -167,12 +167,12 @@ export default class Scissors extends BaseObject {
         const cosB = Math.cos(this._angle);
         const sinB = Math.sin(this._angle);
         const tip = BLADE_CENTER_OFFSET + BLADE_LENGTH / 2 + ROPE_CUT_PAD;
-        // Object-level discovery through the engine seam (ADR 0002): ropes by
-        // canonical type, replacing the hand-rolled getObjects() + filter scan.
-        for (const rope of [
-            ...this._engine.queryObjectsByType('rope'),
-            ...this._engine.queryObjectsByType('free-rope'), // issue #55: spawned chains cut too
-        ]) {
+        // Object-level discovery through the engine seam (ADR 0002): the
+        // WHOLE rope family in one roster query (issue #83), replacing the
+        // hand-rolled getObjects() + filter scan and its per-type fan - so
+        // a third family member joins the cut scan with the roster append
+        // alone, exactly as issue #55's spawned chains joined the fan.
+        for (const rope of queryRopeFamily(this._engine)) {
             // Piece severing (issue #58): an already-cut rope can be cut
             // again - cutting an already-cut rope works; Rope.sever absorbs
             // repeat hits at a location it has already cut.
