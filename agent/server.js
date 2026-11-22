@@ -3,8 +3,9 @@
  *
  * A tiny dependency-free node:http JSON facade over the ONE named seam,
  * runTurn(actionJson) -> { observation, result } (agent/turn.js). No LLMs,
- * no containers here - later tickets wrap this service, and the browser
- * bundle stays untouched (nothing under js/ imports agent/).
+ * no containers here - later tickets wrap this service, and the game's
+ * production bundle stays untouched (nothing under js/ outside the watch
+ * sidecar imports agent/ - ADR 0010).
  *
  *   node agent/server.js [--port 8787] [--host 127.0.0.1] [--level level-01]
  *
