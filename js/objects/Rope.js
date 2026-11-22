@@ -274,6 +274,33 @@ function midSeatSegment(count) {
 }
 
 /**
+ * The two-pass seal (issue #99) - the ONE spelling of the post-re-lay seal
+ * arithmetic (ADR 0007's 2026-11-22 amendment, point 2): the demand divided by
+ * the PRE-lay count's seat fraction (`demand / seatFraction(seat, count0)`)
+ * names the count the re-lay will actually end with (`segmentsForSpan`), and
+ * the answer re-divides the demand by THAT count's own seat fraction - so a
+ * grow whose re-count crosses a segmentsForSpan band lays its seat ON the
+ * knot instead of past it (the +22% measured inflation class), and a
+ * free-end re-lay's appended tail sits on the cursor on the very frame the
+ * chain grows (the +22.7px reel class). A non-crossing lay re-derives the
+ * same count and answers the single-pass span.
+ *
+ * One spelling, two consumers: attachEndpoint's covering grow seals the
+ * tie's grow through it, and relayFreeEnd seals the hand's re-lay through
+ * it.
+ *
+ * @param {number} demand - the span the knot point/the hand demands
+ * @param {'anchor'|'mid'|'end'} seat - the seat whose fraction seals
+ * @param {number} count0 - the chain count the lay starts from
+ * @returns {number} the sealed span
+ */
+function twoPassSealSpan(demand, seat, count0) {
+    const span1 = demand / seatFraction(seat, count0);
+    const count1 = Rope.segmentsForSpan(span1);
+    return demand / seatFraction(seat, count1);
+}
+
+/**
  * The float-dust allowance in the re-seat pass (issue #98): a leg's
  * crow-fly distance may exceed its arclength budget by this much and
  * still lay as its leg's straight answer, and station/waypoint
@@ -927,15 +954,11 @@ export default class Rope extends BaseObject {
                 const oldCount = this._segments.length;
                 const frac0 = seatFraction(seat, oldCount);
                 if (tied > this._length * frac0) {
-                    // Two-pass seal (issue #99): seal the covering span
-                    // against the count the re-lay will actually end with -
-                    // span1 names count1 (segmentsForSpan), the seal
-                    // re-divides by count1's own seat fraction - so a
-                    // band-crossing grow lays its seat ON the knot instead
-                    // of past it.
-                    const span1 = tied / frac0;
-                    const count1 = Rope.segmentsForSpan(span1);
-                    const grown = tied / seatFraction(seat, count1);
+                    // Two-pass seal (issue #99): the covering grow is
+                    // sealed against the count the re-lay will actually
+                    // end with - the one spelling, in twoPassSealSpan
+                    // (the same shape the hand's re-lay seals with).
+                    const grown = twoPassSealSpan(tied, seat, oldCount);
                     if (!this._severed && oldCount) {
                         const anchor = this._anchor.position;
                         const ux = (world.x - anchor.x) / tied;
@@ -989,13 +1012,12 @@ export default class Rope extends BaseObject {
      * moves; the seat stays where it is and the next reconcile step closes
      * the residual gap at play (the shipped anchor behavior).
      *
-     * @returns {boolean} whether the chain was re-laid
      * @private
      */
     _reseatSeatsToKnots() {
         const span = this._length;
         const count = this._segments.length;
-        if (!this._anchor || count === 0 || this._severed || !(span > 0)) return false;
+        if (!this._anchor || count === 0 || this._severed || !(span > 0)) return;
         const pitch = span / count;
         const midArc = seatFraction('mid', count) * span;
         const tailArc = seatFraction('end', count) * span; // the tail's own station
@@ -1011,7 +1033,7 @@ export default class Rope extends BaseObject {
         for (const ref of this.getAttachmentRefs()) {
             if (ref.seat === 'anchor') continue;
             const point = ref.target?.getAttachmentWorldPoint?.(ref.pointId) ?? null;
-            if (!point) return false;
+            if (!point) return;
             waypoints.push({ arc: ref.seat === 'mid' ? midArc : tailArc, x: point.x, y: point.y });
         }
 
@@ -1022,7 +1044,7 @@ export default class Rope extends BaseObject {
         for (let k = 1; k < waypoints.length; k++) {
             const budget = waypoints[k].arc - waypoints[k - 1].arc;
             const crowFly = Math.hypot(waypoints[k].x - waypoints[k - 1].x, waypoints[k].y - waypoints[k - 1].y);
-            if (crowFly > budget + RESEAT_EPS_PX) return false;
+            if (crowFly > budget + RESEAT_EPS_PX) return;
         }
 
         // One arc per leg (bowedLeg precomputes the circle), then every
@@ -1049,7 +1071,6 @@ export default class Rope extends BaseObject {
             }
             if (point) Body.setPosition(this._segments[i], point);
         }
-        return true;
     }
 
     /**
@@ -1902,18 +1923,15 @@ export default class Rope extends BaseObject {
         // fraction changes under it - dividing by the PRE-re-lay count's
         // fraction laid the appended tail past the cursor on the growth
         // frame (+22.7px on the measured 250px reel across 6 -> 7, probe
-        // scenario 4's class). span1 names the count the re-lay will lay
-        // (segmentsForSpan), and the hand's span re-divides by THAT count's
-        // own end fraction - the same post-re-lay shape attachEndpoint's
-        // tie-grow seals with. The laid chain's tail rides the fraction the
-        // seal used (setEndpoints), so the free-end tie square sits on the
-        // cursor on the very frame the chain grows. A non-crossing re-lay
-        // re-derives the same count and answers the single-pass span.
-        const span1 = demanded / seatFraction('end', count);
-        const count1 = Rope.segmentsForSpan(span1);
+        // scenario 4's class). The same post-re-lay shape attachEndpoint's
+        // tie-grow seals with - the one spelling, in twoPassSealSpan. The
+        // laid chain's tail rides the fraction the seal used
+        // (setEndpoints), so the free-end tie square sits on the cursor on
+        // the very frame the chain grows. A non-crossing re-lay re-derives
+        // the same count and answers the single-pass span.
         const span = frozen
             ? this._length
-            : Math.max(demanded / seatFraction('end', count1), MIN_ROPE_SPAN);
+            : Math.max(twoPassSealSpan(demanded, 'end', count), MIN_ROPE_SPAN);
         this.setEndpoints(
             { x: anchor.x, y: anchor.y },
             { x: anchor.x + ux * span, y: anchor.y + uy * span }
