@@ -25,8 +25,15 @@
  *   wiped, the board re-materialized empty and the cycle returns to
  *   idle, one start() away from a fresh build.
  *
- * The two-phase Pause and the run-phase single-frame step land behind
- * their own pinned red tests, one cycle per acceptance criterion.
+ * Pause (pause / resume) holds BOTH active phases in place - the build's
+ * cadence stops between beats, the run's simulation stops between frames;
+ * a hold is not an end (the status is unchanged, paused reads true), and
+ * resume() re-arms the held cadence - the script finishes, the run plays
+ * out. Single-frame stepping (stepFrame) is the run phase's manual
+ * cadence: exactly ONE whole frame per call, stepping IS the pause for
+ * the automatic ticker, and the frame that steps the budget out
+ * finalizes the run - the same end a paced tick would have reached
+ * (stoppedHow 'budget': an end, not a stop; the posture judges nothing).
  *
  * Watching never mutates player state: no recorder, no editor, no
  * progress marks - none of that machinery is even constructed here
@@ -92,13 +99,15 @@ export function bannerForSandboxResult(result, { stopped = false, seconds = SAND
  * 'built'); run() opens the steppable trial over the built placements
  * and animates it ('running'), ending by its budget or a manual stop
  * ('ended') with the never-a-goal-banner payload; reset() returns the
- * board to empty ('idle'). Every page tick rides the injected
- * `schedule` (requestAnimationFrame in the browser, a manual pump in
- * tests); between ticks the caller may read the live board (liveObjects)
- * and the open run (session.trialRun). The listeners are the page's
- * seams: onBoardLoaded (the board document), onStatus, onEvent (HUD rows
- * as they happen), onFrame (repaint the board), onSandboxRunEnded (the
- * run-end payload), onError.
+ * board to empty ('idle'). pause()/resume() hold the ACTIVE phase in
+ * place (a hold, not an end), and stepFrame() is the run phase's manual
+ * cadence - exactly one whole frame per call. Every page tick rides the
+ * injected `schedule` (requestAnimationFrame in the browser, a manual
+ * pump in tests); between ticks the caller may read the live board
+ * (liveObjects) and the open run (session.trialRun). The listeners are
+ * the page's seams: onBoardLoaded (the board document), onStatus,
+ * onEvent (HUD rows as they happen), onFrame (repaint the board),
+ * onSandboxRunEnded (the run-end payload), onError.
  */
 export class SandboxFlow {
     /**
@@ -136,6 +145,8 @@ export class SandboxFlow {
         this.result = null;
         /** @type {'manual'|'budget'|null} how the last run ended */
         this.stoppedHow = null;
+        /** @type {boolean} the two-phase hold: true while the active phase (building / running) stands held in place between beats or frames - pause/resume's state, and stepping's (one stepFrame call holds the automatic ticker) */
+        this.paused = false;
         this._beatIndex = 0;
         this._buildAccMs = 0;
         this._buildLast = null;
@@ -205,6 +216,7 @@ export class SandboxFlow {
         if (this._cancelled) return;
         this._cancelled = true;
         this.session.dispose();
+        this.paused = false; // a cancelled cycle holds nothing
         this.status = 'cancelled';
     }
 
@@ -248,13 +260,74 @@ export class SandboxFlow {
         this.session.materializeBoard(); // the empty board (the board doc carries no furniture)
         this._onFrame();
         this._onStatus('reset - the board is empty again');
+        this.paused = false; // a reset lifts every hold with everything else
+    }
+
+    // ---- the two-phase hold and the run's manual cadence (issue #64) ----
+
+    /**
+     * Pause (issue #64): hold the ACTIVE phase in place. The build's
+     * cadence stops mid-script (the script holds its place - every beat
+     * that already applied stands on the board), the run's simulation
+     * stops between frames (the session's world is the read surface, and
+     * nothing steps further). A hold, not an end: the status is
+     * unchanged, the already-queued tick drains to a no-op (it returns
+     * without stepping or re-arming) and the page's cadence goes quiet.
+     * A no-op outside the active phases: idle, built, ended, cancelled
+     * cannot pause, and a pause never mutates the board or the held
+     * trial.
+     */
+    pause() {
+        if (this._cancelled || (this.status !== 'building' && this.status !== 'running')) return;
+        this.paused = true;
+    }
+
+    /**
+     * Resume (issue #64): lift the hold and re-arm the held phase's
+     * cadence - the build finishes its remaining script, the run plays on
+     * to the same ends a never-paused run had (its budget or a manual
+     * stop). A no-op when nothing is held: never paused, or the phase
+     * ended while held (a run's own end lifts its hold).
+     */
+    resume() {
+        if (this._cancelled || !this.paused) return;
+        this.paused = false;
+        if (this.status === 'building') {
+            this._schedule((t) => this._pumpBuild(t));
+        } else if (this.status === 'running' && this._run) {
+            this._schedule((t) => this._tickRun(t));
+        }
+    }
+
+    /**
+     * Single-frame stepping (issue #64): the run phase's manual cadence.
+     * Each call advances the open trial by exactly ONE whole frame
+     * (advanceTrial(1) - the same step body, one FIXED_STEP_MS quantum)
+     * and holds: stepping IS the pause, so the automatic ticker stays off
+     * until resume() re-arms it (or stepping itself carries the cadence).
+     * A step paints and narrates exactly like a paced tick (onFrame,
+     * onEvent), and the frame that steps the budget out finalizes the run
+     * right here - stoppedHow 'budget': an end, not a stop; the sandbox
+     * posture judges nothing. Outside the run phase: null, and nothing
+     * steps - no throw, ever.
+     * @returns {{ stepped: number, done: boolean, verdict: 'reached'|'failed'|null }|null}
+     *   the exact advanceTrial response (one frame), or null when no run is open
+     */
+    stepFrame() {
+        if (this._cancelled || this.status !== 'running' || !this._run) return null;
+        const response = this.session.advanceTrial(1);
+        this.paused = true; // the manual cadence: the automatic ticker holds
+        this._onFrame();
+        this._emitNewEvents();
+        if (response.done) this._finishRun(false); // the budget stepped out - one deliberate frame at a time
+        return response;
     }
 
     // ---- the build phase: one scripted beat per paced tick ----
 
     /** @private */
     _pumpBuild(now) {
-        if (this._cancelled || this.status !== 'building') return;
+        if (this._cancelled || this.status !== 'building' || this.paused) return; // a hold: no beat, no re-arm
         if (this._beatIndex >= this._script.length) {
             this.status = 'built';
             this._onStatus('build complete - press Run to watch the machine play');
@@ -295,7 +368,7 @@ export class SandboxFlow {
 
     /** @private */
     _tickRun(now) {
-        if (this._cancelled || this.status !== 'running' || !this._run) return;
+        if (this._cancelled || this.status !== 'running' || !this._run || this.paused) return; // a hold or a drained tick: no frame, no re-arm
         // Wall-clock pacing (the WatchFlow accumulator, ADR 0008's discipline):
         // whole FIXED_STEP_MS quanta per tick, the batch capped at
         // maxBatchFrames - real-time pacing, never a whole trial in one call.
@@ -325,6 +398,7 @@ export class SandboxFlow {
         this.result = result;
         this.stoppedHow = stopped ? 'manual' : 'budget';
         this.status = 'ended';
+        this.paused = false; // the phase is over - no hold survives the run's end
         this._onSandboxRunEnded(result, { stopped, seconds: this._runSeconds });
         this._onStatus(stopped
             ? `run stopped at ${(result.elapsed / 1000).toFixed(2)}s of its ${this._runSeconds}s budget - the log has the story`
