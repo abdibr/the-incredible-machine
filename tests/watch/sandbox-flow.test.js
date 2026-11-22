@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { AgentSession } from '../../agent/session.js';
+import { eventBus } from '../../js/EventBus.js';
 import { place, trial } from '../../agent/actions.js';
 import { SandboxFlow, SANDBOX_BOARD, bannerForSandboxResult } from '../../js/watch/sandboxFlow.js';
 import { applyBuildBeat, beatLabel, SANDBOX_BUILD_SCRIPT, SANDBOX_RUN_SECONDS } from '../../js/watch/sandboxScript.js';
@@ -46,6 +47,20 @@ function makeTicker() {
     };
 }
 
+/**
+ * Drive one flow to 'built' (the scripted build, one beat per pump). The
+ * caller reads `flow` (the module-level handle the afterEach disposes)
+ * and the returned `session`.
+ */
+async function buildToBuilt(ticker, options = {}) {
+    const session = new AgentSession({ seed: null, sandbox: true });
+    flow = new SandboxFlow({ session, schedule: ticker.schedule, buildBeatMs: 0, ...options });
+    await flow.start();
+    let guard = 0;
+    while (flow.status === 'building' && guard++ < 20) ticker.pump();
+    expect(flow.status).toBe('built');
+    return { session };
+}
 describe('the sandbox cycle - the empty board and the scripted build (issue #64)', () => {
     it(
         'starts an empty goal-less board, then the build applies its placements one beat per tick, live and visibly',
@@ -183,16 +198,6 @@ describe('AgentSession.materializeBoard - the build phase board (issue #64)', ()
 });
 
 describe('the sandbox run (issue #64)', () => {
-    /** Drive one flow to 'built' (the scripted build, one beat per pump). */
-    async function buildToBuilt(ticker, options = {}) {
-        const session = new AgentSession({ seed: null, sandbox: true });
-        flow = new SandboxFlow({ session, schedule: ticker.schedule, buildBeatMs: 0, ...options });
-        await flow.start();
-        let guard = 0;
-        while (flow.status === 'building' && guard++ < 20) ticker.pump();
-        expect(flow.status).toBe('built');
-        return { session, flow: () => flow };
-    }
 
     it(
         'plays the built contraption over the steppable seam in capped batches, streams the event HUD, and ends by its budget with a no-goal banner',
@@ -338,6 +343,121 @@ describe('the sandbox run (issue #64)', () => {
                 const neutral = bannerForSandboxResult({ outcome, elapsed: 100 }, {});
                 expect(neutral.label).not.toMatch(/goal|reached|failed/i);
             }
+        },
+    );
+});
+describe('the sandbox manual stop and reset (issue #64)', () => {
+    /** Tap the bus for the duration of the returned helper's life. */
+    function tapFacts(topics) {
+        const rows = [];
+        const unsubs = topics.map((topic) => {
+            const listener = (packet) => rows.push({ topic, packet });
+            eventBus.on(topic, listener);
+            return () => eventBus.off(topic, listener);
+        });
+        return { rows, stop: () => unsubs.forEach((unsub) => unsub()) };
+    }
+
+    it(
+        'stopRun ends the running trial early - an honest partial result, the stop banner, still no goal banner',
+        { timeout: 60000 },
+        async () => {
+            const ticker = makeTicker();
+            const outcomes = [];
+            const { session } = await buildToBuilt(ticker, {
+                listeners: {
+                    onStatus: () => {},
+                    onEvent: () => {},
+                    onFrame: () => {},
+                    onSandboxRunEnded: (result, meta) => outcomes.push({ result, meta }),
+                    onError: () => {},
+                },
+            });
+            flow.run();
+            let now = 0;
+            let guard = 0;
+            while (session.trialRun.stepped < 90 && guard++ < 2000) ticker.pump((now += 17)); // ~1.5s of sim
+            expect(flow.status).toBe('running');
+            expect(session.trialRun.stepped).toBeGreaterThanOrEqual(90);
+
+            // The manual stop: the run ends NOW, not at its budget.
+            flow.stopRun();
+            expect(flow.status).toBe('ended');
+            expect(session.trialRun).toBeNull();
+            expect(flow.stoppedHow).toBe('manual');
+            expect(flow.result.outcome).toBe('timeout'); // the posture judges nothing - a stop is a timeout
+            expect(flow.result.elapsed).toBeLessThan(5000); // the sim time actually stepped
+            expect(outcomes).toHaveLength(1);
+            expect(outcomes[0].meta).toEqual({ stopped: true, seconds: 5 });
+            // The stop banner is the no-goal story, never a goal banner.
+            const banner = bannerForSandboxResult(outcomes[0].result, outcomes[0].meta);
+            expect(banner.label).toMatch(/stopped/i);
+            expect(banner.label).not.toMatch(/goal|reached|failed/i);
+            expect(banner.text).toMatch(/5\.00s/); // the budget, named - the stop happened before it
+        },
+    );
+
+    it(
+        'reset returns the board to empty - mid-build and mid-run - and a fresh build can replay after it',
+        { timeout: 90000 },
+        async () => {
+            // (a) mid-build: two beats applied, then reset.
+            const ticker = makeTicker();
+            let session = new AgentSession({ seed: null, sandbox: true });
+            const outcomes = [];
+            flow = new SandboxFlow({
+                session,
+                schedule: ticker.schedule,
+                buildBeatMs: 0,
+                listeners: {
+                    onStatus: () => {},
+                    onEvent: () => {},
+                    onFrame: () => {},
+                    onSandboxRunEnded: (result, meta) => outcomes.push({ result, meta }),
+                    onError: () => {},
+                },
+            });
+            await flow.start();
+            ticker.pump(ticker.pump());
+            expect(session.placements.length).toBeGreaterThanOrEqual(2); // the build got going
+            flow.reset();
+            expect(flow.status).toBe('idle');
+            expect(flow.liveObjects()).toEqual([]);
+            expect(session.placements).toHaveLength(0);
+            expect(session.budget().bucket).toBe(10); // the parts palette is back to full
+            expect(session.trialRun).toBeNull();
+            // A fresh build replays over the empty board and completes.
+            await flow.start();
+            ticker.pump();
+            let guard = 0;
+            while (flow.status === 'building' && guard++ < 20) ticker.pump();
+            expect(flow.status).toBe('built');
+            expect(flow.session.placements).toHaveLength(5);
+
+            // (b) mid-run: an open run is finalized (its owned end fact lands
+            // exactly once) and the board is emptied, no run-end banner.
+            session = flow.session;
+            flow.run();
+            ticker.pump(ticker.pump());
+            expect(session.trialRun).not.toBeNull();
+            const tap = tapFacts(['loop:play', 'loop:frame', 'loop:reset', 'mode:changed']);
+            ticker.pump(ticker.pump()); // the run is live (its begin facts already flowed)
+            tap.stop();
+            const taps = tapFacts(['loop:play', 'loop:reset', 'mode:changed']);
+            flow.reset();
+            taps.stop();
+            expect(taps.rows.filter((r) => r.topic === 'loop:reset')).toHaveLength(1); // the interrupted run's owned end fact
+            expect(taps.rows.filter((r) => r.topic === 'loop:play')).toHaveLength(0); // no new begin
+            expect(flow.status).toBe('idle');
+            expect(flow.liveObjects()).toEqual([]);
+            expect(session.placements).toHaveLength(0);
+            expect(flow.result).toBeNull();
+            expect(outcomes).toHaveLength(0); // a reset is not a run story - no banner payload fired
+            expect(session.trialRun).toBeNull();
+
+            // (c) from 'idle' a run is refused - build first.
+            flow.run();
+            expect(flow.status).toBe('idle'); // no run without a build
         },
     );
 });
