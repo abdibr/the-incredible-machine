@@ -140,11 +140,6 @@ const EXCERPT_GRID_LINES = 4;
 const EXCERPT_EVENT_LINES = 8;
 const EXCERPT_FULL_LINES = 40; // at/below this an observation is small: render it in full
 
-/** Container-mode POST /turn cap per request (the service trial guard is 120 s; a
- *  turn request may not out-wait it) - past it the turn answers with structured
- *  unreachable data, never a hang. */
-const TURN_HTTP_TIMEOUT_MS = 120_000;
-
 const RUN_TURN_OPTIONS = {
     maxTurns: 1,
     errorHandlers: {

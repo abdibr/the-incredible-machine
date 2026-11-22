@@ -95,6 +95,23 @@ function toolOutput(actionJson, turn) {
 }
 
 /**
+ * The observation entry point's descriptor - NOT a row of the action table
+ * (every verb reads the world back through it), but the model must see it
+ * advertised: chat-completions requests carry it FIRST (the driver's SDK
+ * tools wrap the same wording).
+ */
+const OBSERVE_TOOL = {
+    name: 'observe',
+    description: "Read the world fresh: grid, legend, state table, relations. Cell 'auto' by default, 'full' for the precise 8px map.",
+    parameters: {
+        type: 'object',
+        properties: { cell: { type: 'string', description: "'auto' (default) or 'full'" } },
+        required: [],
+        additionalProperties: true,
+    },
+};
+
+/**
  * THE ACTION TOOLS AS ONE SMALL TABLE (ticket #94): verb -> argument schema +
  * handler. The phase-1 verbs place / remove / rotate / nudge / reset / trial
  * are six ROWS of data instead of six copied definition/execute chunks - a
@@ -114,23 +131,6 @@ function toolOutput(actionJson, turn) {
  *               they can wedge the phase-1 sync trial loop, byte-identically
  *               in both modes (agent/turn.js owns the wording).
  */
-/**
- * The observation entry point's descriptor - NOT a row of the action table
- * (every verb reads the world back through it), but the model must see it
- * advertised: chat-completions requests carry it FIRST (the driver's SDK
- * tools wrap the same wording).
- */
-const OBSERVE_TOOL = {
-    name: 'observe',
-    description: "Read the world fresh: grid, legend, state table, relations. Cell 'auto' by default, 'full' for the precise 8px map.",
-    parameters: {
-        type: 'object',
-        properties: { cell: { type: 'string', description: "'auto' (default) or 'full'" } },
-        required: [],
-        additionalProperties: true,
-    },
-};
-
 const ACTION_TOOLS = Object.freeze([
     {
         verb: 'place',

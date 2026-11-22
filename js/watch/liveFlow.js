@@ -38,7 +38,7 @@ import { DEFAULT_LEVEL_ID, fetchLevelDocument, levelUrlFor } from './watchFlow.j
 import { SANDBOX_BOARD } from './sandboxFlow.js';
 
 /** The default driver-turn cap - the same number the Node driver enforces. */
-const DEFAULT_MAX_TURNS = 20;
+export const LIVE_DEFAULT_MAX_TURNS = 20;
 
 /** The default level the live source drives (the page's subject). */
 export const LIVE_DEFAULT_LEVEL = DEFAULT_LEVEL_ID;
@@ -70,12 +70,12 @@ export function resolveLiveDriverConfig({ model, modelBaseUrl, turnBaseUrl, apiK
     if (turnBaseUrl !== undefined && !HTTP_URL_RE.test(turnBaseUrl)) {
         errors.push(`invalid turn base URL: "${turnBaseUrl}" - an http(s):// URL is required`);
     }
-    let turns = DEFAULT_MAX_TURNS;
+    let turns = LIVE_DEFAULT_MAX_TURNS;
     if (maxTurns !== undefined) {
         turns = Number(maxTurns);
         if (!(Number.isFinite(turns) && turns >= 1)) {
             errors.push(`invalid max turns: "${maxTurns}" - a number >= 1 is required`);
-            turns = DEFAULT_MAX_TURNS;
+            turns = LIVE_DEFAULT_MAX_TURNS;
         }
     }
     if (level !== undefined && (typeof level !== 'string' || level.trim() === '')) {
@@ -118,10 +118,10 @@ const CHAT_TOOLS = [OBSERVE_TOOL, ...ACTION_TOOLS].map((row) => ({
  * @returns {{ ask(messages: Array<object>): Promise<{
  *   text?: string, calls: Array<{ name: string, args: object }>, error?: string }> }}
  */
-export function createChatModelTransport({ baseUrl, model, apiKey, fetchImpl = globalThis.fetch } = {}) {
+export function createChatModelTransport({ baseUrl, model, apiKey, fetchImpl = globalThis.fetch, timeoutMs = MODEL_HTTP_TIMEOUT_MS } = {}) {
     const endpoint = `${String(baseUrl).replace(/\/+$/, '')}/chat/completions`;
     return {
-        /** One model response per call: { text?, calls, error? }. */
+        /** One model response per call: { text?, calls, rawMessage?, error? }. */
         async ask(messages) {
             const headers = { 'content-type': 'application/json' };
             if (apiKey) headers.authorization = `Bearer ${apiKey}`; // the key rides the header only
@@ -130,6 +130,7 @@ export function createChatModelTransport({ baseUrl, model, apiKey, fetchImpl = g
                     method: 'POST',
                     headers,
                     body: JSON.stringify({ model, messages, tools: CHAT_TOOLS }),
+                    signal: AbortSignal.timeout(timeoutMs), // a hung provider degrades at the bound, the turn transport's own discipline
                 });
                 if (!res.ok) {
                     return { calls: [], error: `model provider HTTP ${res.status} at ${endpoint}` };
@@ -147,9 +148,15 @@ export function createChatModelTransport({ baseUrl, model, apiKey, fetchImpl = g
                     return { name: String(fn.name ?? ''), args: asArgs(fn.arguments) };
                 });
                 const text = typeof message.content === 'string' && message.content.trim() !== '' ? message.content : undefined;
-                return { text, calls };
+                // rawMessage rides verbatim: the loop re-posts the assistant turn's
+                // tool_calls (with the provider's own ids) into the history and echoes
+                // them as tool_call_id - the strict chat-completions contract.
+                return { text, calls, rawMessage: message };
             } catch (err) {
                 const detail = err?.cause?.code ?? err?.cause?.message ?? err?.message ?? String(err);
+                if (err?.name === 'TimeoutError') {
+                    return { calls: [], error: `the model provider gave no answer within ${timeoutMs} ms at ${endpoint}` };
+                }
                 return { calls: [], error: `model provider unreachable at ${endpoint}: ${detail}` };
             }
         },
@@ -175,27 +182,12 @@ export function createLocalTurnTransport(session) {
 }
 
 export { createHttpTurnTransport };
-/**
- * The live driver loop + the watched-run wiring (issue #65). One class:
- * - start(): the page's world (a level mirror or the sandbox board), the
- *   opening observation through the turn boundary, then the loop;
- * - the loop: one model response per turn, tool calls executed IN ORDER
- *   through the turn seam (refusals and unknown tools are DATA - the model
- *   reads them), the observation payload of every turn lands on the page's
- *   panel seam, a trial plays over the #61 steppable seam in capped
- *   batches on the page's cadence, the verdict scan ends the cycle;
- * - degrade paths never throw and never freeze the page: the model
- *   provider's transport failures, the turn service being unreachable or
- *   unreadable, and infra-level refusals all end the cycle with clear
- *   error payloads while the scripted sources stay usable.
- */
-
-
-/** The driver-turn cap when the page passes none - the Node driver's default. */
-export const LIVE_DEFAULT_MAX_TURNS = 20;
 
 /** Small capped batches per tick, the WatchFlow bound (ADR 0008's discipline). */
 const DEFAULT_MAX_BATCH_FRAMES = 3;
+
+/** The model transport's own HTTP bound - the same number the turn transport carries: a hung provider degrades, never hangs the cycle. */
+const MODEL_HTTP_TIMEOUT_MS = 120_000;
 
 /**
  * The envelope failures the loop cannot read through: the transport's own
@@ -241,7 +233,6 @@ export class LiveFlow {
      *          turns?: { local?: boolean, turn(actionJson: object):
      *                    Promise<{ observation: string, result: object }> },
      *          maxTurns?: number, maxBatchFrames?: number,
-     *          sandboxRunSeconds?: number,
      *          listeners?: { onStatus?, onObservation?, onEvent?, onFrame?,
      *                        onWatchOutcome?, onSandboxRunEnded?, onLiveEnded?,
      *                        onDriverError?, onServiceUnreachable? } }} [options]
@@ -415,6 +406,7 @@ export class LiveFlow {
                     return;
                 }
             }
+            if (this._cancelled) return; // cancelled over the last turn: no ghost cap banner over the takeover
             this.status = 'ended';
             this._onLiveEnded({ outcome: 'turn-cap', turns: turnsUsed });
             this._onStatus(`the live source used its ${turnsUsed} turns - the cap is the driver's, not the model's`);
@@ -432,9 +424,9 @@ export class LiveFlow {
     async _executeCall(call) {
         const name = String(call?.name ?? '');
         const args = call?.args && typeof call.args === 'object' && !Array.isArray(call.args) ? call.args : {};
-        const turnLabel = `turn ${this._lastTurnLabel ?? ''}`.trim();
         if (name === 'observe') {
             const envelope = await this._turns.turn({ action: 'observe', cell: args.cell });
+            if (this._cancelled) return null; // cancelled mid-turn: the takeover path keeps the new cycle's HUD
             if (this._degradeIfFailed(envelope)) return null;
             this._onObservation(envelope.observation);
             this._onStatus('the model re-read the world');
@@ -467,6 +459,7 @@ export class LiveFlow {
         // Every other verb rides the boundary, then applies LIVE on the page's
         // own session through the same never-throw action API.
         const envelope = await this._turns.turn(actionJson);
+        if (this._cancelled) return null; // cancelled mid-turn: no ghost observation, status or mirror
         if (this._degradeIfFailed(envelope)) return null;
         this._onObservation(envelope.observation);
         this._applyLive(actionJson);
@@ -518,10 +511,11 @@ export class LiveFlow {
         const dt = args.dt;
         if (!this._turns.local) {
             const judged = await this._turns.turn(actionJson); // the service judges the model's run
+            if (this._cancelled) return null; // cancelled mid-turn
             if (this._degradeIfFailed(judged)) return null;
             this._onObservation(judged.observation);
             const watched = await this._playTrial({ seconds, dt }); // the same trial, re-watched live
-            if (this._cancelled) return null;
+            if (this._cancelled) return null; // cancelled mid-turn
             if (watched && judged.result?.outcome && watched.outcome !== judged.result.outcome) {
                 // Mirror parity is by construction for the same placements; a
                 // verdict mismatch is REPORTED as data, never hidden.
@@ -535,6 +529,7 @@ export class LiveFlow {
         const watched = await this._playTrial({ seconds, dt });
         if (this._cancelled || watched === null) return null;
         const readBack = await this._turns.turn({ action: 'observe' }); // the post-run observation, events narrated
+        if (this._cancelled) return null; // cancelled mid-turn
         if (this._degradeIfFailed(readBack)) return null;
         this._onObservation(readBack.observation);
         this.result = watched;

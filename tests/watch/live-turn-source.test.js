@@ -307,7 +307,9 @@ describe('resolveLiveDriverConfig - the browser driver\'s configuration contract
     it('a model provider that never answers degrades at the transport own bound - the ask resolves structured, never hangs the cycle', { timeout: 2000 }, async () => {
         const model = createChatModelTransport({
             baseUrl: 'http://127.0.0.1:9/v1', model: 'stub-model',
-            fetchImpl: () => new Promise(() => {}), // hangs forever
+            fetchImpl: (_url, init) => new Promise((_resolve, reject) => {
+                init.signal.addEventListener('abort', () => reject(new DOMException('This operation was aborted', 'TimeoutError')));
+            }), // hangs until the transport's signal cuts it
             timeoutMs: 5,
         });
         const answer = await model.ask([]);
