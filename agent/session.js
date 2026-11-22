@@ -177,9 +177,9 @@ export class AgentSession {
 
     /**
      * Load a level by id (fs, levels live in js/levels/puzzles/) or accept a
- * The string branch is Node-only (ADR 0010): a browser fetches the
- * level JSON itself and calls loadLevel with the parsed data object,
-     * full level-data object directly (ad-hoc / custom levels).
+     * full level-data object directly (ad-hoc / custom levels). The string
+     * branch is Node-only (ADR 0010): a browser fetches the level JSON itself
+     * and calls loadLevel with the parsed data object.
      * @param {string|object} idOrData e.g. 'level-01'
      */
     async loadLevel(idOrData) {
