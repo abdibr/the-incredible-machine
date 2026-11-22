@@ -133,3 +133,10 @@ Decided in `docs/adr/0007-rope-connection-redesign.md` (the record the design gr
 - **Watch posture** - watching never mutates player state: no progress marks (the sidecar never runs `levelManager.init()`), no `SessionRecorder`, no editor panels; its renderer is a fresh `Renderer` on the watch page's canvas.
 - **WatchFlow** - `js/watch/watchFlow.js`, the Solve & Watch run controller: fetches the level JSON itself (the fs loader stays Node-only; ADR 0010), drives `solveTrials` one candidate per tick, watches the winning trial in bounded advance batches (#61 seam), streams HUD rows and the outcome banner.
 - **Steppable solver facade** - `solveTrials` (`agent/solver.js`), one judged candidate per yield; `solve()` is its composition, the two spellings cannot drift.
+
+
+## Sandbox posture (issue #63, ADR 0011)
+
+- **Sandbox posture** - `new AgentSession({ sandbox: true })`: the session born into the game's Sandbox mirror - a goal-less, ad-hoc session whose load gate accepts goal-less documents, whose placements draw from the parts palette, and which installs no goal checker, so runs judge nothing and no goal event ever fires (timeout outcomes, silent goal events).
+- **Sandbox gate** - `levelManager.validateSandbox` (js/levels/LevelManager.js), validateCustom's goal-less sibling: the typed goal, the availableParts budget and the ADR 0009 solution proof are optional only for sandbox documents; `id`, `name` and the `fixedObjects` array stay required, and a goal that rides along still names its type. Puzzle documents keep the strict gate.
+- **Sandbox parts palette** - the sandbox posture's placement budget: every registered type at the unauthored sandbox default count (the game's DEFAULT_PALETTE_COUNT, every type x10, issue #69); the document's availableParts is carry-through save data, never the constraint; over-palette and off-playfield refusals keep the puzzle never-throw result shapes.
