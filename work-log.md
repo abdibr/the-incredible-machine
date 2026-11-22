@@ -1,5 +1,37 @@
 # Work Log — The Incredible Machine (Web Clone)
 
+## 2026-11-21 — rope-ties: the review-fix pass lands, and the arc's provenance gap is recorded (issues #83, #91, #98-#103)
+
+The rope-ties feature arc (#83, #91, #98-#103) came back from its two code reviews; the fix pass
+landed directly on the integration branch by dispatch (the review reports are the work order; no
+ticket branch). One record it adds before the report itself, the arc's provenance gap: #99,
+#101, #103, #83 and the #91 docs pass each landed as ticket branches merged in, but #100
+(`d631b11`), #98 (`dd9df1a` + `df9b617`) and #102 (`267e08f` + `de3a215`) landed as BARE commits
+on the integration line — no ticket branch survives them, no merge commit traces the landing.
+Recorded deliberately rather than re-merged: re-merging would fabricate the missing traces, and
+the work is committed and green at the tip. Future rope dispatches keep the
+one-branch-one-merge shape.
+
+The fix pass — honest records and one dedup, zero behavior change:
+
+- ADR 0005 decision 7 + the glossary's attachment-point entry amended to the body-local
+  tie-point truth (issue #100): the unrotated world-space spelling contradicted the landed code,
+  and the domain rule forbids silent overrides. ADR 0007 gains a review-fix amendment that
+  closes its docs pass's own preamble: the rotation supersession and #101's no-string balloon
+  get their points, and the three riders the spec ran quiet on are recorded where they live —
+  the target-never-moves rule (the tie-grow covering re-lay, not a pull), the restore bind's
+  `{ reseat: false }` (bit-exact replay), and the seek advance's refusal-flash sweep.
+- `tests/rope-tie-frame.test.js` renamed: "Tie points ignore body rotation" named the opposite
+  of the contract its own header states — now "Tie points answer the body's rotation." The
+  `makeDrawCtx()` stub comment re-attached in `tests/rope-debug-overlay.test.js` (the #103
+  splice left it heading the new describe). Trailing newlines restored on GLOSSARY.md, ADR 0007
+  and the three new rope-tie suites (lost in 67f7031's splice).
+- `Rope.js`: the two-pass seal arithmetic (issue #99) was spelled twice — attachEndpoint's
+  covering grow and relayFreeEnd's hand re-lay — and now seals through one module helper,
+  `twoPassSealSpan` (the glossary's one-spelling habit); `_reseatSeatsToKnots` dropped the
+  boolean return its single caller discards.
+- Status: the suite never moved — 76 files / 877 tests, all green at the new integration tip.
+
 ## 2026-11-21 — Bugfile bug-20261027T151221Z-0txh graduates into a regression fixture (issue #81)
 
 The spring-under-throttle bugfile — #80's original exhibit, captured 2026-10-27 under the pre-fixed-timestep loop — now lives verbatim in `tests/fixtures/bugfiles/bug-20261027T151221Z-0txh.json` (single issue comment, byte-exact stitch, no re-serialization; source was the reporter's download, no in-repo copy existed). Per ADR 0006 decision 2 the replay harness consumes the recorded ~31 ms frame dts verbatim, so the committed file still replays BIT-EXACTLY — reproducing the broken pre-#80 stream faithfully (bit-exactness is the harness working, not the bug being alive). The pin is therefore a two-sided pair in `tests/replay.test.js` (the deliberate-divergence shape of the 2026-10-23 spring fix / the ufzs amendment):
