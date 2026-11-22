@@ -46,6 +46,16 @@ import { createSeedRng, resolveSeed, SEED_ENV_VAR } from './rng.js';
 const SANDBOX_PALETTE_COUNT = 10;
 
 /**
+ * The trial horizon when a caller names none (issue #61's default, widened
+ * after watching live runs): a machine can spend several seconds just
+ * travelling - the level-02 authored path needs 5.7 s - so a budget shorter
+ * than the travel time cannot answer "did it reach?". 30 s is generous for
+ * every campaign level and still 1/4 of the trial clamp
+ * (agent/turn.js MAX_TRIAL_SECONDS).
+ */
+export const TRIAL_DEFAULT_SECONDS = 30;
+
+/**
  * TrialRun - one live steppable trial run (issue #61).
  *
  * Created ONLY by AgentSession.beginTrial (the world it watches belongs
@@ -331,7 +341,7 @@ export class AgentSession {
      * @returns {{ outcome: 'reached'|'failed'|'timeout', elapsed: number, events: object[],
      *            snapshot: object[], distance: number, failureReason?: string }}
      */
-    trial({ seconds = 5, dt = FIXED_STEP_MS } = {}) {
+    trial({ seconds = TRIAL_DEFAULT_SECONDS, dt = FIXED_STEP_MS } = {}) {
         // A steppable run mixed into this call is abandoned, never merged:
         // its recorder is released quietly and this fresh run owns the world.
         this._abandonRun();
@@ -354,7 +364,7 @@ export class AgentSession {
      *   minimum; the dt default is the loop's FIXED_STEP_MS double)
      * @returns {TrialRun} the open run; finalize it with finalizeTrial()
      */
-    beginTrial({ seconds = 5, dt = FIXED_STEP_MS } = {}) {
+    beginTrial({ seconds = TRIAL_DEFAULT_SECONDS, dt = FIXED_STEP_MS } = {}) {
         if (this._run) {
             throw new Error('[AgentSession] beginTrial: a trial run is already open (finalizeTrial it before beginning another)');
         }

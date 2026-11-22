@@ -48,6 +48,46 @@ describe('solver — the phase-1 proof', () => {
         },
     );
 
+    it(
+        'a level whose goal TARGET is not placeable reports that cause, not "no valid candidate placements"',
+        async () => {
+            // Level-02 is the ramp-only posture: the ball is scene furniture
+            // (fixed + anchored), availableParts carries ramps alone. Every
+            // candidate the generator yields contains a `place <target>` -
+            // refused for want of budget - so nothing is ever judged.
+            session = new AgentSession();
+            await session.loadLevel('level-02');
+            expect(session.budget().ball).toBeUndefined(); // the target is not in availableParts
+
+            const report = solve(session, { maxTrials: 5, secondsPerTrial: 2 });
+
+            expect(report.outcome).toBe('unsolved');
+            expect(report.diagnosis).toMatch(/unsolved/);
+            // The old wording blamed the candidate list for a search that
+            // never ran; the honest one names the real limit: the target is
+            // already in the scene, so no build can add it.
+            expect(report.diagnosis).not.toMatch(/no valid candidate placements/);
+            expect(report.diagnosis).toMatch(/ball/);
+            expect(report.diagnosis).toMatch(/already in the scene|not placeable|no .*budget/i);
+        },
+    );
+
+    it('the target drop is the tutorial lesson only - a non-tutorial level refuses it and says why', async () => {
+        session = new AgentSession();
+        await session.loadLevel('level-03'); // ball budgeted, but dropping it in is not the level
+        const report = solve(session);
+        expect(report.outcome).toBe('unsolved');
+        expect(report.trials).toBe(0); // nothing was even judged
+        expect(report.diagnosis).toMatch(/tutorial/);
+        expect(report.diagnosis).toMatch(/#104/); // the open gap, named
+    });
+
+    it('a non-tutorial level yields no candidates at all - not even the helper+target pair', async () => {
+        session = new AgentSession();
+        await session.loadLevel('level-05'); // target is a mouse, and still not the lesson
+        expect(candidatePlacements(session, { lattice: 50 }).next().done).toBe(true);
+    });
+
     it('enumerates candidates deterministically, target-alone first', async () => {
         session = new AgentSession();
         await session.loadLevel('level-01');

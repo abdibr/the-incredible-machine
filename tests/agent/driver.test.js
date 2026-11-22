@@ -136,7 +136,7 @@ describe('llm driver - driver loop over a stubbed provider', () => {
                 fn('trial',
                     'Simulate the current world: rebuild with your placements and step the physics for seconds. The tool result outcome tells "reached" (win), "failed" (target left the playfield) or "timeout".',
                     schema({
-                        seconds: { type: 'number', description: 'sim seconds, 0 < s <= 120 (default 5)' },
+                        seconds: { type: 'number', description: 'sim seconds, 0 < s <= 120 (default 30)' },
                         dt: { type: 'number', description: 'physics step dt in ms, 1 <= dt <= 1000 (default ~16.67)' },
                     })),
             ]);

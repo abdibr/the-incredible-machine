@@ -40,7 +40,7 @@ async function main() {
 
         if (args.describe && !args.solve) return; // observation only
 
-        const secondsPerTrial = num(args.seconds, 5);
+        const secondsPerTrial = num(args.seconds, 30);
         const maxTrials = num(args.trials, 2000);
         const started = Date.now();
         const report = solve(session, { maxTrials, secondsPerTrial });

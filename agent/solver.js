@@ -9,10 +9,30 @@
  *
  * Ordering heuristic: lattice points sorted by distance to the goal zone,
  * so "drop the ball straight into the bucket" style wins surface early.
+ *
+ * That drop is the TUTORIAL's lesson, not a generic solution: it wins a level
+ * without exercising a single authored part, so the search allows it only
+ * where the level teaches it (TARGET_PLACEABLE_LEVELS) and says so everywhere
+ * else. The machine-level search - build the target's path out of the
+ * authored helpers - is the open gap (issue #104).
  */
 
 import { objectRegistry } from '../js/objects/ObjectRegistry.js';
 import { place, reset as resetPlacements, trial } from './actions.js';
+
+/**
+ * The levels whose lesson IS placing the goal target: level-01 drops a ball
+ * straight into the bucket, and that is what the level is teaching.
+ *
+ * Everywhere else the same drop is a degenerate shortcut - it reaches the
+ * goal without using one authored part (level-03 skips the dominoes and the
+ * fan, level-04 the balloon and rope, level-06 the ramps) - so the scripted
+ * baseline refuses to place the target there. The search that would win those
+ * levels honestly builds the target's path from the level's own helpers and
+ * is not built yet (issue #104).
+ * @type {ReadonlyArray<string>}
+ */
+export const TARGET_PLACEABLE_LEVELS = Object.freeze(['level-01']);
 
 /** Angle set per helper type (radians). Ramps need tilt; others sit flat. */
 export const DEFAULT_ANGLES = {
@@ -63,10 +83,37 @@ function dropSpotsFrom(session, type, x, y, angle) {
 }
 
 /**
+ * May the search place the goal's target part here - and if not, why not?
+ *
+ * Two different refusals, both worth naming instead of blaming an empty
+ * candidate list:
+ *
+ * - `budgeted: false` - the level ships the target ALREADY IN THE SCENE
+ *   (level-02's ball is fixed + anchored) and budgets only the helpers, so
+ *   `availableParts` carries no count for the target type;
+ * - `allowed: false` - the target IS budgeted, but dropping it straight into
+ *   the goal is the tutorial's lesson, not this level's (TARGET_PLACEABLE_LEVELS).
+ *
+ * `placeable` is the conjunction: the only thing candidatePlacements needs.
+ * @param {import('./session.js').AgentSession} session with a level loaded
+ * @returns {{ targetType: string, budgeted: boolean, allowed: boolean, placeable: boolean }}
+ */
+export function targetPlacement(session) {
+    const targetType = session.goal?.targetType ?? 'ball';
+    const budgeted = (session.budget()?.[targetType] ?? 0) > 0;
+    const allowed = TARGET_PLACEABLE_LEVELS.includes(session.levelData?.id ?? '');
+    return { targetType, budgeted, allowed, placeable: budgeted && allowed };
+}
+
+/**
  * Yield candidate placement lists (each list = one trial's placements).
  * @yields {Array<{type:string,x:number,y:number,angle:number}>}
  */
 export function* candidatePlacements(session, { lattice = 50 } = {}) {
+    // Every family below places the goal target itself - the tutorial's move.
+    // Where the level is not the tutorial there is nothing to yield: the
+    // helper-only machine search is the open gap (issue #104).
+    if (!targetPlacement(session).placeable) return;
     const goal = session.goal;
     const parts = Object.entries(session.levelData?.availableParts ?? {}).filter(([, n]) => n > 0);
     const zone = zoneCenter(session);
@@ -111,7 +158,7 @@ export function* candidatePlacements(session, { lattice = 50 } = {}) {
  *            { outcome: 'reached'|'unsolved', trials: number, placements?: object[],
  *              result?: object, best?: object, diagnosis?: string }>}
  */
-export function* solveTrials(session, { maxTrials = 2000, secondsPerTrial = 5, lattice = 50 } = {}) {
+export function* solveTrials(session, { maxTrials = 2000, secondsPerTrial = 30, lattice = 50 } = {}) {
     if (!session.levelData) throw new Error('[solver] load a level first (session.loadLevel)');
     const trialOptions = { seconds: secondsPerTrial, dt: 1000 / 60 };
     let trials = 0;
@@ -135,9 +182,19 @@ export function* solveTrials(session, { maxTrials = 2000, secondsPerTrial = 5, l
         }
         yield { trials, candidate: [...candidate], placements: [...session.placements], result, best };
     }
+    const { targetType, budgeted } = targetPlacement(session);
     const diagnosis = best
         ? `unsolved - best attempt ended ${Math.round(best.score)}px from the zone (${best.result.outcome})`
-        : 'unsolved - no valid candidate placements existed';
+        : budgeted
+            // Budgeted but refused: the drop is the tutorial's lesson, not
+            // this level's - the machine search is what is missing.
+            ? `unsolved - this level is not the tutorial, so the search will not drop the goal target (${targetType}) ` +
+                `straight into the goal; the helper-only machine search that builds its path is not built yet (issue #104)`
+            // The candidate list was empty for a reason worth naming: the
+            // level's target is scene furniture, so every candidate the
+            // generator yields is refused for want of budget.
+            : `unsolved - the goal target (${targetType}) is not placeable here: availableParts budgets the helpers only, ` +
+                `so the ${targetType} is already in the scene and no candidate can build one`;
     return { outcome: 'unsolved', trials, best, diagnosis };
 }
 

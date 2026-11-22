@@ -205,7 +205,7 @@ const ACTION_TOOLS = Object.freeze([
         parameters: {
             type: 'object',
             properties: {
-                seconds: { type: 'number', description: `sim seconds, 0 < s <= ${MAX_TRIAL_SECONDS} (default 5)` },
+                seconds: { type: 'number', description: `sim seconds, 0 < s <= ${MAX_TRIAL_SECONDS} (default 30)` },
                 dt: { type: 'number', description: `physics step dt in ms, 1 <= dt <= ${MAX_TRIAL_DT} (default ~16.67)` },
             },
             required: [],
