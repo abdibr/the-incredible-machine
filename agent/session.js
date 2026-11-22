@@ -216,15 +216,12 @@ export class AgentSession {
             const path = new URL(`../js/levels/puzzles/${idOrData}.json`, import.meta.url);
             data = JSON.parse(await fs.readFile(path, 'utf8'));
         }
-        // The level owner validates and publishes (issue #78): the same
-        // schema the campaign loader answers to (validateCustom), and the
-        // level:loaded fact emitted by the LevelManager seam in the rebuild
-        // below - never by hand here.
-        // The level owner validates and publishes (issue #78): the sandbox
-        // posture (issue #63) takes the goal-less sibling gate - the same
-        // schema owner, the puzzle requirements relaxed only for the posture
-        // that carries them - and every other load keeps answering to the
-        // same schema the campaign loader runs (validateCustom).
+        // The level owner validates and publishes (issue #78): the posture
+        // picks the gate - the sandbox posture (issue #63) takes the
+        // goal-less sibling gate, every other load answers to the same
+        // schema the campaign loader runs (validateCustom) - and the
+        // level:loaded fact arrives from the LevelManager seam in the
+        // rebuild below, never by hand here.
         if (this._sandbox) {
             levelManager.validateSandbox(data);
         } else {
