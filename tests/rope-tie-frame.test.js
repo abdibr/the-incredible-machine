@@ -1,5 +1,5 @@
 /**
- * Tie points ignore body rotation (issue #100) — the frame-coincidence probe.
+ * Tie points answer the body's rotation (issue #100) — the frame-coincidence probe.
  *
  * A tie point answers body.position + rotate(offset, body.angle): the
  * attachment offset is BODY-LOCAL, so the dashed tie square, the knot ring,
@@ -67,7 +67,7 @@ function tieAndRealize(physics, rope, target, pointId, spot) {
     return { ropePart, targetPart };
 }
 
-describe('Tie points ignore body rotation (issue #100) — frame coincidence', () => {
+describe('Tie points answer the body\'s rotation (issue #100) — frame coincidence', () => {
     const engines = [];
     afterEach(() => {
         for (const engine of engines) engine.dispose();

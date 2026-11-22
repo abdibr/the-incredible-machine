@@ -640,7 +640,6 @@ function boundsLike(b) {
     return { x: b.x, y: b.y, width: b.width, height: b.height };
 }
 
-/** Minimal canvas 2D-context stub that records calls (no DOM/canvas in Node). */
 describe('The connect-flow squares on the renderer — the tied seat keeps gold (issue #103)', () => {
     it('a tied seat under an armed seek paints gold, never the seeking blue, and the dashed preview points nowhere', () => {
         const rope = objectRegistry.create('free-rope', 300, 300); // bodyless coil: one anchor seat
@@ -682,6 +681,7 @@ describe('The connect-flow squares on the renderer — the tied seat keeps gold 
     });
 });
 
+/** Minimal canvas 2D-context stub that records calls (no DOM/canvas in Node). */
 function makeDrawCtx() {
     const ctx = {};
     const strokeStyleLog = [];
