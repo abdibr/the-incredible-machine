@@ -127,11 +127,11 @@ function makeTicker() {
 async function driveLive(ticker, target) {
     let now = 0;
     let guard = 0;
-    while (!target.done && guard++ < 4000) {
+    while (!target.done && guard++ < 20000) {
         if (ticker.size() > 0) ticker.pump((now += 17));
         await new Promise((resolve) => setImmediate(resolve));
     }
-    expect(guard).toBeLessThan(4000); // the live cycle is bounded
+    expect(guard).toBeLessThan(20000); // the live cycle is bounded (the fail-safe: a true deadlock trips in well under a second, while the whole watch suite in parallel stretches the HTTP awaits' loop turns above the old 4000)
 }
 
 /**

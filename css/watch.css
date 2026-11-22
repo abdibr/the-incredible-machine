@@ -90,6 +90,8 @@ body#watch-page {
 #watch-banner[data-outcome='failed'] { background: #f9e2e0; border: 2px solid #d0453a; color: #7a231c; }
 #watch-banner[data-outcome='timeout'] { background: #f9efdc; border: 2px solid #c98c1c; color: #6b4a10; }
 #watch-banner[data-outcome='unsolved'] { background: #ece7f8; border: 2px solid #7a52c7; color: #3d2667; }
+#watch-banner[data-outcome='error'] { background: #fbeaea; border: 2px solid #b8433a; color: #6e2119; }
+#watch-banner[data-outcome='cap'] { background: #e9f1f8; border: 2px solid #3a6db8; color: #1d3d69; }
 
 #watch-hud {
     width: 340px;
@@ -108,6 +110,21 @@ body#watch-page {
 }
 
 #watch-status.error { color: #a03028; font-weight: bold; }
+
+/* The live cycle's observation panel (issue #65): the model's observation
+   text as a second HUD thread above the event log. */
+#watch-observations {
+    margin: 0;
+    padding: 8px 14px;
+    list-style: none;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 30%;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    color: #514a3c;
+    border-bottom: 1px solid #d8ccae;
+}
 
 #watch-events {
     margin: 0;
