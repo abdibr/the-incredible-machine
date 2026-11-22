@@ -12,17 +12,33 @@
     <h1>Agent Watch</h1>
     <div id="watch-level-name">level-01 - First Steps</div>
     <button id="solve-watch">Solve &amp; Watch level-01</button>
+    <!-- The live source (issue #65): a live model drives the watched world
+         through the turn boundary. The cycle's settings ride the host page's
+         window.WATCH_LIVE_CONFIG global ({model, modelBaseUrl, turnBaseUrl?,
+         apiKey?, maxTurns?, level?}); without them the resolver names the
+         gaps and the button sits out - the scripted source is the fallback.
+         The checkbox rides the sandbox spectating scenario: the model
+         constructs on the goal-less board (ADR 0011) and plays it - the
+         in-page posture by construction, the turn service stays the level
+         scenario's seam. -->
+    <label id="watch-live-sandbox-label"><input type="checkbox" id="watch-live-sandbox" /> sandbox</label>
+    <button id="watch-live" title="a live model drives the watched world through the turn boundary">Watch live</button>
   </header>
 
   <main id="watch-main">
     <section id="watch-stage">
       <canvas id="watch-canvas"></canvas>
-      <!-- The run outcome banner (goal reached / failed / timeout) and the
-           solver's no-win report - composed by the flow's listeners. -->
+      <!-- The run outcome banner (goal reached / failed / timeout / the live
+           source's error and turn-cap endings) - composed by the flow's
+           listeners. -->
       <div id="watch-banner" class="hidden"></div>
     </section>
     <aside id="watch-hud">
       <div id="watch-status">idle - press Solve &amp; Watch</div>
+      <!-- The model's observation panel (issue #65): the observation text the
+           model received is the live cycle's second thread, beside the board
+           like the event HUD. -->
+      <ol id="watch-observations"></ol>
       <ol id="watch-events"></ol>
     </aside>
   </main>

@@ -34,7 +34,7 @@ export function startStubServer(policy) {
                 : {
                     role: 'assistant', content: null,
                     tool_calls: choice.calls.map((c, i) => ({
-                        id: `call_${i}`, type: 'function',
+                        id: c?.id ?? `call_${i}`, type: 'function',
                         function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) },
                     })),
                 };
